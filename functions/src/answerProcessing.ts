@@ -8,10 +8,6 @@ import {
 } from "firebase-admin/storage";
 
 import {
-  processAnswerPage,
-} from "./ocr";
-
-import {
   recognizeStudentQr,
 } from "./qrRecognition";
 
@@ -20,13 +16,17 @@ import {
 } from "./imageCorrection";
 
 import {
+  processAnswerPage,
+} from "./ocr";
+
+import {
   gradeAnswer,
 } from "./autoGrading";
 
 const db = getFirestore();
 const storage = getStorage();
 
-const CHUNK_SIZE = 450;
+const CHUNK_SIZE = 100;
 
 export type AnswerProcessingJob = {
   testId: string;
@@ -50,8 +50,8 @@ export type AnswerProcessingJob = {
   currentChunk: number;
   totalChunks: number;
 
-  createdAt: FirebaseFirestore.Timestamp;
-  updatedAt: FirebaseFirestore.Timestamp;
+  createdAt?: FirebaseFirestore.Timestamp;
+  updatedAt?: FirebaseFirestore.Timestamp;
 
   errorMessage?: string;
 };
@@ -63,31 +63,47 @@ type JobInput = {
   requestedBy: string;
 };
 
+type ProcessResult = {
+  success: boolean;
+  reviewRequired: boolean;
+};
+
 export async function createAnswerProcessingJob(
   input: JobInput
 ): Promise<string> {
-  if (input.answerIds.length === 0) {
+  const answerIds =
+    Array.from(
+      new Set(
+        input.answerIds
+      )
+    );
+
+  if (answerIds.length === 0) {
     throw new Error(
       "処理対象の答案がありません。"
     );
   }
 
-  const chunks = Math.ceil(
-    input.answerIds.length /
-      CHUNK_SIZE
-  );
+  const totalChunks =
+    Math.ceil(
+      answerIds.length /
+        CHUNK_SIZE
+    );
 
-  const jobRef = db
-    .collection("gradingJobs")
-    .doc();
+  const jobRef =
+    db
+      .collection("gradingJobs")
+      .doc();
 
-  const now =
-    FieldValue.serverTimestamp();
+  const batch =
+    db.batch();
 
-  await jobRef.set({
-    testId: input.testId,
-    subjectId: input.subjectId,
-    answerIds: input.answerIds,
+  batch.set(jobRef, {
+    testId:
+      input.testId,
+
+    subjectId:
+      input.subjectId,
 
     requestedBy:
       input.requestedBy,
@@ -95,7 +111,7 @@ export async function createAnswerProcessingJob(
     status: "queued",
 
     total:
-      input.answerIds.length,
+      answerIds.length,
 
     processed: 0,
     succeeded: 0,
@@ -103,43 +119,43 @@ export async function createAnswerProcessingJob(
     errors: 0,
 
     currentChunk: 0,
-    totalChunks: chunks,
+    totalChunks,
 
-    createdAt: now,
-    updatedAt: now,
+    createdAt:
+      FieldValue.serverTimestamp(),
+
+    updatedAt:
+      FieldValue.serverTimestamp(),
   });
 
   for (
-    let start = 0;
-    start <
-    input.answerIds.length;
-    start += CHUNK_SIZE
+    let index = 0;
+    index < totalChunks;
+    index++
   ) {
-    const answerIds =
-      input.answerIds.slice(
+    const start =
+      index * CHUNK_SIZE;
+
+    const ids =
+      answerIds.slice(
         start,
         start + CHUNK_SIZE
       );
 
-    const chunkRef = jobRef
-      .collection("chunks")
-      .doc(
-        String(
-          Math.floor(
-            start / CHUNK_SIZE
-          )
-        )
-      );
+    const chunkRef =
+      jobRef
+        .collection("chunks")
+        .doc(
+          String(index)
+        );
 
-    await chunkRef.set({
-      answerIds,
+    batch.set(chunkRef, {
+      index,
 
-      index: Math.floor(
-        start / CHUNK_SIZE
-      ),
+      answerIds: ids,
 
       total:
-        answerIds.length,
+        ids.length,
 
       processed: 0,
       succeeded: 0,
@@ -148,10 +164,15 @@ export async function createAnswerProcessingJob(
 
       status: "queued",
 
-      createdAt: now,
-      updatedAt: now,
+      createdAt:
+        FieldValue.serverTimestamp(),
+
+      updatedAt:
+        FieldValue.serverTimestamp(),
     });
   }
+
+  await batch.commit();
 
   return jobRef.id;
 }
@@ -160,27 +181,42 @@ export async function processAnswerJob(
   jobId: string,
   jobData: FirebaseFirestore.DocumentData
 ) {
-  const jobRef = db
-    .collection("gradingJobs")
-    .doc(jobId);
+  const jobRef =
+    db
+      .collection("gradingJobs")
+      .doc(jobId);
+
+  const current =
+    await jobRef.get();
+
+  if (!current.exists) {
+    throw new Error(
+      "答案処理ジョブが存在しません。"
+    );
+  }
+
+  const currentData =
+    current.data();
 
   if (
-    jobData.status ===
+    currentData?.status ===
       "completed" ||
-    jobData.status ===
-      "failed"
+    currentData?.status ===
+      "completed_with_errors"
   ) {
     return;
   }
 
   await jobRef.update({
-    status: "processing",
+    status:
+      "processing",
+
     updatedAt:
       FieldValue.serverTimestamp(),
   });
 
   try {
-    const chunksSnapshot =
+    const chunks =
       await jobRef
         .collection("chunks")
         .orderBy("index")
@@ -188,7 +224,7 @@ export async function processAnswerJob(
 
     for (
       const chunkDoc of
-        chunksSnapshot.docs
+        chunks.docs
     ) {
       const chunk =
         chunkDoc.data();
@@ -208,6 +244,16 @@ export async function processAnswerJob(
         chunk,
         jobData
       );
+
+      await jobRef.update({
+        currentChunk:
+          Number(
+            chunk.index
+          ) + 1,
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      });
     }
 
     const finalSnapshot =
@@ -218,27 +264,35 @@ export async function processAnswerJob(
 
     if (!finalData) {
       throw new Error(
-        "処理ジョブが見つかりません。"
+        "処理結果を取得できません。"
       );
     }
 
-    const finalStatus =
-      finalData.errors > 0
+    const status =
+      Number(
+        finalData.errors ?? 0
+      ) > 0
         ? "completed_with_errors"
         : "completed";
 
     await jobRef.update({
-      status: finalStatus,
+      status,
+
       updatedAt:
+        FieldValue.serverTimestamp(),
+
+      completedAt:
         FieldValue.serverTimestamp(),
     });
   } catch (error) {
     await jobRef.update({
       status: "failed",
+
       errorMessage:
         error instanceof Error
           ? error.message
           : "答案処理に失敗しました。",
+
       updatedAt:
         FieldValue.serverTimestamp(),
     });
@@ -253,16 +307,23 @@ async function processChunk(
   chunk: FirebaseFirestore.DocumentData,
   jobData: FirebaseFirestore.DocumentData
 ) {
-  const jobRef = db
-    .collection("gradingJobs")
-    .doc(jobId);
+  const jobRef =
+    db
+      .collection("gradingJobs")
+      .doc(jobId);
 
-  const chunkRef = jobRef
-    .collection("chunks")
-    .doc(chunkId);
+  const chunkRef =
+    jobRef
+      .collection("chunks")
+      .doc(chunkId);
 
   await chunkRef.update({
-    status: "processing",
+    status:
+      "processing",
+
+    startedAt:
+      FieldValue.serverTimestamp(),
+
     updatedAt:
       FieldValue.serverTimestamp(),
   });
@@ -272,22 +333,28 @@ async function processChunk(
   let reviewRequired = 0;
   let errors = 0;
 
+  const answerIds =
+    Array.isArray(
+      chunk.answerIds
+    )
+      ? (chunk.answerIds as string[])
+      : [];
+
   for (
-    const answerId of
-      chunk.answerIds as string[]
+    const answerId of answerIds
   ) {
+    let result:
+      ProcessResult | null =
+      null;
+
     try {
-      const result =
+      result =
         await processSingleAnswer(
           answerId,
           jobData
         );
 
-      processed++;
-
-      if (result.success) {
-        succeeded++;
-      }
+      succeeded++;
 
       if (
         result.reviewRequired
@@ -295,7 +362,6 @@ async function processChunk(
         reviewRequired++;
       }
     } catch (error) {
-      processed++;
       errors++;
 
       await saveAnswerProcessingError(
@@ -304,68 +370,51 @@ async function processChunk(
       );
     }
 
+    processed++;
+
     await chunkRef.update({
       processed,
       succeeded,
       reviewRequired,
       errors,
-      updatedAt:
-        FieldValue.serverTimestamp(),
-    });
-
-    await jobRef.update({
-      processed:
-        FieldValue.increment(1),
-
-      succeeded:
-        resultSucceededIncrement(
-          true,
-          false
-        ),
 
       updatedAt:
         FieldValue.serverTimestamp(),
     });
+
+    await recalculateJobCounters(
+      jobId
+    );
   }
 
-  const chunkStatus =
+  const status =
     errors > 0
       ? "completed_with_errors"
       : "completed";
 
   await chunkRef.update({
-    status: chunkStatus,
+    status,
+
+    completedAt:
+      FieldValue.serverTimestamp(),
+
     updatedAt:
       FieldValue.serverTimestamp(),
   });
 
-  /*
-   * 親ジョブの集計値を正確に再集計します。
-   * 同時実行によるカウントずれを防ぎます。
-   */
   await recalculateJobCounters(
     jobId
   );
 }
 
-function resultSucceededIncrement(
-  _success: boolean,
-  _review: boolean
-) {
-  /*
-   * 実際の値はチャンク再集計で確定するため、
-   * 親ジョブでは直接加算しません。
-   */
-  return FieldValue.increment(0);
-}
-
 async function processSingleAnswer(
   answerId: string,
   jobData: FirebaseFirestore.DocumentData
-) {
-  const answerRef = db
-    .collection("answers")
-    .doc(answerId);
+): Promise<ProcessResult> {
+  const answerRef =
+    db
+      .collection("answers")
+      .doc(answerId);
 
   const answerSnapshot =
     await answerRef.get();
@@ -381,27 +430,51 @@ async function processSingleAnswer(
 
   if (!answer) {
     throw new Error(
-      `答案 ${answerId} のデータを取得できません。`
+      `答案 ${answerId} のデータがありません。`
     );
   }
 
-  await answerRef.update({
-    status: "processing",
-    updatedAt:
-      FieldValue.serverTimestamp(),
-  });
+  if (
+    answer.testId !==
+    jobData.testId
+  ) {
+    throw new Error(
+      "答案のテストIDが処理ジョブと一致しません。"
+    );
+  }
+
+  if (
+    answer.subjectId !==
+    jobData.subjectId
+  ) {
+    throw new Error(
+      "答案の教科IDが処理ジョブと一致しません。"
+    );
+  }
 
   const filePath =
     answer.filePath;
 
   if (
     typeof filePath !==
-    "string"
+    "string" ||
+    filePath.length === 0
   ) {
     throw new Error(
       "答案ファイルのパスがありません。"
     );
   }
+
+  await answerRef.update({
+    status:
+      "processing",
+
+    processingStartedAt:
+      FieldValue.serverTimestamp(),
+
+    updatedAt:
+      FieldValue.serverTimestamp(),
+  });
 
   const bucket =
     storage.bucket();
@@ -409,11 +482,29 @@ async function processSingleAnswer(
   const file =
     bucket.file(filePath);
 
+  const [exists] =
+    await file.exists();
+
+  if (!exists) {
+    throw new Error(
+      `答案ファイルがStorageに存在しません: ${filePath}`
+    );
+  }
+
   const [buffer] =
     await file.download();
 
+  if (
+    buffer.length === 0
+  ) {
+    throw new Error(
+      "答案ファイルが空です。"
+    );
+  }
+
   /*
-   * 画像補正
+   * 1. 四隅マーカー検出
+   * 2. 傾き・台形補正
    */
   const corrected =
     await correctAnswerImage(
@@ -421,23 +512,50 @@ async function processSingleAnswer(
     );
 
   /*
-   * QR認識
+   * 3. QR認識
    */
-  const qrResult =
+  const qr =
     await recognizeStudentQr(
       corrected.buffer
     );
 
-  if (!qrResult.studentNumber) {
+  if (
+    !qr.studentNumber
+  ) {
     throw new Error(
-      "生徒QRコードを認識できませんでした。"
+      "生徒番号QRを認識できませんでした。"
+    );
+  }
+
+  if (
+    !/^\d{6}$/.test(
+      qr.studentNumber
+    )
+  ) {
+    throw new Error(
+      "認識した生徒番号が6桁数字ではありません。"
     );
   }
 
   /*
-   * OCR
+   * QRの生徒番号と答案の登録生徒番号が
+   * 両方存在する場合は一致確認。
    */
-  const ocrResult =
+  if (
+    typeof answer.studentNumber ===
+      "string" &&
+    answer.studentNumber !==
+      qr.studentNumber
+  ) {
+    throw new Error(
+      "QRの生徒番号と登録済み生徒番号が一致しません。"
+    );
+  }
+
+  /*
+   * 4. OCR
+   */
+  const ocr =
     await processAnswerPage(
       corrected.buffer,
       jobData.testId,
@@ -445,9 +563,9 @@ async function processSingleAnswer(
     );
 
   /*
-   * 自動採点
+   * 5. 自動採点
    */
-  const gradingResult =
+  const grading =
     await gradeAnswer({
       testId:
         jobData.testId,
@@ -456,15 +574,21 @@ async function processSingleAnswer(
         jobData.subjectId,
 
       studentNumber:
-        qrResult.studentNumber,
+        qr.studentNumber,
 
       answerId,
 
-      ocrResult,
+      ocrResult:
+        ocr,
     });
 
+  /*
+   * 採点結果保存
+   */
   await db
-    .collection("gradingResults")
+    .collection(
+      "gradingResults"
+    )
     .doc(answerId)
     .set(
       {
@@ -477,16 +601,17 @@ async function processSingleAnswer(
           jobData.subjectId,
 
         studentNumber:
-          qrResult.studentNumber,
+          qr.studentNumber,
 
-        ocr:
-          ocrResult,
+        ocr,
 
-        grading:
-          gradingResult,
+        grading,
 
         reviewRequired:
-          gradingResult.reviewRequired,
+          grading.reviewRequired,
+
+        createdAt:
+          FieldValue.serverTimestamp(),
 
         updatedAt:
           FieldValue.serverTimestamp(),
@@ -496,14 +621,35 @@ async function processSingleAnswer(
       }
     );
 
+  /*
+   * 答案本体の状態更新
+   */
   await answerRef.update({
     studentNumber:
-      qrResult.studentNumber,
+      qr.studentNumber,
 
     status:
-      gradingResult.reviewRequired
-        ? "graded"
-        : "graded",
+      "graded",
+
+    qrRecognition: {
+      studentNumber:
+        qr.studentNumber,
+
+      confidence:
+        qr.confidence,
+    },
+
+    ocrCompleted:
+      true,
+
+    autoGraded:
+      true,
+
+    reviewRequired:
+      grading.reviewRequired,
+
+    processingCompletedAt:
+      FieldValue.serverTimestamp(),
 
     updatedAt:
       FieldValue.serverTimestamp(),
@@ -513,7 +659,7 @@ async function processSingleAnswer(
     success: true,
 
     reviewRequired:
-      gradingResult.reviewRequired,
+      grading.reviewRequired,
   };
 }
 
@@ -531,10 +677,14 @@ async function saveAnswerProcessingError(
     .doc(answerId)
     .set(
       {
-        status: "error",
+        status:
+          "error",
 
         processingError:
           message,
+
+        processingFailedAt:
+          FieldValue.serverTimestamp(),
 
         updatedAt:
           FieldValue.serverTimestamp(),
@@ -561,11 +711,11 @@ async function recalculateJobCounters(
   let errors = 0;
 
   for (
-    const chunk of
+    const chunkDoc of
       chunks.docs
   ) {
     const data =
-      chunk.data();
+      chunkDoc.data();
 
     processed +=
       Number(
@@ -579,8 +729,7 @@ async function recalculateJobCounters(
 
     reviewRequired +=
       Number(
-        data.reviewRequired ??
-          0
+        data.reviewRequired ?? 0
       );
 
     errors +=
@@ -597,6 +746,7 @@ async function recalculateJobCounters(
       succeeded,
       reviewRequired,
       errors,
+
       updatedAt:
         FieldValue.serverTimestamp(),
     });
