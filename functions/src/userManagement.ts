@@ -14,11 +14,13 @@ import {
 
 import {
   requireManager,
-  requireHeadOffice,
 } from "./auth";
 
-const adminAuth = getAuth();
-const db = getFirestore();
+const adminAuth =
+  getAuth();
+
+const db =
+  getFirestore();
 
 type UserRole =
   | "本部管理者"
@@ -26,8 +28,18 @@ type UserRole =
   | "講師"
   | "生徒";
 
+type ManagedUser = {
+  uid: string;
+
+  role: UserRole;
+
+  schoolIds: string[];
+
+  email: string;
+};
+
 /* =========================================================
-   管理者によるユーザー作成
+   ユーザー作成
    ========================================================= */
 
 export const createManagedUser =
@@ -71,22 +83,14 @@ export const createManagedUser =
         data.role as UserRole;
 
       const schoolIds =
-        Array.isArray(
+        normalizeSchoolIds(
           data.schoolIds
-        )
-          ? data.schoolIds.filter(
-              (
-                value
-              ): value is string =>
-                typeof value ===
-                "string"
-            )
-          : [];
+        );
 
       const studentNumber =
         typeof data.studentNumber ===
         "string"
-          ? data.studentNumber
+          ? data.studentNumber.trim()
           : undefined;
 
       validateRole(
@@ -128,13 +132,11 @@ export const createManagedUser =
         );
       }
 
-      /*
-       * 校舎管理者は、自校舎の権限しか
-       * 作成できない。
-       */
       const requesterSnapshot =
         await db
-          .collection("users")
+          .collection(
+            "users"
+          )
           .doc(
             request.auth.uid
           )
@@ -147,15 +149,19 @@ export const createManagedUser =
         requester?.role ===
         "校舎管理者"
       ) {
+        const requesterSchools =
+          normalizeSchoolIds(
+            requester.schoolIds
+          );
+
         if (
           role ===
             "本部管理者" ||
           schoolIds.some(
-            (schoolId) =>
-              !(
-                requester.schoolIds ??
-                []
-              ).includes(
+            (
+              schoolId: string
+            ) =>
+              !requesterSchools.includes(
                 schoolId
               )
           )
@@ -171,18 +177,17 @@ export const createManagedUser =
 
       try {
         firebaseUser =
-          await adminAuth.createUser(
-            {
-              email,
-              password,
+          await adminAuth.createUser({
+            email,
 
-              displayName:
-                name,
+            password,
 
-              disabled:
-                false,
-            }
-          );
+            displayName:
+              name,
+
+            disabled:
+              false,
+          });
       } catch (error) {
         throw new HttpsError(
           "already-exists",
@@ -194,7 +199,9 @@ export const createManagedUser =
 
       try {
         await db
-          .collection("users")
+          .collection(
+            "users"
+          )
           .doc(
             firebaseUser.uid
           )
@@ -240,14 +247,11 @@ export const createManagedUser =
 
           metadata: {
             role,
+
             schoolIds,
           },
         });
       } catch (error) {
-        /*
-         * Firestore登録に失敗した場合、
-         * Authentication側に孤児アカウントを残さない。
-         */
         await adminAuth.deleteUser(
           firebaseUser.uid
         );
@@ -283,18 +287,9 @@ export const disableManagedUser =
       );
 
       const uid =
-        request.data?.uid;
-
-      if (
-        typeof uid !==
-        "string" ||
-        !uid.trim()
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "対象ユーザーが指定されていません。"
+        getUid(
+          request.data?.uid
         );
-      }
 
       if (
         uid ===
@@ -324,7 +319,9 @@ export const disableManagedUser =
       );
 
       await db
-        .collection("users")
+        .collection(
+          "users"
+        )
         .doc(uid)
         .update({
           active: false,
@@ -340,7 +337,8 @@ export const disableManagedUser =
         action:
           "USER_DISABLED",
 
-        targetUid: uid,
+        targetUid:
+          uid,
       });
 
       return {
@@ -368,18 +366,9 @@ export const enableManagedUser =
       );
 
       const uid =
-        request.data?.uid;
-
-      if (
-        typeof uid !==
-        "string" ||
-        !uid.trim()
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "対象ユーザーが指定されていません。"
+        getUid(
+          request.data?.uid
         );
-      }
 
       const target =
         await getTargetUser(
@@ -399,7 +388,9 @@ export const enableManagedUser =
       );
 
       await db
-        .collection("users")
+        .collection(
+          "users"
+        )
         .doc(uid)
         .update({
           active: true,
@@ -415,7 +406,8 @@ export const enableManagedUser =
         action:
           "USER_ENABLED",
 
-        targetUid: uid,
+        targetUid:
+          uid,
       });
 
       return {
@@ -425,7 +417,7 @@ export const enableManagedUser =
   );
 
 /* =========================================================
-   パスワードリセットリンク生成
+   パスワードリセット
    ========================================================= */
 
 export const generateManagedPasswordResetLink =
@@ -443,18 +435,9 @@ export const generateManagedPasswordResetLink =
       );
 
       const uid =
-        request.data?.uid;
-
-      if (
-        typeof uid !==
-        "string" ||
-        !uid.trim()
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "対象ユーザーが指定されていません。"
+        getUid(
+          request.data?.uid
         );
-      }
 
       const target =
         await getTargetUser(
@@ -485,7 +468,8 @@ export const generateManagedPasswordResetLink =
         action:
           "PASSWORD_RESET_LINK_GENERATED",
 
-        targetUid: uid,
+        targetUid:
+          uid,
       });
 
       return {
@@ -500,7 +484,7 @@ export const generateManagedPasswordResetLink =
   );
 
 /* =========================================================
-   ユーザー権限変更
+   権限変更
    ========================================================= */
 
 export const updateManagedUserRole =
@@ -518,34 +502,23 @@ export const updateManagedUserRole =
       );
 
       const uid =
-        request.data?.uid;
+        getUid(
+          request.data?.uid
+        );
 
       const role =
         request.data
           ?.role as UserRole;
 
-      const schoolIds =
-        Array.isArray(
-          request.data
-            ?.schoolIds
-        )
-          ? request.data.schoolIds
-          : [];
-
       validateRole(
         role
       );
 
-      if (
-        typeof uid !==
-        "string" ||
-        !uid.trim()
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "対象ユーザーが指定されていません。"
+      const schoolIds =
+        normalizeSchoolIds(
+          request.data
+            ?.schoolIds
         );
-      }
 
       const target =
         await getTargetUser(
@@ -569,12 +542,11 @@ export const updateManagedUserRole =
         );
       }
 
-      /*
-       * 校舎管理者は本部管理者を作れない。
-       */
       const requesterSnapshot =
         await db
-          .collection("users")
+          .collection(
+            "users"
+          )
           .doc(
             request.auth.uid
           )
@@ -596,7 +568,9 @@ export const updateManagedUserRole =
       }
 
       await db
-        .collection("users")
+        .collection(
+          "users"
+        )
         .doc(uid)
         .update({
           role,
@@ -614,10 +588,12 @@ export const updateManagedUserRole =
         action:
           "USER_ROLE_UPDATED",
 
-        targetUid: uid,
+        targetUid:
+          uid,
 
         metadata: {
           role,
+
           schoolIds,
         },
       });
@@ -629,15 +605,17 @@ export const updateManagedUserRole =
   );
 
 /* =========================================================
-   対象ユーザー取得
+   対象ユーザー
    ========================================================= */
 
 async function getTargetUser(
   uid: string
-) {
+): Promise<ManagedUser> {
   const snapshot =
     await db
-      .collection("users")
+      .collection(
+        "users"
+      )
       .doc(uid)
       .get();
 
@@ -654,7 +632,7 @@ async function getTargetUser(
   if (!data) {
     throw new HttpsError(
       "not-found",
-      "ユーザー情報を取得できません。"
+      "ユーザー情報がありません。"
     );
   }
 
@@ -662,14 +640,14 @@ async function getTargetUser(
     uid,
 
     role:
-      data.role as UserRole,
+      normalizeRole(
+        data.role
+      ),
 
     schoolIds:
-      Array.isArray(
+      normalizeSchoolIds(
         data.schoolIds
-      )
-        ? data.schoolIds
-        : [],
+      ),
 
     email:
       typeof data.email ===
@@ -680,25 +658,23 @@ async function getTargetUser(
 }
 
 /* =========================================================
-   操作対象の権限確認
+   権限確認
    ========================================================= */
 
 async function checkTargetPermission(
   actorUid: string,
-  target: {
-    uid: string;
-    role: UserRole;
-    schoolIds: string[];
-  }
+  target: ManagedUser
 ) {
-  const actorSnapshot =
+  const snapshot =
     await db
-      .collection("users")
+      .collection(
+        "users"
+      )
       .doc(actorUid)
       .get();
 
   const actor =
-    actorSnapshot.data();
+    snapshot.data();
 
   if (!actor) {
     throw new HttpsError(
@@ -707,15 +683,20 @@ async function checkTargetPermission(
     );
   }
 
+  const actorRole =
+    normalizeRole(
+      actor.role
+    );
+
   if (
-    actor.role ===
+    actorRole ===
     "本部管理者"
   ) {
     return;
   }
 
   if (
-    actor.role !==
+    actorRole !==
     "校舎管理者"
   ) {
     throw new HttpsError(
@@ -735,15 +716,15 @@ async function checkTargetPermission(
   }
 
   const actorSchools =
-    Array.isArray(
+    normalizeSchoolIds(
       actor.schoolIds
-    )
-      ? actor.schoolIds
-      : [];
+    );
 
   const sameSchool =
     target.schoolIds.some(
-      (schoolId) =>
+      (
+        schoolId: string
+      ) =>
         actorSchools.includes(
           schoolId
         )
@@ -776,7 +757,9 @@ async function writeAuditLog(
   }
 ) {
   await db
-    .collection("auditLogs")
+    .collection(
+      "auditLogs"
+    )
     .add({
       actorUid:
         input.actorUid,
@@ -798,19 +781,64 @@ async function writeAuditLog(
 }
 
 /* =========================================================
-   権限値検証
+   補助
    ========================================================= */
 
-function validateRole(
-  role: unknown
-): asserts role is UserRole {
+function normalizeSchoolIds(
+  value: unknown
+): string[] {
   if (
-    role !==
+    !Array.isArray(value)
+  ) {
+    return [];
+  }
+
+  return value.filter(
+    (
+      item: unknown
+    ): item is string =>
+      typeof item ===
+      "string"
+  );
+}
+
+function getUid(
+  value: unknown
+): string {
+  if (
+    typeof value !==
+      "string" ||
+    !value.trim()
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "対象ユーザーが指定されていません。"
+    );
+  }
+
+  return value.trim();
+}
+
+function normalizeRole(
+  value: unknown
+): UserRole {
+  validateRole(
+    value
+  );
+
+  return value;
+}
+
+function validateRole(
+  value: unknown
+): asserts value is UserRole {
+  if (
+    value !==
       "本部管理者" &&
-    role !==
+    value !==
       "校舎管理者" &&
-    role !== "講師" &&
-    role !== "生徒"
+    value !== "講師" &&
+    value !== "生徒"
   ) {
     throw new HttpsError(
       "invalid-argument",
