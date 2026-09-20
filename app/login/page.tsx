@@ -29,18 +29,14 @@ export default function LoginPage() {
   async function handleGoogleLogin() {
     try {
       setLoading(true);
-
       setError("");
 
       await loginWithGoogle();
 
-      router.replace(
-        "/"
-      );
-    } catch (
-      error
-    ) {
+      router.replace("/");
+    } catch (error) {
       console.error(
+        "Google login error:",
         error
       );
 
@@ -70,10 +66,10 @@ export default function LoginPage() {
           "center",
 
         padding:
-          24,
+          "24px",
 
         background:
-          "#f7f7f7",
+          "#f7f8fa",
       }}
     >
       <section
@@ -82,37 +78,89 @@ export default function LoginPage() {
             "100%",
 
           maxWidth:
-            440,
+            "440px",
 
           background:
-            "#fff",
+            "#ffffff",
 
           border:
-            "1px solid #ddd",
+            "1px solid #e5e7eb",
 
           borderRadius:
-            12,
+            "16px",
 
           padding:
-            40,
+            "42px 40px",
 
           boxShadow:
-            "0 8px 30px rgba(0,0,0,.06)",
+            "0 10px 35px rgba(0, 0, 0, 0.06)",
         }}
       >
+        {/* ロゴ・タイトル */}
         <div
           style={{
             textAlign:
               "center",
 
             marginBottom:
-              32,
+              "32px",
           }}
         >
+          <div
+            style={{
+              width:
+                "64px",
+
+              height:
+                "64px",
+
+              margin:
+                "0 auto 20px",
+
+              borderRadius:
+                "14px",
+
+              background:
+                "#111827",
+
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              justifyContent:
+                "center",
+
+              color:
+                "#ffffff",
+
+              fontSize:
+                "24px",
+
+              fontWeight:
+                700,
+            }}
+          >
+            QR
+          </div>
+
           <h1
             style={{
               margin:
                 "0 0 12px",
+
+              fontSize:
+                "24px",
+
+              lineHeight:
+                1.4,
+
+              fontWeight:
+                700,
+
+              color:
+                "#111827",
             }}
           >
             QR答案採点システム
@@ -122,18 +170,23 @@ export default function LoginPage() {
             style={{
               margin: 0,
 
-              color:
-                "#666",
+              fontSize:
+                "14px",
 
               lineHeight:
                 1.7,
+
+              color:
+                "#6b7280",
             }}
           >
             登録済みのGoogleアカウントで
+            <br />
             ログインしてください。
           </p>
         </div>
 
+        {/* Googleログイン */}
         <button
           type="button"
           disabled={
@@ -147,22 +200,37 @@ export default function LoginPage() {
               "100%",
 
             height:
-              52,
+              "52px",
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
+            gap:
+              "12px",
+
+            padding:
+              "0 20px",
 
             border:
-              "1px solid #ccc",
+              "1px solid #dadce0",
 
             borderRadius:
-              8,
+              "8px",
 
             background:
-              "#fff",
+              "#ffffff",
 
             color:
-              "#222",
+              "#3c4043",
 
             fontSize:
-              16,
+              "15px",
 
             fontWeight:
               600,
@@ -174,66 +242,110 @@ export default function LoginPage() {
 
             opacity:
               loading
-                ? 0.6
+                ? 0.65
                 : 1,
+
+            transition:
+              "background 0.15s ease, box-shadow 0.15s ease",
+          }}
+          onMouseEnter={(
+            event
+          ) => {
+            if (!loading) {
+              event.currentTarget.style.background =
+                "#f8f9fa";
+
+              event.currentTarget.style.boxShadow =
+                "0 1px 3px rgba(60,64,67,.15)";
+            }
+          }}
+          onMouseLeave={(
+            event
+          ) => {
+            event.currentTarget.style.background =
+              "#ffffff";
+
+            event.currentTarget.style.boxShadow =
+              "none";
           }}
         >
-          {loading
-            ? "Googleでログインしています..."
-            : "Googleでログイン"}
+          <img
+            src="/google-logo.svg"
+            alt=""
+            width={20}
+            height={20}
+            style={{
+              display:
+                "block",
+
+              flexShrink:
+                0,
+            }}
+          />
+
+          <span>
+            {loading
+              ? "Googleでログインしています..."
+              : "Googleでログイン"}
+          </span>
         </button>
 
+        {/* エラー */}
         {error && (
           <div
+            role="alert"
             style={{
               marginTop:
-                20,
+                "18px",
 
               padding:
-                14,
+                "14px 16px",
 
               border:
-                "1px solid #e5b5b5",
+                "1px solid #fecaca",
 
               borderRadius:
-                8,
+                "8px",
 
               background:
-                "#fff5f5",
+                "#fef2f2",
 
               color:
-                "#9b1c1c",
+                "#991b1b",
+
+              fontSize:
+                "14px",
 
               lineHeight:
                 1.6,
-
-              fontSize:
-                14,
             }}
           >
             {error}
           </div>
         )}
 
+        {/* 注意書き */}
         <p
           style={{
-            marginTop:
-              24,
+            margin:
+              "24px 0 0",
 
             textAlign:
               "center",
 
             fontSize:
-              12,
-
-            color:
-              "#888",
+              "12px",
 
             lineHeight:
-              1.6,
+              1.7,
+
+            color:
+              "#9ca3af",
           }}
         >
-          このシステムは登録済みユーザーのみ利用できます。
+          このシステムは登録済みユーザーのみ
+          <br />
+          利用できます。
         </p>
       </section>
     </main>
