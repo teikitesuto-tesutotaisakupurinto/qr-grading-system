@@ -2,11 +2,10 @@
 
 import {
   browserLocalPersistence,
-  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
   onAuthStateChanged,
-  sendPasswordResetEmail,
   setPersistence,
-  signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
   updatePassword,
   User,
@@ -24,11 +23,19 @@ import {
   db,
 } from "@/lib/firebase";
 
+/* =========================================================
+   Roles
+   ========================================================= */
+
 export type UserRole =
   | "本部管理者"
   | "校舎管理者"
   | "講師"
   | "生徒";
+
+/* =========================================================
+   App User
+   ========================================================= */
 
 export type AppUser = {
   uid: string;
@@ -44,41 +51,31 @@ export type AppUser = {
   studentNumber?: string;
 
   active: boolean;
+
+  photoURL?: string | null;
 };
 
 /* =========================================================
-   ログイン
+   Google Login
    ========================================================= */
 
-export async function login(
-  email: string,
-  password: string
-): Promise<AppUser> {
-  const normalizedEmail =
-    email.trim().toLowerCase();
-
-  if (!normalizedEmail) {
-    throw new Error(
-      "メールアドレスを入力してください。"
-    );
-  }
-
-  if (!password) {
-    throw new Error(
-      "パスワードを入力してください。"
-    );
-  }
-
+export async function loginWithGoogle(): Promise<AppUser> {
   await setPersistence(
     auth,
     browserLocalPersistence
   );
 
+  const provider =
+    new GoogleAuthProvider();
+
+  provider.setCustomParameters({
+    prompt: "select_account",
+  });
+
   const credential =
-    await signInWithEmailAndPassword(
+    await signInWithPopup(
       auth,
-      normalizedEmail,
-      password
+      provider
     );
 
   return getAppUser(
@@ -87,7 +84,7 @@ export async function login(
 }
 
 /* =========================================================
-   ログアウト
+   Logout
    ========================================================= */
 
 export async function logout() {
@@ -95,117 +92,7 @@ export async function logout() {
 }
 
 /* =========================================================
-   新規ユーザー作成
-   ========================================================= */
-
-export async function createAccount(
-  email: string,
-  password: string,
-  userData: {
-    name: string;
-    role: UserRole;
-    schoolIds?: string[];
-    studentNumber?: string;
-  }
-): Promise<AppUser> {
-  const normalizedEmail =
-    email.trim().toLowerCase();
-
-  if (!normalizedEmail) {
-    throw new Error(
-      "メールアドレスを入力してください。"
-    );
-  }
-
-  if (
-    password.length < 8
-  ) {
-    throw new Error(
-      "パスワードは8文字以上にしてください。"
-    );
-  }
-
-  if (!userData.name.trim()) {
-    throw new Error(
-      "氏名を入力してください。"
-    );
-  }
-
-  const credential =
-    await createUserWithEmailAndPassword(
-      auth,
-      normalizedEmail,
-      password
-    );
-
-  const uid =
-    credential.user.uid;
-
-  const userRef =
-    doc(
-      db,
-      "users",
-      uid
-    );
-
-  await setDoc(
-    userRef,
-    {
-      name:
-        userData.name.trim(),
-
-      email:
-        normalizedEmail,
-
-      role:
-        userData.role,
-
-      schoolIds:
-        userData.schoolIds ??
-        [],
-
-      ...(userData.studentNumber
-        ? {
-            studentNumber:
-              userData.studentNumber,
-          }
-        : {}),
-
-      active: true,
-
-      createdAt:
-        serverTimestamp(),
-
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
-
-  return {
-    uid,
-
-    email:
-      credential.user.email,
-
-    name:
-      userData.name.trim(),
-
-    role:
-      userData.role,
-
-    schoolIds:
-      userData.schoolIds ??
-      [],
-
-    studentNumber:
-      userData.studentNumber,
-
-    active: true,
-  };
-}
-
-/* =========================================================
-   現在ログイン中のユーザー
+   Current user
    ========================================================= */
 
 export async function getCurrentUser(): Promise<
@@ -224,7 +111,7 @@ export async function getCurrentUser(): Promise<
 }
 
 /* =========================================================
-   Firebase User → アプリユーザー
+   Firebase User → App User
    ========================================================= */
 
 export async function getAppUser(
@@ -242,9 +129,17 @@ export async function getAppUser(
       userRef
     );
 
-  if (!snapshot.exists()) {
+  /*
+   * Googleログイン直後にFirestoreの
+   * users/{uid} が存在しない場合。
+   *
+   * 勝手に管理者権限を付与しない。
+   */
+  if (
+    !snapshot.exists()
+  ) {
     throw new Error(
-      "ユーザー情報が登録されていません。"
+      "このGoogleアカウントはシステムに登録されていません。管理者にアカウント登録を依頼してください。"
     );
   }
 
@@ -266,12 +161,27 @@ export async function getAppUser(
     data.active !== false;
 
   if (!active) {
-    await signOut(auth);
+    await signOut(
+      auth
+    );
 
     throw new Error(
       "このアカウントは停止されています。"
     );
   }
+
+  const schoolIds =
+    Array.isArray(
+      data.schoolIds
+    )
+      ? data.schoolIds.filter(
+          (
+            value
+          ): value is string =>
+            typeof value ===
+            "string"
+        )
+      : [];
 
   return {
     uid:
@@ -284,22 +194,12 @@ export async function getAppUser(
       typeof data.name ===
       "string"
         ? data.name
-        : "",
+        : firebaseUser.displayName ??
+          "",
 
     role,
 
-    schoolIds:
-      Array.isArray(
-        data.schoolIds
-      )
-        ? data.schoolIds.filter(
-            (
-              value
-            ): value is string =>
-              typeof value ===
-              "string"
-          )
-        : [],
+    schoolIds,
 
     studentNumber:
       typeof data.studentNumber ===
@@ -308,17 +208,93 @@ export async function getAppUser(
         : undefined,
 
     active,
+
+    photoURL:
+      firebaseUser.photoURL,
   };
 }
 
 /* =========================================================
-   認証状態監視
+   Google Login後のユーザー登録
+   ========================================================= */
+
+export async function ensureGoogleUserProfile(
+  firebaseUser: User
+): Promise<AppUser> {
+  const userRef =
+    doc(
+      db,
+      "users",
+      firebaseUser.uid
+    );
+
+  const snapshot =
+    await getDoc(
+      userRef
+    );
+
+  /*
+   * 既に管理者が登録している場合。
+   */
+  if (
+    snapshot.exists()
+  ) {
+    return getAppUser(
+      firebaseUser
+    );
+  }
+
+  /*
+   * 新規Googleユーザーには
+   * 権限を与えない。
+   *
+   * active=false
+   * roleは未登録扱い。
+   *
+   * 管理者が後から正式登録する。
+   */
+  await setDoc(
+    userRef,
+    {
+      name:
+        firebaseUser.displayName ??
+        "",
+
+      email:
+        firebaseUser.email,
+
+      active:
+        false,
+
+      schoolIds:
+        [],
+
+      createdAt:
+        serverTimestamp(),
+
+      updatedAt:
+        serverTimestamp(),
+    },
+    {
+      merge:
+        true,
+    }
+  );
+
+  throw new Error(
+    "Googleアカウントを認証しましたが、まだシステムに登録されていません。管理者に登録を依頼してください。"
+  );
+}
+
+/* =========================================================
+   Auth Observer
    ========================================================= */
 
 export function observeAuth(
   callback: (
     user: AppUser | null
   ) => void,
+
   onError?: (
     error: Error
   ) => void
@@ -332,7 +308,10 @@ export function observeAuth(
         if (
           !firebaseUser
         ) {
-          callback(null);
+          callback(
+            null
+          );
+
           return;
         }
 
@@ -341,8 +320,12 @@ export function observeAuth(
             firebaseUser
           );
 
-        callback(appUser);
-      } catch (error) {
+        callback(
+          appUser
+        );
+      } catch (
+        error
+      ) {
         onError?.(
           error instanceof Error
             ? error
@@ -356,29 +339,7 @@ export function observeAuth(
 }
 
 /* =========================================================
-   パスワード再設定メール
-   ========================================================= */
-
-export async function resetPassword(
-  email: string
-) {
-  const normalizedEmail =
-    email.trim().toLowerCase();
-
-  if (!normalizedEmail) {
-    throw new Error(
-      "メールアドレスを入力してください。"
-    );
-  }
-
-  await sendPasswordResetEmail(
-    auth,
-    normalizedEmail
-  );
-}
-
-/* =========================================================
-   ログイン中ユーザーのパスワード変更
+   Password Change
    ========================================================= */
 
 export async function changePassword(
@@ -394,7 +355,8 @@ export async function changePassword(
   }
 
   if (
-    newPassword.length < 8
+    newPassword.length <
+    8
   ) {
     throw new Error(
       "パスワードは8文字以上にしてください。"
@@ -408,7 +370,7 @@ export async function changePassword(
 }
 
 /* =========================================================
-   権限確認
+   Role
    ========================================================= */
 
 export async function hasRole(
@@ -418,7 +380,8 @@ export async function hasRole(
     await getCurrentUser();
 
   return (
-    user?.role === role
+    user?.role ===
+    role
   );
 }
 
@@ -438,7 +401,7 @@ export async function hasAnyRole(
 }
 
 /* =========================================================
-   ロール検証
+   Role validation
    ========================================================= */
 
 function isValidRole(
@@ -449,7 +412,9 @@ function isValidRole(
       "本部管理者" ||
     role ===
       "校舎管理者" ||
-    role === "講師" ||
-    role === "生徒"
+    role ===
+      "講師" ||
+    role ===
+      "生徒"
   );
 }
