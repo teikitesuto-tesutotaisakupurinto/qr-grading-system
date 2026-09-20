@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import QRCode from "qrcode";
 
 type QRSheetProps = {
@@ -8,55 +8,59 @@ type QRSheetProps = {
   studentNumber: string;
 };
 
+const STICKER_COUNT = 18;
+
 export default function QRSheet({
   studentName,
   studentNumber,
 }: QRSheetProps) {
-  const [qrImage, setQrImage] = useState("");
+  const qrValue = useMemo(
+    () => studentNumber,
+    [studentNumber]
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    QRCode.toDataURL(studentNumber, {
-      width: 120,
-      margin: 1,
-      errorCorrectionLevel: "M",
-    }).then((url) => {
-      if (!cancelled) {
-        setQrImage(url);
+  const qrDataUrl = useMemo(() => {
+    return QRCode.toDataURL(
+      qrValue,
+      {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 180,
       }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [studentNumber]);
+    );
+  }, [qrValue]);
 
   return (
-    <div className="qrSheet">
-      {Array.from({ length: 18 }).map((_, index) => (
-        <div className="qrSticker" key={index}>
-          <div className="qrCodeArea">
-            {qrImage && (
+    <section className="qrSheet">
+      {Array.from(
+        {
+          length: STICKER_COUNT,
+        },
+        (_, index) => (
+          <div
+            key={index}
+            className="qrSticker"
+          >
+            <div className="qrCodeArea">
               <img
-                src={qrImage}
-                alt=""
+                src={qrDataUrl}
+                alt={`生徒番号 ${studentNumber} のQRコード`}
                 className="qrCodeImage"
               />
-            )}
-          </div>
-
-          <div className="qrStudentInfo">
-            <div className="qrStudentName">
-              {studentName}
             </div>
 
-            <div className="qrStudentNumber">
-              {studentNumber}
+            <div className="qrStudentInfo">
+              <div className="qrStudentName">
+                {studentName}
+              </div>
+
+              <div className="qrStudentNumber">
+                {studentNumber}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
-    </div>
+        )
+      )}
+    </section>
   );
 }
