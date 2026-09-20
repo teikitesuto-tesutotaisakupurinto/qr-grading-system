@@ -1,22 +1,42 @@
 import {
+  FieldValue,
   getFirestore,
 } from "firebase-admin/firestore";
 
-const db = getFirestore();
+/* =========================================================
+   Firestore
+   ========================================================= */
+
+const db =
+  getFirestore();
+
+/* =========================================================
+   型
+   ========================================================= */
 
 type ScoreDocument = {
   studentNumber: string;
+
   testId: string;
+
   subjectId: string;
+
   score: number;
+
   maxScore: number;
+
+  percentage: number;
 };
 
 type StudentInfo = {
   id: string;
+
   schoolId?: string;
+
   grade?: string;
+
   classId?: string;
+
   className?: string;
 };
 
@@ -28,433 +48,630 @@ type RankingType =
   | "subject";
 
 type RankingResult = {
-  studentNumber: string;
   testId: string;
-  subjectId: string;
+
+  studentNumber: string;
 
   rankingType: RankingType;
-  rankingKey: string;
+
+  subjectId?: string;
+
+  rank: number;
+
+  total: number;
 
   score: number;
-  rank: number;
-  participantCount: number;
 
-  calculatedAt: FirebaseFirestore.FieldValue;
+  maxScore: number;
 };
+
+/* =========================================================
+   順位計算
+   ========================================================= */
 
 export async function calculateTestRankings(
   testId: string
 ) {
+  if (!testId.trim()) {
+    throw new Error(
+      "testIdがありません。"
+    );
+  }
+
   const [
     scoresSnapshot,
     studentsSnapshot,
-  ] = await Promise.all([
-    db
-      .collection("scores")
-      .where(
-        "testId",
-        "==",
-        testId
-      )
-      .get(),
+  ] =
+    await Promise.all([
+      db
+        .collection(
+          "scores"
+        )
+        .where(
+          "testId",
+          "==",
+          testId
+        )
+        .get(),
 
-    db
-      .collection("students")
-      .get(),
-  ]);
+      db
+        .collection(
+          "students"
+        )
+        .get(),
+    ]);
 
-  if (scoresSnapshot.empty) {
+  if (
+    scoresSnapshot.empty
+  ) {
     return {
       testId,
-      processed: 0,
-      results: [],
+
+      processed:
+        0,
+
+      rankings: [],
     };
   }
 
-  const scores =
+  const scores: ScoreDocument[] =
     scoresSnapshot.docs.map(
-      (doc) =>
+      (item) =>
         ({
-          ...doc.data(),
+          studentNumber:
+            item.data()
+              .studentNumber,
+
+          testId:
+            item.data()
+              .testId,
+
+          subjectId:
+            item.data()
+              .subjectId,
+
+          score:
+            Number(
+              item.data()
+                .score ??
+                0
+            ),
+
+          maxScore:
+            Number(
+              item.data()
+                .maxScore ??
+                0
+            ),
+
+          percentage:
+            Number(
+              item.data()
+                .percentage ??
+                0
+            ),
         }) as ScoreDocument
     );
 
-  const students =
+  const students: StudentInfo[] =
     studentsSnapshot.docs.map(
-      (doc) =>
+      (item) =>
         ({
-          id: doc.id,
-          ...doc.data(),
+          id: item.id,
+
+          ...item.data(),
         }) as StudentInfo
     );
 
   const studentMap =
-    new Map(
-      students.map(
-        (student) => [
-          student.id,
-          student,
-        ]
-      )
-    );
-
-  const subjectIds =
-    Array.from(
-      new Set(
-        scores.map(
-          (score) =>
-            score.subjectId
-        )
-      )
-    );
-
-  const resultIds: string[] =
-    [];
-
-  for (
-    const subjectId of
-      subjectIds
-  ) {
-    const subjectScores =
-      scores.filter(
-        (score) =>
-          score.subjectId ===
-          subjectId
-      );
-
-    /*
-     * 全校
-     */
-    await calculatePopulationRanking(
-      testId,
-      subjectId,
-      subjectScores,
-      "overall",
-      "all",
-      resultIds
-    );
-
-    /*
-     * 校舎
-     */
-    const schoolGroups =
-      groupBy(
-        subjectScores,
-        (score) =>
-          studentMap.get(
-            score.studentNumber
-          )?.schoolId ?? ""
-      );
-
-    for (
-      const [
-        schoolId,
-        group,
-      ] of schoolGroups
-    ) {
-      if (!schoolId) {
-        continue;
-      }
-
-      await calculatePopulationRanking(
-        testId,
-        subjectId,
-        group,
-        "school",
-        schoolId,
-        resultIds
-      );
-    }
-
-    /*
-     * 学年
-     */
-    const gradeGroups =
-      groupBy(
-        subjectScores,
-        (score) =>
-          studentMap.get(
-            score.studentNumber
-          )?.grade ?? ""
-      );
-
-    for (
-      const [
-        grade,
-        group,
-      ] of gradeGroups
-    ) {
-      if (!grade) {
-        continue;
-      }
-
-      await calculatePopulationRanking(
-        testId,
-        subjectId,
-        group,
-        "grade",
-        grade,
-        resultIds
-      );
-    }
-
-    /*
-     * クラス
-     */
-    const classGroups =
-      groupBy(
-        subjectScores,
-        (score) => {
-          const student =
-            studentMap.get(
-              score.studentNumber
-            );
-
-          return (
-            student?.classId ??
-            student?.className ??
-            ""
-          );
-        }
-      );
-
-    for (
-      const [
-        classId,
-        group,
-      ] of classGroups
-    ) {
-      if (!classId) {
-        continue;
-      }
-
-      await calculatePopulationRanking(
-        testId,
-        subjectId,
-        group,
-        "class",
-        classId,
-        resultIds
-      );
-    }
-
-    /*
-     * 教科別順位は、
-     * subjectId自体をキーとして保存。
-     *
-     * 教科ごとの全校順位と同じ母集団なので、
-     * subjectタイプとしても保持します。
-     */
-    await calculatePopulationRanking(
-      testId,
-      subjectId,
-      subjectScores,
-      "subject",
-      subjectId,
-      resultIds
-    );
-  }
-
-  return {
-    testId,
-    processed:
-      resultIds.length,
-    results: resultIds,
-  };
-}
-
-async function calculatePopulationRanking(
-  testId: string,
-  subjectId: string,
-  scores: ScoreDocument[],
-  rankingType: RankingType,
-  rankingKey: string,
-  resultIds: string[]
-) {
-  if (scores.length === 0) {
-    return;
-  }
-
-  /*
-   * 高得点順。
-   */
-  const sorted =
-    [...scores].sort(
-      (a, b) =>
-        b.score - a.score
-    );
-
-  /*
-   * 同点は同順位。
-   *
-   * 例：
-   *
-   * 90点 → 1位
-   * 90点 → 1位
-   * 85点 → 3位
-   */
-  const ranks =
     new Map<
       string,
-      number
+      StudentInfo
     >();
 
-  let previousScore:
-    | number
-    | undefined;
-
-  let previousRank = 0;
-
   for (
-    let index = 0;
-    index < sorted.length;
-    index++
+    const student of
+      students
   ) {
-    const current =
-      sorted[index];
-
-    const rank =
-      previousScore ===
-      current.score
-        ? previousRank
-        : index + 1;
-
-    ranks.set(
-      current.studentNumber,
-      rank
+    studentMap.set(
+      student.id,
+      student
     );
-
-    previousScore =
-      current.score;
-
-    previousRank =
-      rank;
   }
 
-  /*
-   * Firestoreの1バッチ上限を考慮。
-   */
-  const batchSize = 400;
+  const totalScores =
+    calculateTotalScores(
+      scores
+    );
+
+  const results:
+    RankingResult[] =
+    [];
+
+  /* =======================================================
+     全校順位
+     ======================================================= */
+
+  const overall =
+    createRanking(
+      totalScores
+    );
+
+  results.push(
+    ...overall.map(
+      (item) => ({
+        testId,
+
+        studentNumber:
+          item.studentNumber,
+
+        rankingType:
+          "overall",
+
+        rank:
+          item.rank,
+
+        total:
+          item.total,
+
+        score:
+          item.score,
+
+        maxScore:
+          item.maxScore,
+      })
+    )
+  );
+
+  /* =======================================================
+     校舎順位
+     ======================================================= */
+
+  const schoolGroups =
+    groupBy(
+      totalScores,
+      (item) =>
+        studentMap.get(
+          item.studentNumber
+        )?.schoolId ??
+        ""
+    );
+
+  for (
+    const [
+      schoolId,
+      group,
+    ] of schoolGroups
+  ) {
+    if (!schoolId) {
+      continue;
+    }
+
+    const ranking =
+      createRanking(
+        group
+      );
+
+    results.push(
+      ...ranking.map(
+        (item) => ({
+          testId,
+
+          studentNumber:
+            item.studentNumber,
+
+          rankingType:
+            "school",
+
+          rank:
+            item.rank,
+
+          total:
+            item.total,
+
+          score:
+            item.score,
+
+          maxScore:
+            item.maxScore,
+        })
+      )
+    );
+  }
+
+  /* =======================================================
+     学年順位
+     ======================================================= */
+
+  const gradeGroups =
+    groupBy(
+      totalScores,
+      (item) =>
+        studentMap.get(
+          item.studentNumber
+        )?.grade ??
+        ""
+    );
+
+  for (
+    const [
+      grade,
+      group,
+    ] of gradeGroups
+  ) {
+    if (!grade) {
+      continue;
+    }
+
+    const ranking =
+      createRanking(
+        group
+      );
+
+    results.push(
+      ...ranking.map(
+        (item) => ({
+          testId,
+
+          studentNumber:
+            item.studentNumber,
+
+          rankingType:
+            "grade",
+
+          rank:
+            item.rank,
+
+          total:
+            item.total,
+
+          score:
+            item.score,
+
+          maxScore:
+            item.maxScore,
+        })
+      )
+    );
+  }
+
+  /* =======================================================
+     クラス順位
+     ======================================================= */
+
+  const classGroups =
+    groupBy(
+      totalScores,
+      (item) =>
+        studentMap.get(
+          item.studentNumber
+        )?.classId ??
+        ""
+    );
+
+  for (
+    const [
+      classId,
+      group,
+    ] of classGroups
+  ) {
+    if (!classId) {
+      continue;
+    }
+
+    const ranking =
+      createRanking(
+        group
+      );
+
+    results.push(
+      ...ranking.map(
+        (item) => ({
+          testId,
+
+          studentNumber:
+            item.studentNumber,
+
+          rankingType:
+            "class",
+
+          rank:
+            item.rank,
+
+          total:
+            item.total,
+
+          score:
+            item.score,
+
+          maxScore:
+            item.maxScore,
+        })
+      )
+    );
+  }
+
+  /* =======================================================
+     教科別順位
+     ======================================================= */
+
+  const subjectGroups =
+    groupBy(
+      scores,
+      (item) =>
+        item.subjectId
+    );
+
+  for (
+    const [
+      subjectId,
+      group,
+    ] of subjectGroups
+  ) {
+    const subjectRanking =
+      createRanking(
+        group.map(
+          (item) => ({
+            studentNumber:
+              item.studentNumber,
+
+            score:
+              item.score,
+
+            maxScore:
+              item.maxScore,
+
+            total:
+              item.score,
+          })
+        )
+      );
+
+    results.push(
+      ...subjectRanking.map(
+        (item) => ({
+          testId,
+
+          studentNumber:
+            item.studentNumber,
+
+          rankingType:
+            "subject",
+
+          subjectId,
+
+          rank:
+            item.rank,
+
+          total:
+            item.total,
+
+          score:
+            item.score,
+
+          maxScore:
+            item.maxScore,
+        })
+      )
+    );
+  }
+
+  /* =======================================================
+     Firestore保存
+     ======================================================= */
+
+  const BATCH_SIZE = 400;
 
   for (
     let start = 0;
-    start < sorted.length;
-    start += batchSize
+    start < results.length;
+    start += BATCH_SIZE
   ) {
     const batch =
       db.batch();
 
     const chunk =
-      sorted.slice(
+      results.slice(
         start,
-        start + batchSize
+        start +
+          BATCH_SIZE
       );
 
     for (
-      const score of chunk
+      const result of
+        chunk
     ) {
-      const rank =
-        ranks.get(
-          score.studentNumber
-        ) ?? sorted.length;
+      const documentId = [
+        result.testId,
 
-      const resultId =
-        [
-          testId,
-          subjectId,
-          score.studentNumber,
-          rankingType,
-          rankingKey,
-        ].join("_");
+        result.rankingType,
 
-      const reference =
+        result.subjectId ??
+          "all",
+
+        result.studentNumber,
+      ].join("_");
+
+      batch.set(
         db
           .collection(
             "rankings"
           )
-          .doc(resultId);
+          .doc(
+            documentId
+          ),
+        {
+          testId:
+            result.testId,
 
-      const result:
-        RankingResult = {
           studentNumber:
-            score.studentNumber,
+            result.studentNumber,
 
-          testId,
+          rankingType:
+            result.rankingType,
 
-          subjectId,
+          ...(result.subjectId
+            ? {
+                subjectId:
+                  result.subjectId,
+              }
+            : {}),
 
-          rankingType,
+          rank:
+            result.rank,
 
-          rankingKey,
+          total:
+            result.total,
 
           score:
-            score.score,
+            result.score,
 
-          rank,
-
-          participantCount:
-            sorted.length,
+          maxScore:
+            result.maxScore,
 
           calculatedAt:
-            FirebaseFirestore.FieldValue.serverTimestamp(),
-        };
-
-      batch.set(
-        reference,
-        result,
-        {
-          merge: true,
-        }
-      );
-
-      /*
-       * scoresにも順位を保存。
-       */
-      const scoreReference =
-        db
-          .collection("scores")
-          .doc(
-            `${testId}_${subjectId}_${score.studentNumber}`
-          );
-
-      const fieldName =
-        rankingType ===
-        "subject"
-          ? "subjectRank"
-          : `${rankingType}Rank`;
-
-      batch.set(
-        scoreReference,
-        {
-          rankings: {
-            [fieldName]: {
-              key:
-                rankingKey,
-
-              rank,
-
-              participantCount:
-                sorted.length,
-            },
-          },
+            FieldValue.serverTimestamp(),
         },
         {
           merge: true,
         }
       );
-
-      resultIds.push(
-        resultId
-      );
     }
 
     await batch.commit();
   }
+
+  return {
+    testId,
+
+    processed:
+      results.length,
+
+    rankings:
+      results,
+  };
 }
 
+/* =========================================================
+   合計点
+   ========================================================= */
+
+function calculateTotalScores(
+  scores: ScoreDocument[]
+) {
+  const map =
+    new Map<
+      string,
+      {
+        studentNumber: string;
+
+        score: number;
+
+        maxScore: number;
+
+        total: number;
+      }
+    >();
+
+  for (
+    const score of
+      scores
+  ) {
+    const current =
+      map.get(
+        score.studentNumber
+      ) ?? {
+        studentNumber:
+          score.studentNumber,
+
+        score: 0,
+
+        maxScore: 0,
+
+        total: 0,
+      };
+
+    current.score +=
+      score.score;
+
+    current.maxScore +=
+      score.maxScore;
+
+    current.total =
+      current.score;
+
+    map.set(
+      score.studentNumber,
+      current
+    );
+  }
+
+  return Array.from(
+    map.values()
+  );
+}
+
+/* =========================================================
+   順位
+   ========================================================= */
+
+function createRanking(
+  values: Array<{
+    studentNumber: string;
+
+    score: number;
+
+    maxScore: number;
+
+    total: number;
+  }>
+) {
+  const sorted =
+    [...values].sort(
+      (a, b) =>
+        b.score -
+        a.score
+    );
+
+  let previousScore:
+    | number
+    | null = null;
+
+  let previousRank =
+    0;
+
+  return sorted.map(
+    (item, index) => {
+      const rank =
+        previousScore ===
+        item.score
+          ? previousRank
+          : index + 1;
+
+      previousScore =
+        item.score;
+
+      previousRank =
+        rank;
+
+      return {
+        ...item,
+
+        rank,
+      };
+    }
+  );
+}
+
+/* =========================================================
+   グループ化
+   ========================================================= */
+
 function groupBy<T>(
-  items: T[],
-  getKey: (item: T) => string
+  values: T[],
+  getKey: (
+    value: T
+  ) => string
 ): Map<string, T[]> {
   const groups =
     new Map<
@@ -463,21 +680,25 @@ function groupBy<T>(
     >();
 
   for (
-    const item of items
+    const value of
+      values
   ) {
     const key =
-      getKey(item);
+      getKey(value);
 
-    if (!groups.has(key)) {
-      groups.set(
-        key,
-        []
-      );
-    }
+    const group =
+      groups.get(
+        key
+      ) ?? [];
 
-    groups
-      .get(key)!
-      .push(item);
+    group.push(
+      value
+    );
+
+    groups.set(
+      key,
+      group
+    );
   }
 
   return groups;
