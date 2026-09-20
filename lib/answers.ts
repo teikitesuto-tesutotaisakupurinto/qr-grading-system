@@ -11,14 +11,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
-  writeBatch,
 } from "firebase/firestore";
-
-import {
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from "firebase/storage";
 
 import {
   httpsCallable,
@@ -26,7 +19,6 @@ import {
 
 import {
   db,
-  storage,
 } from "@/lib/firebase";
 
 import {
@@ -51,11 +43,12 @@ export type Answer = {
 
   studentNumber?: string;
 
-  filePath: string;
-  downloadUrl?: string;
+  fileKey: string;
 
   fileName: string;
+
   contentType: string;
+
   size: number;
 
   status: AnswerStatus;
@@ -68,13 +61,14 @@ export type Answer = {
   updatedAt?: unknown;
 };
 
-export type UploadAnswerInput = {
-  testId: string;
-  subjectId: string;
+type CreateUploadUrlResponse = {
+  success: boolean;
 
-  studentNumber?: string;
+  answerId: string;
 
-  file: File;
+  fileKey: string;
+
+  uploadUrl: string;
 };
 
 /* =========================================================
@@ -104,7 +98,7 @@ export async function getAnswer(
 }
 
 /* =========================================================
-   テスト・教科別答案取得
+   答案一覧
    ========================================================= */
 
 export async function getAnswers(
@@ -136,23 +130,20 @@ export async function getAnswers(
     );
   }
 
-  const answerQuery =
-    query(
-      collection(
-        db,
-        "answers"
-      ),
-      ...constraints,
-      orderBy(
-        "createdAt",
-        "asc"
-      ),
-      limit(1000)
-    );
-
   const snapshot =
     await getDocs(
-      answerQuery
+      query(
+        collection(
+          db,
+          "answers"
+        ),
+        ...constraints,
+        orderBy(
+          "createdAt",
+          "asc"
+        ),
+        limit(1000)
+      )
     );
 
   return snapshot.docs.map(
@@ -165,110 +156,126 @@ export async function getAnswers(
 }
 
 /* =========================================================
+   Supabase署名付きアップロードURL
+   ========================================================= */
+
+async function requestUploadUrl(
+  input: {
+    testId: string;
+    subjectId: string;
+
+    fileName: string;
+    contentType: string;
+    size: number;
+
+    studentNumber?: string;
+  }
+): Promise<CreateUploadUrlResponse> {
+  const callable =
+    httpsCallable<
+      {
+        testId: string;
+        subjectId: string;
+
+        fileName: string;
+        contentType: string;
+        size: number;
+
+        studentNumber?: string;
+      },
+      CreateUploadUrlResponse
+    >(
+      functions,
+      "createAnswerUploadUrl"
+    );
+
+  const result =
+    await callable(input);
+
+  return result.data;
+}
+
+/* =========================================================
    答案アップロード
    ========================================================= */
 
 export async function uploadAnswer(
-  input: UploadAnswerInput
+  input: {
+    testId: string;
+    subjectId: string;
+
+    studentNumber?: string;
+
+    file: File;
+  }
 ): Promise<Answer> {
-  validateUpload(
-    input
+  validateFile(
+    input.file
   );
 
-  const answerRef =
-    doc(
-      collection(
-        db,
-        "answers"
-      )
-    );
+  const upload =
+    await requestUploadUrl({
+      testId:
+        input.testId,
 
-  const answerId =
-    answerRef.id;
+      subjectId:
+        input.subjectId,
 
-  const extension =
-    getExtension(
-      input.file.name
-    );
+      fileName:
+        input.file.name,
 
-  const filePath =
-    [
-      "answers",
-      input.testId,
-      input.subjectId,
-      input.studentNumber ??
-        "unassigned",
-      `${answerId}.${extension}`,
-    ].join("/");
-
-  const storageReference =
-    ref(
-      storage,
-      filePath
-    );
-
-  await uploadBytes(
-    storageReference,
-    input.file,
-    {
       contentType:
         input.file.type,
-      customMetadata: {
-        answerId,
-        testId:
-          input.testId,
-        subjectId:
-          input.subjectId,
-      },
-    }
-  );
 
-  const downloadUrl =
-    await getDownloadURL(
-      storageReference
+      size:
+        input.file.size,
+
+      studentNumber:
+        input.studentNumber,
+    });
+
+  /*
+   * ブラウザ → Supabase Storage
+   *
+   * Secret keyはブラウザには渡さない。
+   */
+  const response =
+    await fetch(
+      upload.uploadUrl,
+      {
+        method:
+          "PUT",
+
+        headers: {
+          "Content-Type":
+            input.file.type,
+        },
+
+        body:
+          input.file,
+      }
     );
 
-  const answer: Answer = {
-    id: answerId,
+  if (!response.ok) {
+    throw new Error(
+      `答案ファイルのアップロードに失敗しました。HTTP ${response.status}`
+    );
+  }
 
-    testId:
-      input.testId,
+  /*
+   * Functions側で作成された
+   * Firestore answersドキュメントを取得。
+   */
+  const answer =
+    await getAnswer(
+      upload.answerId
+    );
 
-    subjectId:
-      input.subjectId,
-
-    studentNumber:
-      input.studentNumber,
-
-    filePath,
-
-    downloadUrl,
-
-    fileName:
-      input.file.name,
-
-    contentType:
-      input.file.type,
-
-    size:
-      input.file.size,
-
-    status:
-      "uploaded",
-  };
-
-  await updateDoc(
-    answerRef,
-    {
-      ...answer,
-
-      createdAt:
-        serverTimestamp(),
-
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
+  if (!answer) {
+    throw new Error(
+      "答案情報を取得できませんでした。"
+    );
+  }
 
   return answer;
 }
@@ -278,18 +285,17 @@ export async function uploadAnswer(
    ========================================================= */
 
 export async function uploadAnswers(
-  inputs: UploadAnswerInput[],
+  inputs: Array<{
+    testId: string;
+    subjectId: string;
+    studentNumber?: string;
+    file: File;
+  }>,
   onProgress?: (
     completed: number,
     total: number
   ) => void
 ): Promise<Answer[]> {
-  if (
-    inputs.length === 0
-  ) {
-    return [];
-  }
-
   const results: Answer[] =
     [];
 
@@ -324,15 +330,12 @@ export async function updateAnswerStatus(
   answerId: string,
   status: AnswerStatus
 ) {
-  const reference =
+  await updateDoc(
     doc(
       db,
       "answers",
       answerId
-    );
-
-  await updateDoc(
-    reference,
+    ),
     {
       status,
 
@@ -360,15 +363,12 @@ export async function assignAnswerStudent(
     );
   }
 
-  const reference =
+  await updateDoc(
     doc(
       db,
       "answers",
       answerId
-    );
-
-  await updateDoc(
-    reference,
+    ),
     {
       studentNumber,
 
@@ -404,8 +404,11 @@ export async function startAutoGrading(
       },
       {
         success: boolean;
+
         jobId: string;
+
         total: number;
+
         status: string;
       }
     >(
@@ -416,7 +419,9 @@ export async function startAutoGrading(
   const result =
     await callable({
       testId,
+
       subjectId,
+
       answerIds,
     });
 
@@ -424,12 +429,43 @@ export async function startAutoGrading(
 }
 
 /* =========================================================
-   処理ジョブ取得
+   採点ジョブ取得
    ========================================================= */
+
+export type GradingJob = {
+  id: string;
+
+  testId?: string;
+  subjectId?: string;
+
+  status:
+    | "queued"
+    | "processing"
+    | "completed"
+    | "completed_with_errors"
+    | "failed"
+    | string;
+
+  total: number;
+
+  processed: number;
+
+  succeeded: number;
+
+  reviewRequired: number;
+
+  errors: number;
+
+  currentChunk?: number;
+
+  totalChunks?: number;
+
+  errorMessage?: string;
+};
 
 export async function getGradingJob(
   jobId: string
-) {
+): Promise<GradingJob | null> {
   const snapshot =
     await getDoc(
       doc(
@@ -443,14 +479,83 @@ export async function getGradingJob(
     return null;
   }
 
+  const data =
+    snapshot.data();
+
   return {
-    id: snapshot.id,
-    ...snapshot.data(),
+    id:
+      snapshot.id,
+
+    testId:
+      typeof data.testId ===
+      "string"
+        ? data.testId
+        : undefined,
+
+    subjectId:
+      typeof data.subjectId ===
+      "string"
+        ? data.subjectId
+        : undefined,
+
+    status:
+      typeof data.status ===
+      "string"
+        ? data.status
+        : "queued",
+
+    total:
+      Number(
+        data.total ?? 0
+      ),
+
+    processed:
+      Number(
+        data.processed ?? 0
+      ),
+
+    succeeded:
+      Number(
+        data.succeeded ?? 0
+      ),
+
+    reviewRequired:
+      Number(
+        data.reviewRequired ??
+          0
+      ),
+
+    errors:
+      Number(
+        data.errors ?? 0
+      ),
+
+    currentChunk:
+      data.currentChunk !==
+      undefined
+        ? Number(
+            data.currentChunk
+          )
+        : undefined,
+
+    totalChunks:
+      data.totalChunks !==
+      undefined
+        ? Number(
+            data.totalChunks
+          )
+        : undefined,
+
+    errorMessage:
+      typeof data.errorMessage ===
+      "string"
+        ? data.errorMessage
+        : undefined,
   };
 }
 
 /* =========================================================
-   答案を再処理
+   答案再処理
    ========================================================= */
 
 export async function retryAnswer(
@@ -472,14 +577,11 @@ export async function retryAnswer(
     "uploaded"
   );
 
-  const result =
-    await startAutoGrading(
-      answer.testId,
-      answer.subjectId,
-      [answerId]
-    );
-
-  return result;
+  return startAutoGrading(
+    answer.testId,
+    answer.subjectId,
+    [answerId]
+  );
 }
 
 /* =========================================================
@@ -493,34 +595,19 @@ export async function confirmAnswers(
     answerIds.length === 0
   ) {
     throw new Error(
-      "確定対象の答案がありません。"
+      "確定する答案がありません。"
     );
   }
-
-  const batch =
-    writeBatch(db);
 
   for (
     const answerId of
       answerIds
   ) {
-    batch.update(
-      doc(
-        db,
-        "answers",
-        answerId
-      ),
-      {
-        status:
-          "confirmed",
-
-        updatedAt:
-          serverTimestamp(),
-      }
+    await updateAnswerStatus(
+      answerId,
+      "confirmed"
     );
   }
-
-  await batch.commit();
 }
 
 /* =========================================================
@@ -534,79 +621,28 @@ export async function publishAnswers(
     answerIds.length === 0
   ) {
     throw new Error(
-      "公開対象の答案がありません。"
+      "公開する答案がありません。"
     );
   }
-
-  const batch =
-    writeBatch(db);
 
   for (
     const answerId of
       answerIds
   ) {
-    batch.update(
-      doc(
-        db,
-        "answers",
-        answerId
-      ),
-      {
-        status:
-          "published",
-
-        publishedAt:
-          serverTimestamp(),
-
-        updatedAt:
-          serverTimestamp(),
-      }
+    await updateAnswerStatus(
+      answerId,
+      "published"
     );
   }
-
-  await batch.commit();
 }
 
 /* =========================================================
-   バリデーション
+   ファイル検証
    ========================================================= */
 
-function validateUpload(
-  input: UploadAnswerInput
+function validateFile(
+  file: File
 ) {
-  if (
-    !input.testId.trim()
-  ) {
-    throw new Error(
-      "テストIDがありません。"
-    );
-  }
-
-  if (
-    !input.subjectId.trim()
-  ) {
-    throw new Error(
-      "教科IDがありません。"
-    );
-  }
-
-  if (
-    input.studentNumber &&
-    !/^\d{6}$/.test(
-      input.studentNumber
-    )
-  ) {
-    throw new Error(
-      "生徒番号は6桁数字で指定してください。"
-    );
-  }
-
-  if (!input.file) {
-    throw new Error(
-      "答案ファイルがありません。"
-    );
-  }
-
   const allowedTypes = [
     "application/pdf",
     "image/jpeg",
@@ -615,7 +651,7 @@ function validateUpload(
 
   if (
     !allowedTypes.includes(
-      input.file.type
+      file.type
     )
   ) {
     throw new Error(
@@ -624,37 +660,24 @@ function validateUpload(
   }
 
   const maxSize =
-    20 * 1024 * 1024;
+    20 *
+    1024 *
+    1024;
 
   if (
-    input.file.size >
+    file.size <= 0
+  ) {
+    throw new Error(
+      "空のファイルはアップロードできません。"
+    );
+  }
+
+  if (
+    file.size >
     maxSize
   ) {
     throw new Error(
       "答案ファイルは20MB以下にしてください。"
     );
   }
-}
-
-/* =========================================================
-   拡張子
-   ========================================================= */
-
-function getExtension(
-  fileName: string
-): string {
-  const parts =
-    fileName.split(".");
-
-  if (
-    parts.length < 2
-  ) {
-    return "bin";
-  }
-
-  return (
-    parts[
-      parts.length - 1
-    ].toLowerCase()
-  );
 }
