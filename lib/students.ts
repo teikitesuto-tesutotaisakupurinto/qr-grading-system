@@ -1,6 +1,7 @@
+"use client";
+
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -12,7 +13,7 @@ import {
   startAfter,
   updateDoc,
   where,
-  DocumentSnapshot,
+  type DocumentSnapshot,
 } from "firebase/firestore";
 
 import {
@@ -27,12 +28,14 @@ export type StudentStatus =
 
 export type Student = {
   id: string;
+
   name: string;
 
   schoolId: string;
   schoolName: string;
 
   grade: string;
+
   classId?: string;
   className: string;
 
@@ -52,6 +55,7 @@ export type StudentFilters = {
 
 export type StudentPage = {
   students: Student[];
+
   lastDocument:
     | DocumentSnapshot
     | null;
@@ -65,21 +69,15 @@ const STUDENT_COLLECTION =
 const PAGE_SIZE = 100;
 
 /* =========================================================
-   生徒取得
+   1人取得
    ========================================================= */
 
 export async function getStudent(
   studentNumber: string
 ): Promise<Student | null> {
-  if (
-    !/^\d{6}$/.test(
-      studentNumber
-    )
-  ) {
-    throw new Error(
-      "生徒番号は6桁数字で指定してください。"
-    );
-  }
+  validateStudentNumber(
+    studentNumber
+  );
 
   const snapshot =
     await getDoc(
@@ -101,10 +99,26 @@ export async function getStudent(
 }
 
 /* =========================================================
-   生徒一覧
+   一覧
    ========================================================= */
 
 export async function getStudents(
+  filters: StudentFilters = {}
+): Promise<Student[]> {
+  const page =
+    await getStudentsPage(
+      filters,
+      null
+    );
+
+  return page.students;
+}
+
+/* =========================================================
+   ページング一覧
+   ========================================================= */
+
+export async function getStudentsPage(
   filters: StudentFilters = {},
   cursor:
     | DocumentSnapshot
@@ -152,13 +166,6 @@ export async function getStudents(
     );
   }
 
-  /*
-   * keyword検索はFirestoreだけでは
-   * 部分一致検索ができないため、
-   * 本番では専用検索インデックスを追加する。
-   *
-   * 現時点では取得後の完全一致候補として扱う。
-   */
   const studentQuery =
     query(
       collection(
@@ -177,7 +184,9 @@ export async function getStudents(
             ),
           ]
         : []),
-      limit(PAGE_SIZE)
+      limit(
+        PAGE_SIZE
+      )
     );
 
   const snapshot =
@@ -207,10 +216,14 @@ export async function getStudents(
         (student) =>
           student.id
             .toLowerCase()
-            .includes(keyword) ||
+            .includes(
+              keyword
+            ) ||
           student.name
             .toLowerCase()
-            .includes(keyword)
+            .includes(
+              keyword
+            )
       );
   }
 
@@ -232,7 +245,7 @@ export async function getStudents(
 }
 
 /* =========================================================
-   生徒登録
+   生徒作成
    ========================================================= */
 
 export async function createStudent(
@@ -290,7 +303,7 @@ export async function createStudent(
       input.name.trim(),
 
     schoolId:
-      input.schoolId,
+      input.schoolId.trim(),
 
     schoolName:
       input.schoolName.trim(),
@@ -299,7 +312,7 @@ export async function createStudent(
       input.grade.trim(),
 
     classId:
-      input.classId,
+      input.classId?.trim(),
 
     className:
       input.className.trim(),
@@ -326,16 +339,13 @@ export async function createStudent(
 }
 
 /* =========================================================
-   生徒更新
+   更新
    ========================================================= */
 
 export async function updateStudent(
   studentNumber: string,
   changes: Partial<
-    Omit<
-      Student,
-      "id"
-    >
+    Omit<Student, "id">
   >
 ) {
   validateStudentNumber(
@@ -360,7 +370,7 @@ export async function updateStudent(
     );
   }
 
-  const updateData: Record<
+  const data: Record<
     string,
     unknown
   > = {
@@ -370,16 +380,27 @@ export async function updateStudent(
       serverTimestamp(),
   };
 
-  if (changes.name !== undefined) {
-    updateData.name =
+  if (
+    changes.name !==
+    undefined
+  ) {
+    data.name =
       changes.name.trim();
+  }
+
+  if (
+    changes.schoolId !==
+    undefined
+  ) {
+    data.schoolId =
+      changes.schoolId.trim();
   }
 
   if (
     changes.schoolName !==
     undefined
   ) {
-    updateData.schoolName =
+    data.schoolName =
       changes.schoolName.trim();
   }
 
@@ -387,7 +408,7 @@ export async function updateStudent(
     changes.grade !==
     undefined
   ) {
-    updateData.grade =
+    data.grade =
       changes.grade.trim();
   }
 
@@ -395,64 +416,201 @@ export async function updateStudent(
     changes.className !==
     undefined
   ) {
-    updateData.className =
+    data.className =
       changes.className.trim();
   }
 
-  await updateDoc(
-    reference,
-    updateData
-  );
-}
-
-/* =========================================================
-   生徒削除
-   ========================================================= */
-
-export async function deleteStudent(
-  studentNumber: string
-) {
-  validateStudentNumber(
-    studentNumber
-  );
-
-  const reference =
-    doc(
-      db,
-      STUDENT_COLLECTION,
-      studentNumber
-    );
-
-  const existing =
-    await getDoc(
-      reference
-    );
-
-  if (!existing.exists()) {
-    throw new Error(
-      "削除対象の生徒が存在しません。"
-    );
+  if (
+    changes.classId !==
+    undefined
+  ) {
+    data.classId =
+      changes.classId?.trim();
   }
 
-  /*
-   * 本番運用では成績・答案を保持するため、
-   * 原則として物理削除ではなく
-   * 退塾状態に変更する運用を推奨。
-   */
   await updateDoc(
     reference,
-    {
-      status:
-        "退塾",
-
-      updatedAt:
-        serverTimestamp(),
-    }
+    data
   );
 }
 
 /* =========================================================
-   生徒番号発行
+   CSV
+   ========================================================= */
+
+export async function updateStudentsFromCsv(
+  rows: Array<
+    Record<string, string>
+  >
+): Promise<{
+  updated: number;
+  created: number;
+
+  errors: Array<{
+    row: number;
+    message: string;
+  }>;
+}> {
+  let updated = 0;
+  let created = 0;
+
+  const errors: Array<{
+    row: number;
+    message: string;
+  }> = [];
+
+  for (
+    let index = 0;
+    index < rows.length;
+    index++
+  ) {
+    const row =
+      rows[index];
+
+    try {
+      const studentNumber =
+        row["生徒番号"]
+          ?.trim();
+
+      const name =
+        row["氏名"]
+          ?.trim();
+
+      const schoolId =
+        row["校舎ID"]
+          ?.trim() ||
+        row["校舎"]
+          ?.trim();
+
+      const schoolName =
+        row["校舎名"]
+          ?.trim() ||
+        row["校舎"]
+          ?.trim();
+
+      const grade =
+        row["学年"]
+          ?.trim();
+
+      const classId =
+        row["クラスID"]
+          ?.trim();
+
+      const className =
+        row["クラス"]
+          ?.trim();
+
+      const status =
+        row["在籍状況"]
+          ?.trim() ||
+        "在籍";
+
+      if (!studentNumber) {
+        throw new Error(
+          "生徒番号がありません。"
+        );
+      }
+
+      if (!name) {
+        throw new Error(
+          "氏名がありません。"
+        );
+      }
+
+      if (!schoolId) {
+        throw new Error(
+          "校舎がありません。"
+        );
+      }
+
+      if (!schoolName) {
+        throw new Error(
+          "校舎名がありません。"
+        );
+      }
+
+      if (!grade) {
+        throw new Error(
+          "学年がありません。"
+        );
+      }
+
+      if (!className) {
+        throw new Error(
+          "クラスがありません。"
+        );
+      }
+
+      validateStudentNumber(
+        studentNumber
+      );
+
+      if (
+        !isStudentStatus(
+          status
+        )
+      ) {
+        throw new Error(
+          "在籍状況が不正です。"
+        );
+      }
+
+      const existing =
+        await getStudent(
+          studentNumber
+        );
+
+      if (existing) {
+        await updateStudent(
+          studentNumber,
+          {
+            name,
+            schoolId,
+            schoolName,
+            grade,
+            classId,
+            className,
+            status,
+          }
+        );
+
+        updated++;
+      } else {
+        await createStudent({
+          studentNumber,
+          name,
+          schoolId,
+          schoolName,
+          grade,
+          classId,
+          className,
+          status,
+        });
+
+        created++;
+      }
+    } catch (error) {
+      errors.push({
+        row:
+          index + 2,
+
+        message:
+          error instanceof Error
+            ? error.message
+            : "登録に失敗しました。",
+      });
+    }
+  }
+
+  return {
+    updated,
+    created,
+    errors,
+  };
+}
+
+/* =========================================================
+   生徒番号
    ========================================================= */
 
 export async function generateStudentNumber(): Promise<string> {
@@ -470,16 +628,13 @@ export async function generateStudentNumber(): Promise<string> {
         )
       );
 
-    const reference =
-      doc(
-        db,
-        STUDENT_COLLECTION,
-        number
-      );
-
     const snapshot =
       await getDoc(
-        reference
+        doc(
+          db,
+          STUDENT_COLLECTION,
+          number
+        )
       );
 
     if (!snapshot.exists()) {
@@ -493,88 +648,34 @@ export async function generateStudentNumber(): Promise<string> {
 }
 
 /* =========================================================
-   クラス別生徒取得
-   ========================================================= */
-
-export async function getStudentsByClass(
-  classId: string
-): Promise<Student[]> {
-  if (!classId.trim()) {
-    return [];
-  }
-
-  const studentQuery =
-    query(
-      collection(
-        db,
-        STUDENT_COLLECTION
-      ),
-      where(
-        "classId",
-        "==",
-        classId
-      ),
-      where(
-        "status",
-        "==",
-        "在籍"
-      ),
-      orderBy(
-        "name",
-        "asc"
-      )
-    );
-
-  const snapshot =
-    await getDocs(
-      studentQuery
-    );
-
-  return snapshot.docs.map(
-    (item) =>
-      convertStudent(
-        item.id,
-        item.data()
-      )
-  );
-}
-
-/* =========================================================
-   校舎別生徒取得
+   校舎
    ========================================================= */
 
 export async function getStudentsBySchool(
   schoolId: string
 ): Promise<Student[]> {
-  if (!schoolId.trim()) {
-    return [];
-  }
-
-  const studentQuery =
-    query(
-      collection(
-        db,
-        STUDENT_COLLECTION
-      ),
-      where(
-        "schoolId",
-        "==",
-        schoolId
-      ),
-      where(
-        "status",
-        "==",
-        "在籍"
-      ),
-      orderBy(
-        "name",
-        "asc"
-      )
-    );
-
   const snapshot =
     await getDocs(
-      studentQuery
+      query(
+        collection(
+          db,
+          STUDENT_COLLECTION
+        ),
+        where(
+          "schoolId",
+          "==",
+          schoolId
+        ),
+        where(
+          "status",
+          "==",
+          "在籍"
+        ),
+        orderBy(
+          "name",
+          "asc"
+        )
+      )
     );
 
   return snapshot.docs.map(
@@ -587,43 +688,40 @@ export async function getStudentsBySchool(
 }
 
 /* =========================================================
-   学年別生徒取得
+   学年
    ========================================================= */
 
 export async function getStudentsByGrade(
   schoolId: string,
   grade: string
 ): Promise<Student[]> {
-  const studentQuery =
-    query(
-      collection(
-        db,
-        STUDENT_COLLECTION
-      ),
-      where(
-        "schoolId",
-        "==",
-        schoolId
-      ),
-      where(
-        "grade",
-        "==",
-        grade
-      ),
-      where(
-        "status",
-        "==",
-        "在籍"
-      ),
-      orderBy(
-        "name",
-        "asc"
-      )
-    );
-
   const snapshot =
     await getDocs(
-      studentQuery
+      query(
+        collection(
+          db,
+          STUDENT_COLLECTION
+        ),
+        where(
+          "schoolId",
+          "==",
+          schoolId
+        ),
+        where(
+          "grade",
+          "==",
+          grade
+        ),
+        where(
+          "status",
+          "==",
+          "在籍"
+        ),
+        orderBy(
+          "name",
+          "asc"
+        )
+      )
     );
 
   return snapshot.docs.map(
@@ -636,7 +734,47 @@ export async function getStudentsByGrade(
 }
 
 /* =========================================================
-   データ変換
+   クラス
+   ========================================================= */
+
+export async function getStudentsByClass(
+  classId: string
+): Promise<Student[]> {
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          STUDENT_COLLECTION
+        ),
+        where(
+          "classId",
+          "==",
+          classId
+        ),
+        where(
+          "status",
+          "==",
+          "在籍"
+        ),
+        orderBy(
+          "name",
+          "asc"
+        )
+      )
+    );
+
+  return snapshot.docs.map(
+    (item) =>
+      convertStudent(
+        item.id,
+        item.data()
+      )
+  );
+}
+
+/* =========================================================
+   変換
    ========================================================= */
 
 function convertStudent(
@@ -700,18 +838,16 @@ function convertStudent(
   };
 }
 
-/* =========================================================
-   バリデーション
-   ========================================================= */
-
 function validateStudentNumber(
   value: string
 ) {
   if (
-    !/^\d{6}$/.test(value)
+    !/^\d{6}$/.test(
+      value
+    )
   ) {
     throw new Error(
-      "生徒番号は6桁の数字で指定してください。"
+      "生徒番号は6桁数字で指定してください。"
     );
   }
 }
