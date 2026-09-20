@@ -1,69 +1,105 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
 import {
-  getAuth,
-  connectAuthEmulator,
-} from "firebase/auth";
-import {
-  getFirestore,
-  connectFirestoreEmulator,
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  type DocumentData,
+  type QueryConstraint,
 } from "firebase/firestore";
-import {
-  getStorage,
-  connectStorageEmulator,
-} from "firebase/storage";
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain:
-    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId:
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket:
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId:
-    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId:
-    process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-};
+import { db } from "./firebase";
 
-const app =
-  getApps().length > 0
-    ? getApp()
-    : initializeApp(firebaseConfig);
+export async function getCollection<T = DocumentData>(
+  collectionName: string,
+  constraints: QueryConstraint[] = []
+): Promise<T[]> {
+  const reference = collection(db, collectionName);
 
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+  const snapshot = await getDocs(
+    query(reference, ...constraints)
+  );
 
-const useEmulators =
-  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS ===
-  "true";
-
-if (
-  typeof window !== "undefined" &&
-  useEmulators
-) {
-  try {
-    connectAuthEmulator(
-      auth,
-      "http://127.0.0.1:9099",
-      { disableWarnings: true }
-    );
-
-    connectFirestoreEmulator(
-      db,
-      "127.0.0.1",
-      8080
-    );
-
-    connectStorageEmulator(
-      storage,
-      "127.0.0.1",
-      9199
-    );
-  } catch {
-    // エミュレータが既に接続済みの場合は無視
-  }
+  return snapshot.docs.map(
+    (item) =>
+      ({
+        id: item.id,
+        ...item.data(),
+      }) as T
+  );
 }
 
-export default app;
+export async function getDocument<T = DocumentData>(
+  collectionName: string,
+  id: string
+): Promise<T | null> {
+  const reference = doc(db, collectionName, id);
+  const snapshot = await getDoc(reference);
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return {
+    id: snapshot.id,
+    ...snapshot.data(),
+  } as T;
+}
+
+export async function createDocument<T extends DocumentData>(
+  collectionName: string,
+  data: T
+) {
+  const reference = await addDoc(
+    collection(db, collectionName),
+    data
+  );
+
+  return reference.id;
+}
+
+export async function setDocument<T extends DocumentData>(
+  collectionName: string,
+  id: string,
+  data: T
+) {
+  await setDoc(
+    doc(db, collectionName, id),
+    data,
+    { merge: true }
+  );
+}
+
+export async function updateDocument<T extends DocumentData>(
+  collectionName: string,
+  id: string,
+  data: Partial<T>
+) {
+  await updateDoc(
+    doc(db, collectionName, id),
+    data
+  );
+}
+
+export async function deleteDocument(
+  collectionName: string,
+  id: string
+) {
+  await deleteDoc(
+    doc(db, collectionName, id)
+  );
+}
+
+export {
+  collection,
+  doc,
+  orderBy,
+  query,
+  where,
+};
