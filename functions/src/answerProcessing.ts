@@ -1,6 +1,7 @@
 import {
   FieldValue,
   getFirestore,
+  type DocumentData,
 } from "firebase-admin/firestore";
 
 import {
@@ -50,8 +51,8 @@ export type AnswerProcessingJob = {
   currentChunk: number;
   totalChunks: number;
 
-  createdAt?: FirebaseFirestore.Timestamp;
-  updatedAt?: FirebaseFirestore.Timestamp;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 
   errorMessage?: string;
 };
@@ -68,6 +69,10 @@ type ProcessResult = {
   reviewRequired: boolean;
 };
 
+/* =========================================================
+   ジョブ作成
+   ========================================================= */
+
 export async function createAnswerProcessingJob(
   input: JobInput
 ): Promise<string> {
@@ -78,7 +83,9 @@ export async function createAnswerProcessingJob(
       )
     );
 
-  if (answerIds.length === 0) {
+  if (
+    answerIds.length === 0
+  ) {
     throw new Error(
       "処理対象の答案がありません。"
     );
@@ -92,41 +99,47 @@ export async function createAnswerProcessingJob(
 
   const jobRef =
     db
-      .collection("gradingJobs")
+      .collection(
+        "gradingJobs"
+      )
       .doc();
 
   const batch =
     db.batch();
 
-  batch.set(jobRef, {
-    testId:
-      input.testId,
+  batch.set(
+    jobRef,
+    {
+      testId:
+        input.testId,
 
-    subjectId:
-      input.subjectId,
+      subjectId:
+        input.subjectId,
 
-    requestedBy:
-      input.requestedBy,
+      requestedBy:
+        input.requestedBy,
 
-    status: "queued",
+      status:
+        "queued",
 
-    total:
-      answerIds.length,
+      total:
+        answerIds.length,
 
-    processed: 0,
-    succeeded: 0,
-    reviewRequired: 0,
-    errors: 0,
+      processed: 0,
+      succeeded: 0,
+      reviewRequired: 0,
+      errors: 0,
 
-    currentChunk: 0,
-    totalChunks,
+      currentChunk: 0,
+      totalChunks,
 
-    createdAt:
-      FieldValue.serverTimestamp(),
+      createdAt:
+        FieldValue.serverTimestamp(),
 
-    updatedAt:
-      FieldValue.serverTimestamp(),
-  });
+      updatedAt:
+        FieldValue.serverTimestamp(),
+    }
+  );
 
   for (
     let index = 0;
@@ -134,7 +147,8 @@ export async function createAnswerProcessingJob(
     index++
   ) {
     const start =
-      index * CHUNK_SIZE;
+      index *
+      CHUNK_SIZE;
 
     const ids =
       answerIds.slice(
@@ -149,27 +163,32 @@ export async function createAnswerProcessingJob(
           String(index)
         );
 
-    batch.set(chunkRef, {
-      index,
+    batch.set(
+      chunkRef,
+      {
+        index,
 
-      answerIds: ids,
+        answerIds:
+          ids,
 
-      total:
-        ids.length,
+        total:
+          ids.length,
 
-      processed: 0,
-      succeeded: 0,
-      reviewRequired: 0,
-      errors: 0,
+        processed: 0,
+        succeeded: 0,
+        reviewRequired: 0,
+        errors: 0,
 
-      status: "queued",
+        status:
+          "queued",
 
-      createdAt:
-        FieldValue.serverTimestamp(),
+        createdAt:
+          FieldValue.serverTimestamp(),
 
-      updatedAt:
-        FieldValue.serverTimestamp(),
-    });
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      }
+    );
   }
 
   await batch.commit();
@@ -177,13 +196,19 @@ export async function createAnswerProcessingJob(
   return jobRef.id;
 }
 
+/* =========================================================
+   ジョブ処理
+   ========================================================= */
+
 export async function processAnswerJob(
   jobId: string,
-  jobData: FirebaseFirestore.DocumentData
+  jobData: DocumentData
 ) {
   const jobRef =
     db
-      .collection("gradingJobs")
+      .collection(
+        "gradingJobs"
+      )
       .doc(jobId);
 
   const current =
@@ -278,15 +303,16 @@ export async function processAnswerJob(
     await jobRef.update({
       status,
 
-      updatedAt:
+      completedAt:
         FieldValue.serverTimestamp(),
 
-      completedAt:
+      updatedAt:
         FieldValue.serverTimestamp(),
     });
   } catch (error) {
     await jobRef.update({
-      status: "failed",
+      status:
+        "failed",
 
       errorMessage:
         error instanceof Error
@@ -301,15 +327,21 @@ export async function processAnswerJob(
   }
 }
 
+/* =========================================================
+   チャンク処理
+   ========================================================= */
+
 async function processChunk(
   jobId: string,
   chunkId: string,
-  chunk: FirebaseFirestore.DocumentData,
-  jobData: FirebaseFirestore.DocumentData
+  chunk: DocumentData,
+  jobData: DocumentData
 ) {
   const jobRef =
     db
-      .collection("gradingJobs")
+      .collection(
+        "gradingJobs"
+      )
       .doc(jobId);
 
   const chunkRef =
@@ -337,18 +369,17 @@ async function processChunk(
     Array.isArray(
       chunk.answerIds
     )
-      ? (chunk.answerIds as string[])
+      ? (
+          chunk.answerIds as string[]
+        )
       : [];
 
   for (
-    const answerId of answerIds
+    const answerId of
+      answerIds
   ) {
-    let result:
-      ProcessResult | null =
-      null;
-
     try {
-      result =
+      const result =
         await processSingleAnswer(
           answerId,
           jobData
@@ -387,13 +418,11 @@ async function processChunk(
     );
   }
 
-  const status =
-    errors > 0
-      ? "completed_with_errors"
-      : "completed";
-
   await chunkRef.update({
-    status,
+    status:
+      errors > 0
+        ? "completed_with_errors"
+        : "completed",
 
     completedAt:
       FieldValue.serverTimestamp(),
@@ -407,26 +436,30 @@ async function processChunk(
   );
 }
 
+/* =========================================================
+   1答案処理
+   ========================================================= */
+
 async function processSingleAnswer(
   answerId: string,
-  jobData: FirebaseFirestore.DocumentData
+  jobData: DocumentData
 ): Promise<ProcessResult> {
   const answerRef =
     db
       .collection("answers")
       .doc(answerId);
 
-  const answerSnapshot =
+  const snapshot =
     await answerRef.get();
 
-  if (!answerSnapshot.exists) {
+  if (!snapshot.exists) {
     throw new Error(
       `答案 ${answerId} が存在しません。`
     );
   }
 
   const answer =
-    answerSnapshot.data();
+    snapshot.data();
 
   if (!answer) {
     throw new Error(
@@ -457,8 +490,8 @@ async function processSingleAnswer(
 
   if (
     typeof filePath !==
-    "string" ||
-    filePath.length === 0
+      "string" ||
+    !filePath
   ) {
     throw new Error(
       "答案ファイルのパスがありません。"
@@ -476,13 +509,14 @@ async function processSingleAnswer(
       FieldValue.serverTimestamp(),
   });
 
-  const bucket =
-    storage.bucket();
-
   const file =
-    bucket.file(filePath);
+    storage
+      .bucket()
+      .file(filePath);
 
-  const [exists] =
+  const [
+    exists,
+  ] =
     await file.exists();
 
   if (!exists) {
@@ -491,7 +525,9 @@ async function processSingleAnswer(
     );
   }
 
-  const [buffer] =
+  const [
+    buffer,
+  ] =
     await file.download();
 
   if (
@@ -502,18 +538,13 @@ async function processSingleAnswer(
     );
   }
 
-  /*
-   * 1. 四隅マーカー検出
-   * 2. 傾き・台形補正
-   */
+  /* 画像補正 */
   const corrected =
     await correctAnswerImage(
       buffer
     );
 
-  /*
-   * 3. QR認識
-   */
+  /* QR */
   const qr =
     await recognizeStudentQr(
       corrected.buffer
@@ -533,14 +564,10 @@ async function processSingleAnswer(
     )
   ) {
     throw new Error(
-      "認識した生徒番号が6桁数字ではありません。"
+      "認識した生徒番号が6桁ではありません。"
     );
   }
 
-  /*
-   * QRの生徒番号と答案の登録生徒番号が
-   * 両方存在する場合は一致確認。
-   */
   if (
     typeof answer.studentNumber ===
       "string" &&
@@ -552,9 +579,7 @@ async function processSingleAnswer(
     );
   }
 
-  /*
-   * 4. OCR
-   */
+  /* OCR */
   const ocr =
     await processAnswerPage(
       corrected.buffer,
@@ -562,9 +587,7 @@ async function processSingleAnswer(
       jobData.subjectId
     );
 
-  /*
-   * 5. 自動採点
-   */
+  /* 自動採点 */
   const grading =
     await gradeAnswer({
       testId:
@@ -582,9 +605,7 @@ async function processSingleAnswer(
         ocr,
     });
 
-  /*
-   * 採点結果保存
-   */
+  /* 採点結果保存 */
   await db
     .collection(
       "gradingResults"
@@ -610,9 +631,6 @@ async function processSingleAnswer(
         reviewRequired:
           grading.reviewRequired,
 
-        createdAt:
-          FieldValue.serverTimestamp(),
-
         updatedAt:
           FieldValue.serverTimestamp(),
       },
@@ -621,9 +639,7 @@ async function processSingleAnswer(
       }
     );
 
-  /*
-   * 答案本体の状態更新
-   */
+  /* 答案更新 */
   await answerRef.update({
     studentNumber:
       qr.studentNumber,
@@ -663,6 +679,10 @@ async function processSingleAnswer(
   };
 }
 
+/* =========================================================
+   エラー保存
+   ========================================================= */
+
 async function saveAnswerProcessingError(
   answerId: string,
   error: unknown
@@ -695,12 +715,18 @@ async function saveAnswerProcessingError(
     );
 }
 
+/* =========================================================
+   ジョブ集計
+   ========================================================= */
+
 async function recalculateJobCounters(
   jobId: string
 ) {
-  const chunks =
+  const snapshot =
     await db
-      .collection("gradingJobs")
+      .collection(
+        "gradingJobs"
+      )
       .doc(jobId)
       .collection("chunks")
       .get();
@@ -711,11 +737,11 @@ async function recalculateJobCounters(
   let errors = 0;
 
   for (
-    const chunkDoc of
-      chunks.docs
+    const chunk of
+      snapshot.docs
   ) {
     const data =
-      chunkDoc.data();
+      chunk.data();
 
     processed +=
       Number(
@@ -739,7 +765,9 @@ async function recalculateJobCounters(
   }
 
   await db
-    .collection("gradingJobs")
+    .collection(
+      "gradingJobs"
+    )
     .doc(jobId)
     .update({
       processed,
