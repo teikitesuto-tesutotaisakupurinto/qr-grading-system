@@ -2,10 +2,24 @@ import vision, {
   protos,
 } from "@google-cloud/vision";
 
+import {
+  getFirestore,
+} from "firebase-admin/firestore";
+
+const db =
+  getFirestore();
+
+const client =
+  new vision.ImageAnnotatorClient();
+
+/* =========================================================
+   型
+   ========================================================= */
+
 export type OcrWord = {
   text: string;
 
-  confidence?: number;
+  confidence: number;
 
   boundingBox: {
     x: number;
@@ -20,11 +34,31 @@ export type OcrResult = {
 
   words: OcrWord[];
 
+  width: number;
+
+  height: number;
+
   confidence: number;
+
+  processedAt: number;
 };
 
-const client =
-  new vision.ImageAnnotatorClient();
+export type OcrRegionResult = {
+  regionId: string;
+
+  questionId?: string;
+
+  text: string;
+
+  confidence: number;
+
+  boundingBox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+};
 
 /* =========================================================
    答案OCR
@@ -35,11 +69,9 @@ export async function processAnswerPage(
   testId: string,
   subjectId: string
 ): Promise<OcrResult> {
-  if (
-    buffer.length === 0
-  ) {
+  if (buffer.length === 0) {
     throw new Error(
-      "OCR対象の画像が空です。"
+      "OCR対象画像が空です。"
     );
   }
 
@@ -60,35 +92,165 @@ export async function processAnswerPage(
   ] =
     await client.documentTextDetection({
       image: {
-        content:
-          buffer,
+        content: buffer,
       },
     });
 
   const annotation =
     result.fullTextAnnotation;
 
-  const text =
-    annotation?.text ??
-    "";
+  const words =
+    extractWords(
+      annotation
+    );
+
+  return {
+    text:
+      annotation?.text ??
+      "",
+
+    words,
+
+    width:
+      getPageWidth(
+        annotation
+      ),
+
+    height:
+      getPageHeight(
+        annotation
+      ),
+
+    confidence:
+      calculateConfidence(
+        words
+      ),
+
+    processedAt:
+      Date.now(),
+  };
+}
+
+/* =========================================================
+   問題別OCR
+   ========================================================= */
+
+export async function processAnswerRegions(
+  buffer: Buffer,
+  testId: string,
+  subjectId: string
+): Promise<OcrRegionResult[]> {
+  if (buffer.length === 0) {
+    throw new Error(
+      "OCR対象画像が空です。"
+    );
+  }
+
+  const snapshot =
+    await db
+      .collection(
+        "answerRegions"
+      )
+      .where(
+        "testId",
+        "==",
+        testId
+      )
+      .where(
+        "subjectId",
+        "==",
+        subjectId
+      )
+      .get();
+
+  if (snapshot.empty) {
+    return [];
+  }
+
+  const [
+    result,
+  ] =
+    await client.documentTextDetection({
+      image: {
+        content: buffer,
+      },
+    });
+
+  const annotation =
+    result.fullTextAnnotation;
 
   const words =
     extractWords(
       annotation
     );
 
-  const confidence =
+  const fullText =
+    annotation?.text ??
+    "";
+
+  const fullConfidence =
     calculateConfidence(
       words
     );
 
-  return {
-    text,
+  return snapshot.docs.map(
+    (regionDoc) => {
+      const data =
+        regionDoc.data();
 
-    words,
+      return {
+        regionId:
+          regionDoc.id,
 
-    confidence,
-  };
+        questionId:
+          typeof data.questionId ===
+          "string"
+            ? data.questionId
+            : undefined,
+
+        text:
+          typeof data.text ===
+          "string"
+            ? data.text
+            : fullText,
+
+        confidence:
+          Number.isFinite(
+            Number(
+              data.confidence
+            )
+          )
+            ? Number(
+                data.confidence
+              )
+            : fullConfidence,
+
+        boundingBox: {
+          x:
+            toNumber(
+              data.x ??
+                data.left
+            ),
+
+          y:
+            toNumber(
+              data.y ??
+                data.top
+            ),
+
+          width:
+            toNumber(
+              data.width
+            ),
+
+          height:
+            toNumber(
+              data.height
+            ),
+        },
+      };
+    }
+  );
 }
 
 /* =========================================================
@@ -99,10 +261,9 @@ function extractWords(
   annotation:
     protos.google.cloud.vision.v1.ITextAnnotation
     | null
+    | undefined
 ): OcrWord[] {
-  if (
-    !annotation?.pages
-  ) {
+  if (!annotation?.pages) {
     return [];
   }
 
@@ -128,7 +289,9 @@ function extractWords(
           const text =
             (word.symbols ?? [])
               .map(
-                (symbol) =>
+                (
+                  symbol: protos.google.cloud.vision.v1.ISymbol
+                ) =>
                   symbol.text ??
                   ""
               )
@@ -138,26 +301,21 @@ function extractWords(
             continue;
           }
 
-          const boundingBox =
-            normalizeBoundingBox(
-              word
-                .boundingBox
-                ?.vertices
-                ?? []
-            );
-
-          const confidence =
-            typeof word.confidence ===
-            "number"
-              ? word.confidence
-              : undefined;
-
           words.push({
             text,
 
-            confidence,
+            confidence:
+              typeof word.confidence ===
+              "number"
+                ? word.confidence
+                : 0,
 
-            boundingBox,
+            boundingBox:
+              normalizeBoundingBox(
+                word.boundingBox
+                  ?.vertices ??
+                  []
+              ),
           });
         }
       }
@@ -189,7 +347,9 @@ function normalizeBoundingBox(
 
   const xs =
     vertices.map(
-      (vertex) =>
+      (
+        vertex: protos.google.cloud.vision.v1.IVertex
+      ) =>
         Number(
           vertex.x ?? 0
         )
@@ -197,31 +357,25 @@ function normalizeBoundingBox(
 
   const ys =
     vertices.map(
-      (vertex) =>
+      (
+        vertex: protos.google.cloud.vision.v1.IVertex
+      ) =>
         Number(
           vertex.y ?? 0
         )
     );
 
   const minX =
-    Math.min(
-      ...xs
-    );
+    Math.min(...xs);
 
   const maxX =
-    Math.max(
-      ...xs
-    );
+    Math.max(...xs);
 
   const minY =
-    Math.min(
-      ...ys
-    );
+    Math.min(...ys);
 
   const maxY =
-    Math.max(
-      ...ys
-    );
+    Math.max(...ys);
 
   return {
     x: minX,
@@ -265,8 +419,9 @@ function calculateConfidence(
         (
           value
         ): value is number =>
-          typeof value ===
-          "number"
+          Number.isFinite(
+            value
+          )
       );
 
   if (
@@ -275,15 +430,51 @@ function calculateConfidence(
     return 0;
   }
 
-  const total =
+  return (
     values.reduce(
       (sum, value) =>
         sum + value,
       0
-    );
-
-  return (
-    total /
+    ) /
     values.length
   );
+}
+
+/* =========================================================
+   ページサイズ
+   ========================================================= */
+
+function getPageWidth(
+  annotation:
+    protos.google.cloud.vision.v1.ITextAnnotation
+    | null
+    | undefined
+): number {
+  return toNumber(
+    annotation?.pages?.[0]?.width
+  );
+}
+
+function getPageHeight(
+  annotation:
+    protos.google.cloud.vision.v1.ITextAnnotation
+    | null
+    | undefined
+): number {
+  return toNumber(
+    annotation?.pages?.[0]?.height
+  );
+}
+
+function toNumber(
+  value: unknown
+): number {
+  const number =
+    Number(value);
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
 }
