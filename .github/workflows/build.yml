@@ -11,6 +11,7 @@ on:
 jobs:
   next-build:
     name: Next.js Build
+
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +34,7 @@ jobs:
 
   functions-build:
     name: Firebase Functions Build
+
     runs-on: ubuntu-latest
 
     defaults:
