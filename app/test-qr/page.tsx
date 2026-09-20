@@ -1,72 +1,42 @@
 "use client";
 
-import {
-  useState,
-} from "react";
-
+import { useState } from "react";
 import QRCode from "qrcode";
+import { supabase } from "@/lib/supabase";
 
-import {
-  uploadAnswer,
-} from "@/lib/answers";
+const BUCKET = "answers";
+
+const TEST_ID = "test-qr";
+const SUBJECT_ID = "subject-qr";
+const STUDENT_NUMBER = "123456";
+const ANSWER_ID = "answer-qr-001";
 
 export default function TestQrPage() {
-  const [
-    status,
-    setStatus,
-  ] = useState("");
-
-  const [
-    preview,
-    setPreview,
-  ] = useState<string | null>(
-    null
-  );
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [preview, setPreview] = useState("");
 
   async function createTestAnswer() {
     try {
       setLoading(true);
+      setMessage("QR付き答案を作成しています...");
 
-      setStatus(
-        "テスト答案を作成しています..."
-      );
-
-      /*
-       * テスト用データ
-       */
-      const testId =
-        "test-qr";
-
-      const subjectId =
-        "subject-qr";
-
-      const studentNumber =
-        "123456";
+      if (!supabase) {
+        throw new Error(
+          "Supabaseが初期化されていません。"
+        );
+      }
 
       /*
-       * QRに入れる値
-       */
-      const qrData =
-        studentNumber;
-
-      /*
-       * QRをData URLとして生成
+       * QRコード生成
        */
       const qrDataUrl =
         await QRCode.toDataURL(
-          qrData,
+          STUDENT_NUMBER,
           {
-            width: 500,
-
+            width: 700,
             margin: 4,
-
-            errorCorrectionLevel:
-              "H",
+            errorCorrectionLevel: "H",
           }
         );
 
@@ -74,34 +44,26 @@ export default function TestQrPage() {
        * Canvas
        */
       const canvas =
-        document.createElement(
-          "canvas"
-        );
+        document.createElement("canvas");
 
-      canvas.width =
-        2480;
+      canvas.width = 2480;
+      canvas.height = 3508;
 
-      canvas.height =
-        3508;
+      const ctx =
+        canvas.getContext("2d");
 
-      const context =
-        canvas.getContext(
-          "2d"
-        );
-
-      if (!context) {
+      if (!ctx) {
         throw new Error(
           "Canvasを取得できません。"
         );
       }
 
       /*
-       * 背景
+       * 白背景
        */
-      context.fillStyle =
-        "#ffffff";
+      ctx.fillStyle = "#ffffff";
 
-      context.fillRect(
+      ctx.fillRect(
         0,
         0,
         canvas.width,
@@ -111,13 +73,12 @@ export default function TestQrPage() {
       /*
        * タイトル
        */
-      context.fillStyle =
-        "#000000";
+      ctx.fillStyle = "#000000";
 
-      context.font =
+      ctx.font =
         "bold 90px sans-serif";
 
-      context.fillText(
+      ctx.fillText(
         "QR答案テスト",
         160,
         180
@@ -126,23 +87,23 @@ export default function TestQrPage() {
       /*
        * テスト情報
        */
-      context.font =
-        "50px sans-serif";
+      ctx.font =
+        "48px sans-serif";
 
-      context.fillText(
-        "Test: test-qr",
+      ctx.fillText(
+        `Test ID: ${TEST_ID}`,
         160,
         280
       );
 
-      context.fillText(
-        "Subject: subject-qr",
+      ctx.fillText(
+        `Subject ID: ${SUBJECT_ID}`,
         160,
         360
       );
 
-      context.fillText(
-        "Student: 123456",
+      ctx.fillText(
+        `Student Number: ${STUDENT_NUMBER}`,
         160,
         440
       );
@@ -154,10 +115,7 @@ export default function TestQrPage() {
         new Image();
 
       await new Promise<void>(
-        (
-          resolve,
-          reject
-        ) => {
+        (resolve, reject) => {
           qrImage.onload =
             () => resolve();
 
@@ -165,7 +123,7 @@ export default function TestQrPage() {
             () =>
               reject(
                 new Error(
-                  "QR画像の読み込みに失敗しました。"
+                  "QR画像を読み込めません。"
                 )
               );
 
@@ -174,19 +132,12 @@ export default function TestQrPage() {
         }
       );
 
-      const qrSize =
-        900;
+      const qrSize = 900;
 
-      const qrX =
-        790;
-
-      const qrY =
-        650;
-
-      context.drawImage(
+      ctx.drawImage(
         qrImage,
-        qrX,
-        qrY,
+        790,
+        600,
         qrSize,
         qrSize
       );
@@ -194,29 +145,26 @@ export default function TestQrPage() {
       /*
        * QR説明
        */
-      context.font =
-        "60px sans-serif";
+      ctx.font =
+        "bold 60px sans-serif";
 
-      context.fillText(
+      ctx.fillText(
         "生徒番号QR",
-        950,
-        1650
+        980,
+        1600
       );
 
       /*
-       * 答案欄
+       * 解答欄
        */
-      context.font =
+      ctx.font =
         "bold 55px sans-serif";
 
-      context.fillText(
+      ctx.fillText(
         "解答欄",
         160,
-        1850
+        1820
       );
-
-      context.font =
-        "45px sans-serif";
 
       for (
         let i = 0;
@@ -224,55 +172,50 @@ export default function TestQrPage() {
         i++
       ) {
         const y =
-          1980 +
-          i * 260;
+          1940 +
+          i * 270;
 
-        context.strokeStyle =
+        ctx.strokeStyle =
           "#000000";
 
-        context.lineWidth =
-          4;
+        ctx.lineWidth = 5;
 
-        context.strokeRect(
+        ctx.strokeRect(
           160,
           y,
           2160,
-          180
+          190
         );
 
-        context.fillText(
+        ctx.font =
+          "45px sans-serif";
+
+        ctx.fillText(
           `${i + 1}.`,
           210,
-          y + 115
+          y + 120
         );
       }
 
       /*
-       * PNG Blob
+       * PNG化
        */
       const blob =
         await new Promise<Blob>(
-          (
-            resolve,
-            reject
-          ) => {
+          (resolve, reject) => {
             canvas.toBlob(
-              (
-                result
-              ) => {
-                if (
-                  result
-                ) {
-                  resolve(
-                    result
-                  );
-                } else {
+              (result) => {
+                if (!result) {
                   reject(
                     new Error(
                       "PNG生成に失敗しました。"
                     )
                   );
+
+                  return;
                 }
+
+                resolve(result);
               },
               "image/png"
             );
@@ -292,58 +235,62 @@ export default function TestQrPage() {
       );
 
       /*
-       * File
-       */
-      const file =
-        new File(
-          [
-            blob,
-          ],
-          "answer-qr-001.png",
-          {
-            type:
-              "image/png",
-          }
-        );
-
-      /*
-       * Supabaseへアップロード
+       * Storage path
        *
-       * uploadAnswer側で
-       * Cloud Functionを経由せず、
-       * 現在の実装に合わせて
-       * アップロードURLを取得する。
+       * Bucket = answers
+       *
+       * Path =
+       * test-qr/subject-qr/answer-qr-001.png
        */
-      setStatus(
+      const path =
+        `${TEST_ID}/${SUBJECT_ID}/${ANSWER_ID}.png`;
+
+      setMessage(
         "Supabase Storageへアップロードしています..."
       );
 
       /*
-       * 現在のuploadAnswer実装では
-       * studentNumberも指定できる。
+       * Supabase Storageへ直接アップロード
        */
-      const answer =
-        await uploadAnswer({
-          testId,
+      const {
+        error,
+      } =
+        await supabase.storage
+          .from(BUCKET)
+          .upload(
+            path,
+            blob,
+            {
+              contentType:
+                "image/png",
 
-          subjectId,
+              upsert:
+                true,
 
-          studentNumber,
+              cacheControl:
+                "3600",
+            }
+          );
 
-          file,
-        });
+      if (error) {
+        throw new Error(
+          `Storageへのアップロードに失敗しました: ${error.message}`
+        );
+      }
 
-      setStatus(
-        `アップロード完了: ${answer.id}`
+      setMessage(
+        [
+          "テスト答案の作成に成功しました。",
+          "",
+          `Bucket: ${BUCKET}`,
+          `Path: ${path}`,
+          `Student Number: ${STUDENT_NUMBER}`,
+        ].join("\n")
       );
-    } catch (
-      error
-    ) {
-      console.error(
-        error
-      );
+    } catch (error) {
+      console.error(error);
 
-      setStatus(
+      setMessage(
         error instanceof Error
           ? error.message
           : "テスト答案の作成に失敗しました。"
@@ -356,14 +303,9 @@ export default function TestQrPage() {
   return (
     <main
       style={{
-        maxWidth:
-          900,
-
-        margin:
-          "0 auto",
-
-        padding:
-          40,
+        maxWidth: 900,
+        margin: "0 auto",
+        padding: 40,
       }}
     >
       <h1>
@@ -372,8 +314,10 @@ export default function TestQrPage() {
 
       <p>
         生徒番号
-        123456
-        のテスト答案を生成します。
+        <strong>
+          {STUDENT_NUMBER}
+        </strong>
+        のQR付き答案を生成します。
       </p>
 
       <button
@@ -381,9 +325,7 @@ export default function TestQrPage() {
         onClick={
           createTestAnswer
         }
-        disabled={
-          loading
-        }
+        disabled={loading}
         style={{
           padding:
             "14px 24px",
@@ -399,28 +341,28 @@ export default function TestQrPage() {
       >
         {loading
           ? "作成中..."
-          : "テスト答案を作成"}
+          : "QR付きテスト答案を作成"}
       </button>
 
-      {status && (
-        <p
+      {message && (
+        <pre
           style={{
-            marginTop:
-              24,
-
+            marginTop: 24,
+            padding: 20,
+            background:
+              "#f5f5f5",
             whiteSpace:
               "pre-wrap",
           }}
         >
-          {status}
-        </p>
+          {message}
+        </pre>
       )}
 
       {preview && (
         <section
           style={{
-            marginTop:
-              32,
+            marginTop: 32,
           }}
         >
           <h2>
@@ -428,16 +370,14 @@ export default function TestQrPage() {
           </h2>
 
           <img
-            src={
-              preview
-            }
-            alt="QRテスト答案"
+            src={preview}
+            alt="QR付きテスト答案"
             style={{
               width:
                 "100%",
 
               maxWidth:
-                600,
+                650,
 
               border:
                 "1px solid #ccc",
