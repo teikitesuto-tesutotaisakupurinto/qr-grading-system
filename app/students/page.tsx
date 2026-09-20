@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import SchoolHeader from "@/components/SchoolHeader";
+
 import StudentTable, {
   Student,
 } from "@/components/StudentTable";
@@ -23,8 +24,11 @@ import {
 } from "@/lib/csv";
 
 export default function StudentsPage() {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [search, setSearch] = useState("");
+  const [students, setStudents] =
+    useState<Student[]>([]);
+
+  const [search, setSearch] =
+    useState("");
 
   const [school, setSchool] =
     useState("すべて");
@@ -47,12 +51,18 @@ export default function StudentsPage() {
   const [message, setMessage] =
     useState("");
 
+  /* =========================================================
+     生徒一覧読み込み
+     ========================================================= */
+
   async function loadStudents() {
     setLoading(true);
     setMessage("");
 
     try {
-      const data = await getStudents();
+      const data =
+        await getStudents();
+
       setStudents(data);
     } catch {
       setMessage(
@@ -67,49 +77,70 @@ export default function StudentsPage() {
     loadStudents();
   }, []);
 
-  const schools = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          students.map(
-            (student) =>
-              student.schoolName
-          )
-        )
-      ).sort(),
-    [students]
-  );
+  /* =========================================================
+     校舎一覧
+     ========================================================= */
 
-  const grades = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          students.map(
-            (student) =>
-              student.grade
+  const schools =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            students.map(
+              (student) =>
+                student.schoolName
+            )
           )
-        )
-      ).sort(),
-    [students]
-  );
+        ).sort(),
+      [students]
+    );
 
-  const classes = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          students.map(
-            (student) =>
-              student.className
+  /* =========================================================
+     学年一覧
+     ========================================================= */
+
+  const grades =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            students.map(
+              (student) =>
+                student.grade
+            )
           )
-        )
-      ).sort(),
-    [students]
-  );
+        ).sort(),
+      [students]
+    );
+
+  /* =========================================================
+     クラス一覧
+     ========================================================= */
+
+  const classes =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            students.map(
+              (student) =>
+                student.className
+            )
+          )
+        ).sort(),
+      [students]
+    );
+
+  /* =========================================================
+     フィルタ
+     ========================================================= */
 
   const filteredStudents =
     useMemo(() => {
       const keyword =
-        search.trim().toLowerCase();
+        search
+          .trim()
+          .toLowerCase();
 
       return students.filter(
         (student) => {
@@ -117,22 +148,29 @@ export default function StudentsPage() {
             keyword === "" ||
             student.name
               .toLowerCase()
-              .includes(keyword) ||
+              .includes(
+                keyword
+              ) ||
             student.id
               .toLowerCase()
-              .includes(keyword);
+              .includes(
+                keyword
+              );
 
           const matchesSchool =
             school === "すべて" ||
-            student.schoolName === school;
+            student.schoolName ===
+              school;
 
           const matchesGrade =
             grade === "すべて" ||
-            student.grade === grade;
+            student.grade ===
+              grade;
 
           const matchesClass =
             className === "すべて" ||
-            student.className === className;
+            student.className ===
+              className;
 
           return (
             matchesKeyword &&
@@ -150,48 +188,77 @@ export default function StudentsPage() {
       className,
     ]);
 
+  /* =========================================================
+     生徒選択
+     ========================================================= */
+
   function toggleStudent(
     studentId: string
   ) {
-    setSelectedIds((current) =>
-      current.includes(studentId)
-        ? current.filter(
-            (id) => id !== studentId
-          )
-        : [...current, studentId]
+    setSelectedIds(
+      (current) =>
+        current.includes(
+          studentId
+        )
+          ? current.filter(
+              (id) =>
+                id !==
+                studentId
+            )
+          : [
+              ...current,
+              studentId,
+            ]
     );
   }
+
+  /* =========================================================
+     全員選択
+     ========================================================= */
 
   function toggleAll() {
     const visibleIds =
       filteredStudents.map(
-        (student) => student.id
+        (student) =>
+          student.id
       );
 
     const allSelected =
-      visibleIds.length > 0 &&
-      visibleIds.every((id) =>
-        selectedIds.includes(id)
+      visibleIds.length >
+        0 &&
+      visibleIds.every(
+        (id) =>
+          selectedIds.includes(
+            id
+          )
       );
 
     if (allSelected) {
-      setSelectedIds((current) =>
-        current.filter(
-          (id) =>
-            !visibleIds.includes(id)
-        )
+      setSelectedIds(
+        (current) =>
+          current.filter(
+            (id) =>
+              !visibleIds.includes(
+                id
+              )
+          )
       );
     } else {
-      setSelectedIds((current) =>
-        Array.from(
-          new Set([
-            ...current,
-            ...visibleIds,
-          ])
-        )
+      setSelectedIds(
+        (current) =>
+          Array.from(
+            new Set([
+              ...current,
+              ...visibleIds,
+            ])
+          )
       );
     }
   }
+
+  /* =========================================================
+     CSVテンプレート
+     ========================================================= */
 
   function downloadStudentTemplate() {
     const csv =
@@ -205,6 +272,7 @@ export default function StudentsPage() {
           "クラス",
           "在籍状況",
         ],
+
         [
           "",
           "山田 太郎",
@@ -214,16 +282,17 @@ export default function StudentsPage() {
           "在籍",
         ],
       ]
-        .map((row) =>
-          row
-            .map(
-              (value) =>
-                `"${value.replace(
-                  /"/g,
-                  '""'
-                )}"`
-            )
-            .join(",")
+        .map(
+          (row) =>
+            row
+              .map(
+                (value) =>
+                  `"${value.replace(
+                    /"/g,
+                    '""'
+                  )}"`
+              )
+              .join(",")
         )
         .join("\n");
 
@@ -233,17 +302,22 @@ export default function StudentsPage() {
     );
   }
 
+  /* =========================================================
+     現在の生徒CSV
+     ========================================================= */
+
   function downloadCurrentStudents() {
-    const rows = students.map(
-      (student) => [
-        student.id,
-        student.name,
-        student.schoolName,
-        student.grade,
-        student.className,
-        student.status,
-      ]
-    );
+    const rows =
+      students.map(
+        (student) => [
+          student.id,
+          student.name,
+          student.schoolName,
+          student.grade,
+          student.className,
+          student.status,
+        ]
+      );
 
     const csv =
       "\uFEFF" +
@@ -256,18 +330,22 @@ export default function StudentsPage() {
           "クラス",
           "在籍状況",
         ],
+
         ...rows,
       ]
-        .map((row) =>
-          row
-            .map(
-              (value) =>
-                `"${String(value).replace(
-                  /"/g,
-                  '""'
-                )}"`
-            )
-            .join(",")
+        .map(
+          (row) =>
+            row
+              .map(
+                (value) =>
+                  `"${String(
+                    value
+                  ).replace(
+                    /"/g,
+                    '""'
+                  )}"`
+              )
+              .join(",")
         )
         .join("\n");
 
@@ -277,13 +355,19 @@ export default function StudentsPage() {
     );
   }
 
+  /* =========================================================
+     CSVアップロード
+     ========================================================= */
+
   async function handleCsvUpload(
     event: ChangeEvent<HTMLInputElement>
   ) {
     const file =
       event.target.files?.[0];
 
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     setLoading(true);
     setMessage("");
@@ -295,30 +379,48 @@ export default function StudentsPage() {
       const rows =
         parseCsv(text);
 
-      if (rows.length === 0) {
+      if (
+        rows.length === 0
+      ) {
         throw new Error(
           "CSVにデータがありません。"
         );
       }
 
       const imported =
-        rows.map((row) => ({
-          id:
-            row["生徒番号"] ?? "",
-          name:
-            row["氏名"] ?? "",
-          schoolId:
-            row["校舎"] ?? "",
-          schoolName:
-            row["校舎"] ?? "",
-          grade:
-            row["学年"] ?? "",
-          className:
-            row["クラス"] ?? "",
-          status:
-            (row["在籍状況"] as Student["status"]) ||
-            "在籍",
-        }));
+        rows.map(
+          (row) => ({
+            id:
+              row["生徒番号"] ??
+              "",
+
+            name:
+              row["氏名"] ??
+              "",
+
+            schoolId:
+              row["校舎"] ??
+              "",
+
+            schoolName:
+              row["校舎"] ??
+              "",
+
+            grade:
+              row["学年"] ??
+              "",
+
+            className:
+              row["クラス"] ??
+              "",
+
+            status:
+              (row[
+                "在籍状況"
+              ] as Student["status"]) ||
+              "在籍",
+          })
+        );
 
       const invalid =
         imported.filter(
@@ -329,21 +431,67 @@ export default function StudentsPage() {
             !student.className
         );
 
-      if (invalid.length > 0) {
+      if (
+        invalid.length > 0
+      ) {
         throw new Error(
           `${invalid.length}件の必須項目が不足しています。`
         );
       }
 
-      const ids =
+      /*
+       * CSV反映結果
+       *
+       * {
+       *   created: number;
+       *   updated: number;
+       *   errors: {
+       *     row: number;
+       *     message: string;
+       *   }[];
+       * }
+       */
+      const result =
         await updateStudentsFromCsv(
           imported
         );
 
       await loadStudents();
 
+      const created =
+        Number(
+          result.created ?? 0
+        );
+
+      const updated =
+        Number(
+          result.updated ?? 0
+        );
+
+      const errors =
+        Array.isArray(
+          result.errors
+        )
+          ? result.errors
+          : [];
+
+      const messages: string[] =
+        [];
+
+      messages.push(
+        `${created + updated}人の生徒情報を反映しました。`
+      );
+
+      if (
+        errors.length > 0
+      ) {
+        messages.push(
+          `${errors.length}件のエラーがあります。`
+        );
+      }
+
       setMessage(
-        `${ids.length}人の生徒情報を反映しました。`
+        messages.join("\n")
       );
     } catch (error) {
       setMessage(
@@ -353,46 +501,77 @@ export default function StudentsPage() {
       );
     } finally {
       setLoading(false);
-      event.target.value = "";
+
+      event.target.value =
+        "";
     }
   }
 
+  /* =========================================================
+     QR選択開始
+     ========================================================= */
+
   function startQrSelection() {
-    setSelectionMode(true);
+    setSelectionMode(
+      true
+    );
+
     setSelectedIds([]);
+
     setMessage("");
   }
 
+  /* =========================================================
+     QR選択終了
+     ========================================================= */
+
   function cancelSelection() {
-    setSelectionMode(false);
+    setSelectionMode(
+      false
+    );
+
     setSelectedIds([]);
   }
 
+  /* =========================================================
+     QRシート発行
+     ========================================================= */
+
   function createQrSheets() {
-    if (selectedIds.length === 0) {
+    if (
+      selectedIds.length ===
+      0
+    ) {
       setMessage(
         "QRシートを発行する生徒を選択してください。"
       );
+
       return;
     }
 
     /*
-      次のQR画面で、
-      クラス全員・選択・個別の
-      A4横18枚シート生成へ接続します。
-    */
+     * 次のQR画面で、
+     * クラス全員・選択・個別の
+     * A4横18枚シート生成へ接続します。
+     */
 
     setMessage(
       `${selectedIds.length}人分のQRシート発行対象を確定しました。`
     );
   }
 
+  /* =========================================================
+     Render
+     ========================================================= */
+
   return (
     <main className="page">
       <SchoolHeader title="生徒一覧" />
 
       <section className="content">
-        <h1>生徒一覧</h1>
+        <h1>
+          生徒一覧
+        </h1>
 
         <div className="actionBar">
           <button
@@ -462,7 +641,9 @@ export default function StudentsPage() {
             type="search"
             placeholder="氏名・生徒番号で検索"
             value={search}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setSearch(
                 event.target.value
               )
@@ -471,13 +652,17 @@ export default function StudentsPage() {
 
           <select
             value={school}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setSchool(
                 event.target.value
               )
             }
           >
-            <option>すべて</option>
+            <option>
+              すべて
+            </option>
 
             {schools.map(
               (item) => (
@@ -493,13 +678,17 @@ export default function StudentsPage() {
 
           <select
             value={grade}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setGrade(
                 event.target.value
               )
             }
           >
-            <option>すべて</option>
+            <option>
+              すべて
+            </option>
 
             {grades.map(
               (item) => (
@@ -515,13 +704,17 @@ export default function StudentsPage() {
 
           <select
             value={className}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setClassName(
                 event.target.value
               )
             }
           >
-            <option>すべて</option>
+            <option>
+              すべて
+            </option>
 
             {classes.map(
               (item) => (
@@ -541,7 +734,9 @@ export default function StudentsPage() {
             <button
               type="button"
               className="secondaryButton"
-              onClick={toggleAll}
+              onClick={
+                toggleAll
+              }
             >
               表示中を全員選択
             </button>
@@ -550,21 +745,28 @@ export default function StudentsPage() {
               type="button"
               className="textButton"
               onClick={() =>
-                setSelectedIds([])
+                setSelectedIds(
+                  []
+                )
               }
             >
               選択解除
             </button>
 
             <span>
-              選択：{selectedIds.length}人
+              選択：
+              {
+                selectedIds.length
+              }
+              人
             </span>
 
             <button
               type="button"
               className="primaryButton"
               disabled={
-                selectedIds.length === 0
+                selectedIds.length ===
+                0
               }
               onClick={
                 createQrSheets
