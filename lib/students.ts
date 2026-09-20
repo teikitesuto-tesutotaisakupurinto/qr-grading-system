@@ -1,18 +1,15 @@
 import {
   collection,
+  doc,
   getDocs,
   query,
   where,
   writeBatch,
-  doc,
 } from "firebase/firestore";
 
 import { db } from "./firebase";
 
-export type StudentStatus =
-  | "在籍"
-  | "卒業"
-  | "退塾";
+export type StudentStatus = "在籍" | "卒業" | "退塾";
 
 export type Student = {
   id: string;
@@ -33,10 +30,7 @@ function generateSixDigitNumber(
 
   do {
     number = String(
-      Math.floor(
-        100000 +
-          Math.random() * 900000
-      )
+      Math.floor(100000 + Math.random() * 900000)
     );
   } while (usedNumbers.has(number));
 
@@ -51,84 +45,47 @@ export async function getStudents(
   const constraints = [];
 
   if (schoolId) {
-    constraints.push(
-      where("schoolId", "==", schoolId)
-    );
+    constraints.push(where("schoolId", "==", schoolId));
   }
 
   if (grade) {
-    constraints.push(
-      where("grade", "==", grade)
-    );
+    constraints.push(where("grade", "==", grade));
   }
 
   if (className) {
-    constraints.push(
-      where(
-        "className",
-        "==",
-        className
-      )
-    );
+    constraints.push(where("className", "==", className));
   }
 
-  const studentsRef = collection(
-    db,
-    "students"
-  );
-
   const snapshot = await getDocs(
-    query(
-      studentsRef,
-      ...constraints
-    )
+    query(collection(db, "students"), ...constraints)
   );
 
-  return snapshot.docs.map(
-    (item) =>
-      ({
-        id: item.id,
-        ...item.data(),
-      }) as Student
-  );
+  return snapshot.docs.map((item) => ({
+    id: item.id,
+    ...item.data(),
+  })) as Student[];
 }
 
 export async function createStudent(
-  input: Omit<
-    Student,
-    "id" | "createdAt" | "updatedAt"
-  >
+  input: Omit<Student, "id" | "createdAt" | "updatedAt">
 ): Promise<string> {
   const snapshot = await getDocs(
     collection(db, "students")
   );
 
   const usedNumbers = new Set(
-    snapshot.docs.map(
-      (item) => item.id
-    )
+    snapshot.docs.map((item) => item.id)
   );
 
   const studentNumber =
-    generateSixDigitNumber(
-      usedNumbers
-    );
-
-  const now = Date.now();
+    generateSixDigitNumber(usedNumbers);
 
   await writeBatch(db)
-    .set(
-      doc(
-        db,
-        "students",
-        studentNumber
-      ),
-      {
-        ...input,
-        createdAt: now,
-        updatedAt: now,
-      }
-    )
+    .set(doc(db, "students", studentNumber), {
+      ...input,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
     .commit();
 
   return studentNumber;
@@ -138,15 +95,9 @@ export async function updateStudent(
   studentNumber: string,
   data: Partial<Student>
 ) {
-  const reference = doc(
-    db,
-    "students",
-    studentNumber
-  );
-
   const batch = writeBatch(db);
 
-  batch.update(reference, {
+  batch.update(doc(db, "students", studentNumber), {
     ...data,
     updatedAt: Date.now(),
   });
@@ -156,10 +107,7 @@ export async function updateStudent(
 
 export async function updateStudentsFromCsv(
   students: Array<
-    Omit<
-      Student,
-      "createdAt" | "updatedAt"
-    >
+    Omit<Student, "createdAt" | "updatedAt">
   >
 ) {
   const snapshot = await getDocs(
@@ -167,37 +115,48 @@ export async function updateStudentsFromCsv(
   );
 
   const usedNumbers = new Set(
-    snapshot.docs.map(
-      (item) => item.id
-    )
+    snapshot.docs.map((item) => item.id)
   );
 
-  const batch = writeBatch(db);
-
-  for (const student of students) {
-    const studentNumber =
+  const prepared = students.map((student) => {
+    const id =
       student.id ||
-      generateSixDigitNumber(
-        usedNumbers
-      );
+      generateSixDigitNumber(usedNumbers);
 
-    usedNumbers.add(studentNumber);
+    usedNumbers.add(id);
 
-    batch.set(
-      doc(
-        db,
-        "students",
-        studentNumber
-      ),
-      {
-        ...student,
-        updatedAt: Date.now(),
-      },
-      {
-        merge: true,
-      }
+    return {
+      ...student,
+      id,
+      updatedAt: Date.now(),
+    };
+  });
+
+  // Firestore WriteBatch は最大500書き込みなので分割
+  const chunkSize = 450;
+
+  for (
+    let start = 0;
+    start < prepared.length;
+    start += chunkSize
+  ) {
+    const chunk = prepared.slice(
+      start,
+      start + chunkSize
     );
+
+    const batch = writeBatch(db);
+
+    for (const student of chunk) {
+      batch.set(
+        doc(db, "students", student.id),
+        student,
+        { merge: true }
+      );
+    }
+
+    await batch.commit();
   }
 
-  await batch.commit();
+  return prepared.map((student) => student.id);
 }
