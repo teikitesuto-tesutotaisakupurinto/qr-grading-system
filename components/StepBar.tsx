@@ -1,118 +1,145 @@
 "use client";
 
-type Step = {
-  number: number;
-  label: string;
-};
+import Link from "next/link";
 
 type StepBarProps = {
   currentStep: number;
 };
 
+type Step = {
+  number: number;
+  label: string;
+  href: string;
+};
+
 const steps: Step[] = [
-  { number: 1, label: "解答登録" },
-  { number: 2, label: "採点設定" },
-  { number: 3, label: "生徒答案" },
-  { number: 4, label: "自動採点" },
-  { number: 5, label: "一次確認" },
-  { number: 6, label: "二次確認" },
-  { number: 7, label: "採点確定" },
-  { number: 8, label: "公開" },
+  {
+    number: 1,
+    label: "解答登録",
+    href: "/answers",
+  },
+  {
+    number: 2,
+    label: "採点設定",
+    href: "/grading/setup",
+  },
+  {
+    number: 3,
+    label: "生徒答案",
+    href: "/answers",
+  },
+  {
+    number: 4,
+    label: "自動採点",
+    href: "/grading/auto",
+  },
+  {
+    number: 5,
+    label: "一次確認",
+    href: "/grading/first",
+  },
+  {
+    number: 6,
+    label: "二次確認",
+    href: "/grading/second",
+  },
+  {
+    number: 7,
+    label: "採点確定",
+    href: "/grading/confirm",
+  },
+  {
+    number: 8,
+    label: "公開",
+    href: "/answers",
+  },
 ];
 
 export default function StepBar({
   currentStep,
 }: StepBarProps) {
-  const current = steps.find(
-    (step) => step.number === currentStep
-  );
-
-  const next = steps.find(
-    (step) => step.number === currentStep + 1
-  );
-
   return (
-    <section className="stepArea">
+    <div className="stepArea">
       <div className="stepScroll">
         <div className="stepBar">
-          {steps.map((step, index) => {
-            const completed =
-              step.number < currentStep;
+          {steps.map(
+            (step, index) => {
+              const completed =
+                step.number <
+                currentStep;
 
-            const active =
-              step.number === currentStep;
+              const active =
+                step.number ===
+                currentStep;
 
-            return (
-              <div
-                key={step.number}
-                className="stepItem"
-              >
+              const isLast =
+                index ===
+                steps.length - 1;
+
+              return (
                 <div
-                  className={[
-                    "stepCircle",
-                    completed
-                      ? "stepCompleted"
-                      : "",
-                    active
-                      ? "stepActive"
-                      : "",
-                  ].join(" ")}
+                  key={step.number}
+                  className="stepItem"
                 >
-                  {completed
-                    ? "✓"
-                    : step.number}
-                </div>
-
-                <span
-                  className={
-                    active
-                      ? "stepLabel stepLabelActive"
-                      : "stepLabel"
-                  }
-                >
-                  {step.label}
-                </span>
-
-                {index < steps.length - 1 && (
-                  <div
-                    className={
-                      step.number < currentStep
-                        ? "stepLine stepLineCompleted"
-                        : "stepLine"
+                  <Link
+                    href={step.href}
+                    className="stepLink"
+                    aria-current={
+                      active
+                        ? "step"
+                        : undefined
                     }
-                  />
-                )}
-              </div>
-            );
-          })}
+                  >
+                    <span
+                      className={[
+                        "stepCircle",
+                        active
+                          ? "stepActive"
+                          : "",
+                        completed
+                          ? "stepCompleted"
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {completed
+                        ? "✓"
+                        : step.number}
+                    </span>
+
+                    <span
+                      className={[
+                        "stepLabel",
+                        active
+                          ? "stepLabelActive"
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {step.label}
+                    </span>
+                  </Link>
+
+                  {!isLast && (
+                    <span
+                      className={[
+                        "stepLine",
+                        completed
+                          ? "stepLineCompleted"
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    />
+                  )}
+                </div>
+              );
+            }
+          )}
         </div>
       </div>
-
-      <div className="stepInformation">
-        <div>
-          <span className="stepInformationLabel">
-            現在
-          </span>
-
-          <strong>
-            STEP {current?.number}{" "}
-            {current?.label}
-          </strong>
-        </div>
-
-        {next && (
-          <div>
-            <span className="stepInformationLabel">
-              次のステップ
-            </span>
-
-            <strong>
-              STEP {next.number}{" "}
-              {next.label}
-            </strong>
-          </div>
-        )}
-      </div>
-    </section>
+    </div>
   );
 }
