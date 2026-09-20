@@ -1,105 +1,125 @@
 import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  orderBy,
-  query,
-  setDoc,
-  updateDoc,
-  where,
-  type DocumentData,
-  type QueryConstraint,
+  getApp,
+  getApps,
+  initializeApp,
+} from "firebase/app";
+
+import {
+  getAuth,
+} from "firebase/auth";
+
+import {
+  getFirestore,
 } from "firebase/firestore";
 
-import { db } from "./firebase";
+import {
+  getStorage,
+} from "firebase/storage";
 
-export async function getCollection<T = DocumentData>(
-  collectionName: string,
-  constraints: QueryConstraint[] = []
-): Promise<T[]> {
-  const reference = collection(db, collectionName);
+/* =========================================================
+   Firebase設定
+   ========================================================= */
 
-  const snapshot = await getDocs(
-    query(reference, ...constraints)
-  );
+const firebaseConfig = {
+  apiKey:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_API_KEY,
 
-  return snapshot.docs.map(
-    (item) =>
-      ({
-        id: item.id,
-        ...item.data(),
-      }) as T
-  );
-}
+  authDomain:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
 
-export async function getDocument<T = DocumentData>(
-  collectionName: string,
-  id: string
-): Promise<T | null> {
-  const reference = doc(db, collectionName, id);
-  const snapshot = await getDoc(reference);
+  projectId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_PROJECT_ID,
 
-  if (!snapshot.exists()) {
-    return null;
-  }
+  storageBucket:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
 
-  return {
-    id: snapshot.id,
-    ...snapshot.data(),
-  } as T;
-}
+  messagingSenderId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
 
-export async function createDocument<T extends DocumentData>(
-  collectionName: string,
-  data: T
-) {
-  const reference = await addDoc(
-    collection(db, collectionName),
-    data
-  );
-
-  return reference.id;
-}
-
-export async function setDocument<T extends DocumentData>(
-  collectionName: string,
-  id: string,
-  data: T
-) {
-  await setDoc(
-    doc(db, collectionName, id),
-    data,
-    { merge: true }
-  );
-}
-
-export async function updateDocument<T extends DocumentData>(
-  collectionName: string,
-  id: string,
-  data: Partial<T>
-) {
-  await updateDoc(
-    doc(db, collectionName, id),
-    data
-  );
-}
-
-export async function deleteDocument(
-  collectionName: string,
-  id: string
-) {
-  await deleteDoc(
-    doc(db, collectionName, id)
-  );
-}
-
-export {
-  collection,
-  doc,
-  orderBy,
-  query,
-  where,
+  appId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_APP_ID,
 };
+
+/* =========================================================
+   必須設定チェック
+   ========================================================= */
+
+const requiredConfig = [
+  [
+    "NEXT_PUBLIC_FIREBASE_API_KEY",
+    firebaseConfig.apiKey,
+  ],
+  [
+    "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+    firebaseConfig.authDomain,
+  ],
+  [
+    "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+    firebaseConfig.projectId,
+  ],
+  [
+    "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+    firebaseConfig.storageBucket,
+  ],
+  [
+    "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+    firebaseConfig.messagingSenderId,
+  ],
+  [
+    "NEXT_PUBLIC_FIREBASE_APP_ID",
+    firebaseConfig.appId,
+  ],
+] as const;
+
+const missingConfig =
+  requiredConfig
+    .filter(
+      ([, value]) =>
+        !value
+    )
+    .map(
+      ([name]) => name
+    );
+
+if (
+  missingConfig.length > 0 &&
+  typeof window !==
+    "undefined"
+) {
+  console.error(
+    "Firebase設定が不足しています:",
+    missingConfig
+  );
+}
+
+/* =========================================================
+   Firebase App
+   ========================================================= */
+
+const app =
+  getApps().length > 0
+    ? getApp()
+    : initializeApp(
+        firebaseConfig
+      );
+
+/* =========================================================
+   Firebase Services
+   ========================================================= */
+
+export const auth =
+  getAuth(app);
+
+export const db =
+  getFirestore(app);
+
+export const storage =
+  getStorage(app);
+
+export default app;
