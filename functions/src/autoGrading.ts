@@ -2,6 +2,11 @@ import {
   getFirestore,
 } from "firebase-admin/firestore";
 
+import {
+  processAnswerRegions,
+  type OcrRegionResult,
+} from "./ocr";
+
 const db = getFirestore();
 
 export type Mark =
@@ -36,21 +41,27 @@ export type QuestionSetting = {
 
   rubric?: string;
 
-  /*
-   * OCR結果をどの解答枠に対応させるか。
-   */
   answerRegionId?: string;
 
-  /*
-   * 記述問題など、
-   * 自動判定を厳しくしない設定。
-   */
   requireHumanReview?: boolean;
+
+  /*
+   * 数値解答で許容する誤差。
+   * 例：
+   * 正解 3.14
+   * tolerance 0.01
+   */
+  numericTolerance?: number;
+
+  /*
+   * 記号・選択肢の表記ゆれを
+   * 同一とみなすための設定。
+   */
+  acceptedAnswers?: string[];
 };
 
 export type OcrWord = {
   text: string;
-
   confidence: number;
 
   boundingBox: {
@@ -69,6 +80,8 @@ export type OcrResult = {
   width: number;
 
   height: number;
+
+  confidence: number;
 
   processedAt: number;
 };
@@ -121,9 +134,10 @@ export type AutoGradingOutput = {
   reviewRequired: boolean;
 };
 
-/**
- * 1答案を自動採点します。
- */
+/* =========================================================
+   1答案の自動採点
+   ========================================================= */
+
 export async function gradeAnswer(
   input: AutoGradingInput
 ): Promise<AutoGradingOutput> {
@@ -141,6 +155,18 @@ export async function gradeAnswer(
     );
   }
 
+  /*
+   * 問題別の解答枠OCR。
+   */
+  const regionResults =
+    await processAnswerRegions(
+      await getAnswerImage(
+        input.answerId
+      ),
+      input.testId,
+      input.subjectId
+    );
+
   const results: QuestionGradingResult[] =
     [];
 
@@ -148,9 +174,16 @@ export async function gradeAnswer(
     const question of
       questions
   ) {
+    const region =
+      findRegionForQuestion(
+        question,
+        regionResults
+      );
+
     const result =
       gradeQuestion(
         question,
+        region,
         input.ocrResult
       );
 
@@ -194,9 +227,10 @@ export async function gradeAnswer(
   };
 }
 
-/**
- * Firestoreから採点設定を取得します。
- */
+/* =========================================================
+   採点設定取得
+   ========================================================= */
+
 async function getQuestionSettings(
   testId: string,
   subjectId: string
@@ -214,50 +248,151 @@ async function getQuestionSettings(
         "==",
         subjectId
       )
-      .orderBy(
-        "questionNumber"
-      )
       .get();
 
-  return snapshot.docs.map(
-    (doc) =>
-      ({
-        id: doc.id,
-        ...doc.data(),
-      }) as QuestionSetting
+  return snapshot.docs
+    .map(
+      (doc) =>
+        ({
+          id: doc.id,
+          ...doc.data(),
+        }) as QuestionSetting
+    )
+    .sort(
+      (a, b) =>
+        compareQuestionNumber(
+          a.questionNumber,
+          b.questionNumber
+        )
+    );
+}
+
+/* =========================================================
+   答案画像取得
+   ========================================================= */
+
+async function getAnswerImage(
+  answerId: string
+): Promise<Buffer> {
+  const answerSnapshot =
+    await db
+      .collection("answers")
+      .doc(answerId)
+      .get();
+
+  if (
+    !answerSnapshot.exists
+  ) {
+    throw new Error(
+      `答案が存在しません: ${answerId}`
+    );
+  }
+
+  const answer =
+    answerSnapshot.data();
+
+  const filePath =
+    answer?.filePath;
+
+  if (
+    typeof filePath !==
+    "string" ||
+    !filePath
+  ) {
+    throw new Error(
+      "答案ファイルパスがありません。"
+    );
+  }
+
+  const {
+    getStorage,
+  } = await import(
+    "firebase-admin/storage"
+  );
+
+  const bucket =
+    getStorage().bucket();
+
+  const file =
+    bucket.file(filePath);
+
+  const [exists] =
+    await file.exists();
+
+  if (!exists) {
+    throw new Error(
+      `答案画像がStorageに存在しません: ${filePath}`
+    );
+  }
+
+  const [buffer] =
+    await file.download();
+
+  return buffer;
+}
+
+/* =========================================================
+   問題とOCR枠の紐付け
+   ========================================================= */
+
+function findRegionForQuestion(
+  question: QuestionSetting,
+  regions: OcrRegionResult[]
+): OcrRegionResult | null {
+  /*
+   * answerRegionIdが設定されている場合。
+   */
+  if (
+    question.answerRegionId
+  ) {
+    return (
+      regions.find(
+        (region) =>
+          region.regionId ===
+          question.answerRegionId
+      ) ?? null
+    );
+  }
+
+  /*
+   * questionIdで紐付け。
+   */
+  return (
+    regions.find(
+      (region) =>
+        region.questionId ===
+        question.id
+    ) ?? null
   );
 }
 
-/**
- * 1問を採点します。
- */
+/* =========================================================
+   1問の採点
+   ========================================================= */
+
 function gradeQuestion(
   question: QuestionSetting,
-  ocrResult: OcrResult
+  region: OcrRegionResult | null,
+  fullOcr: OcrResult
 ): QuestionGradingResult {
   /*
-   * 解答枠が指定されている場合は
-   * その範囲にあるOCR文字だけを使用。
+   * OCR対象を決定。
    */
   const answerText =
-    extractAnswerText(
-      question,
-      ocrResult
-    );
+    region?.text?.trim() ||
+    "";
 
   const confidence =
-    calculateConfidence(
-      question,
-      ocrResult
-    );
+    region
+      ? region.confidence
+      : fullOcr.confidence;
 
   /*
-   * 手動採点の場合は
-   * 自動採点結果を確定しない。
+   * 手動採点。
    */
   if (
     question.gradingMethod ===
-      "manual"
+    "manual"
   ) {
     return {
       questionId:
@@ -288,11 +423,76 @@ function gradeQuestion(
   }
 
   /*
-   * OCR信頼度が低い場合。
+   * 解答枠そのものが存在しない。
+   */
+  if (!region) {
+    return {
+      questionId:
+        question.id,
+
+      questionNumber:
+        question.questionNumber,
+
+      mark: "△",
+
+      score: 0,
+
+      maxScore:
+        question.maxScore,
+
+      answerText: "",
+
+      confidence: 0,
+
+      reviewRequired: true,
+
+      reason:
+        "問題に対応する解答枠が見つかりません。",
+
+      rubric:
+        question.rubric,
+    };
+  }
+
+  /*
+   * OCRできなかった。
    */
   if (
-    confidence < 0.75 ||
     answerText.length === 0
+  ) {
+    return {
+      questionId:
+        question.id,
+
+      questionNumber:
+        question.questionNumber,
+
+      mark: "△",
+
+      score: 0,
+
+      maxScore:
+        question.maxScore,
+
+      answerText: "",
+
+      confidence,
+
+      reviewRequired: true,
+
+      reason:
+        "解答をOCRできませんでした。",
+
+      rubric:
+        question.rubric,
+    };
+  }
+
+  /*
+   * OCR信頼度が低い。
+   */
+  if (
+    confidence < 0.75
   ) {
     return {
       questionId:
@@ -315,32 +515,31 @@ function gradeQuestion(
       reviewRequired: true,
 
       reason:
-        answerText.length === 0
-          ? "解答を認識できませんでした。"
-          : "OCR信頼度が低いため要確認です。",
+        "OCR信頼度が低いため要確認です。",
 
       rubric:
         question.rubric,
     };
   }
 
-  const normalizedAnswer =
-    normalizeAnswer(
-      answerText
-    );
-
-  const normalizedCorrect =
-    normalizeAnswer(
-      question.correctAnswer
-    );
-
   /*
-   * 完全一致。
+   * 正解判定。
    */
-  if (
-    normalizedAnswer ===
-    normalizedCorrect
-  ) {
+  const isCorrect =
+    isAnswerCorrect(
+      answerText,
+      question
+    );
+
+  if (isCorrect) {
+    /*
+     * bothの場合は、
+     * 正解でも人による確認を残す。
+     */
+    const reviewRequired =
+      question.gradingMethod ===
+      "both";
+
     return {
       questionId:
         question.id,
@@ -360,14 +559,11 @@ function gradeQuestion(
 
       confidence,
 
-      reviewRequired:
-        question.gradingMethod ===
-        "both",
+      reviewRequired,
 
       reason:
-        question.gradingMethod ===
-        "both"
-          ? "人による確認が必要です。"
+        reviewRequired
+          ? "自動採点後の人確認が必要です。"
           : undefined,
 
       rubric:
@@ -376,11 +572,8 @@ function gradeQuestion(
   }
 
   /*
-   * 完全一致しない場合。
-   *
-   * 記述式・部分点問題は
-   * 自動で0点確定せず、
-   * 人による確認へ回します。
+   * 自動採点できない記述式などは
+   * ×確定せず、人確認へ。
    */
   if (
     question.gradingMethod ===
@@ -408,7 +601,7 @@ function gradeQuestion(
       reviewRequired: true,
 
       reason:
-        "自動判定だけでは確定できない問題です。",
+        "自動判定だけでは採点を確定できません。",
 
       rubric:
         question.rubric,
@@ -443,91 +636,82 @@ function gradeQuestion(
   };
 }
 
-/**
- * OCR結果から問題の解答文字列を取得します。
- */
-function extractAnswerText(
-  question: QuestionSetting,
-  ocrResult: OcrResult
-): string {
+/* =========================================================
+   正解判定
+   ========================================================= */
+
+function isAnswerCorrect(
+  answer: string,
+  question: QuestionSetting
+): boolean {
+  const normalizedAnswer =
+    normalizeAnswer(
+      answer
+    );
+
+  const accepted = [
+    question.correctAnswer,
+
+    ...(question.acceptedAnswers ??
+      []),
+  ];
+
   /*
-   * 解答枠IDがない場合は
-   * OCR全文を対象にします。
+   * 通常の完全一致。
    */
-  if (
-    !question.answerRegionId
+  for (
+    const expected of accepted
   ) {
-    return ocrResult.text
-      .trim();
+    if (
+      normalizeAnswer(
+        expected
+      ) ===
+      normalizedAnswer
+    ) {
+      return true;
+    }
   }
 
   /*
-   * answerRegions/{regionId} に
-   * 解答枠の座標を保存しておく。
+   * 数値問題。
    */
-  const regionSnapshot =
-    db
-      .collection(
-        "answerRegions"
-      )
-      .doc(
-        question.answerRegionId
+  if (
+    question.numericTolerance !==
+      undefined
+  ) {
+    const answerNumber =
+      parseNumber(
+        normalizedAnswer
       );
 
-  /*
-   * この関数は同期採点処理の中で
-   * awaitできる構造にするため、
-   * 現在はregion情報を別関数へ
-   * 渡す設計にしています。
-   *
-   * 実際の座標判定は
-   * extractAnswerFromRegionで行います。
-   */
-  void regionSnapshot;
+    const correctNumber =
+      parseNumber(
+        normalizeAnswer(
+          question.correctAnswer
+        )
+      );
 
-  return ocrResult.text
-    .trim();
-}
-
-/**
- * OCR信頼度を算出します。
- */
-function calculateConfidence(
-  question: QuestionSetting,
-  ocrResult: OcrResult
-): number {
-  if (
-    ocrResult.words.length === 0
-  ) {
-    return 0;
+    if (
+      answerNumber !== null &&
+      correctNumber !== null
+    ) {
+      return (
+        Math.abs(
+          answerNumber -
+            correctNumber
+        ) <=
+        question.numericTolerance
+      );
+    }
   }
 
-  const confidence =
-    ocrResult.words.reduce(
-      (sum, word) =>
-        sum + word.confidence,
-      0
-    ) /
-    ocrResult.words.length;
-
-  /*
-   * 解答枠指定がある場合は
-   * 将来的に枠内文字だけを対象にする。
-   */
-  void question;
-
-  return Math.max(
-    0,
-    Math.min(
-      1,
-      confidence
-    )
-  );
+  return false;
 }
 
-/**
- * 採点比較用に文字列を正規化します。
- */
+/* =========================================================
+   解答文字列正規化
+   ========================================================= */
+
 function normalizeAnswer(
   value: string
 ): string {
@@ -541,5 +725,97 @@ function normalizeAnswer(
       /[。．、,，]/g,
       ""
     )
-    .toLowerCase();
+    .toLowerCase()
+    .trim();
+}
+
+/* =========================================================
+   数値変換
+   ========================================================= */
+
+function parseNumber(
+  value: string
+): number | null {
+  const normalized =
+    value.replace(
+      /[^0-9.+\-eE]/g,
+      ""
+    );
+
+  if (!normalized) {
+    return null;
+  }
+
+  const number =
+    Number(
+      normalized
+    );
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : null;
+}
+
+/* =========================================================
+   問題番号ソート
+   ========================================================= */
+
+function compareQuestionNumber(
+  a: string,
+  b: string
+): number {
+  const aParts =
+    a.match(/\d+/g);
+
+  const bParts =
+    b.match(/\d+/g);
+
+  if (
+    !aParts ||
+    !bParts
+  ) {
+    return a.localeCompare(
+      b,
+      "ja"
+    );
+  }
+
+  const length =
+    Math.max(
+      aParts.length,
+      bParts.length
+    );
+
+  for (
+    let i = 0;
+    i < length;
+    i++
+  ) {
+    const aNumber =
+      Number(
+        aParts[i] ?? 0
+      );
+
+    const bNumber =
+      Number(
+        bParts[i] ?? 0
+      );
+
+    if (
+      aNumber !==
+      bNumber
+    ) {
+      return (
+        aNumber -
+        bNumber
+      );
+    }
+  }
+
+  return a.localeCompare(
+    b,
+    "ja"
+  );
 }
