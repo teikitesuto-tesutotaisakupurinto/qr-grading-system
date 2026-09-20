@@ -13,7 +13,7 @@ const functions = [
   { name: "年度更新", href: "/year" },
   { name: "校舎・クラス管理", href: "/schools" },
   { name: "講師・権限管理", href: "/users" },
-  { name: "設定", href: "/settings" }
+  { name: "設定", href: "/settings" },
 ];
 
 export default function HomePage() {
