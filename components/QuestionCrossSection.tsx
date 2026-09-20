@@ -1,27 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 export type CrossSectionAnswer = {
   id: string;
   imageUrl: string;
-  answerText?: string;
+  answerText: string;
+
   mark?: "○" | "△" | "×";
   score?: number;
+
+  studentNumber?: string;
 };
 
 type QuestionCrossSectionProps = {
   questionNumber: string;
   correctAnswer: string;
   maxScore: number;
+
   answers: CrossSectionAnswer[];
-  onUpdate?: (
+
+  onUpdate: (
     answerId: string,
     result: {
       mark: "○" | "△" | "×";
       score: number;
     }
   ) => void;
+
+  disabled?: boolean;
 };
 
 export default function QuestionCrossSection({
@@ -30,107 +41,211 @@ export default function QuestionCrossSection({
   maxScore,
   answers,
   onUpdate,
+  disabled = false,
 }: QuestionCrossSectionProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] =
+    useState(0);
 
-  const currentAnswer = answers[currentIndex];
+  const [showOnlyUngraded, setShowOnlyUngraded] =
+    useState(false);
 
-  function setCorrect() {
-    if (!currentAnswer) return;
+  const visibleAnswers =
+    useMemo(() => {
+      if (!showOnlyUngraded) {
+        return answers;
+      }
 
-    onUpdate?.(currentAnswer.id, {
-      mark: "○",
-      score: maxScore,
-    });
-
-    moveNext();
-  }
-
-  function setWrong() {
-    if (!currentAnswer) return;
-
-    onUpdate?.(currentAnswer.id, {
-      mark: "×",
-      score: 0,
-    });
-
-    moveNext();
-  }
-
-  function setTriangle() {
-    if (!currentAnswer) return;
-
-    const input = window.prompt(
-      `部分点を入力してください（0〜${maxScore}）`,
-      String(currentAnswer.score ?? 0)
-    );
-
-    if (input === null) return;
-
-    const score = Number(input);
-
-    if (
-      !Number.isInteger(score) ||
-      score < 0 ||
-      score > maxScore
-    ) {
-      window.alert(
-        `0〜${maxScore}の整数を入力してください。`
+      return answers.filter(
+        (answer) =>
+          answer.mark === undefined
       );
+    }, [
+      answers,
+      showOnlyUngraded,
+    ]);
+
+  const currentAnswer =
+    visibleAnswers[
+      currentIndex
+    ];
+
+  const gradedCount =
+    answers.filter(
+      (answer) =>
+        answer.mark !== undefined
+    ).length;
+
+  const correctCount =
+    answers.filter(
+      (answer) =>
+        answer.mark === "○"
+    ).length;
+
+  const partialCount =
+    answers.filter(
+      (answer) =>
+        answer.mark === "△"
+    ).length;
+
+  const incorrectCount =
+    answers.filter(
+      (answer) =>
+        answer.mark === "×"
+    ).length;
+
+  useEffect(() => {
+    if (
+      currentIndex >=
+      visibleAnswers.length
+    ) {
+      setCurrentIndex(
+        Math.max(
+          0,
+          visibleAnswers.length - 1
+        )
+      );
+    }
+  }, [
+    currentIndex,
+    visibleAnswers.length,
+  ]);
+
+  function setResult(
+    mark: "○" | "△" | "×",
+    score: number
+  ) {
+    if (
+      disabled ||
+      !currentAnswer
+    ) {
       return;
     }
 
-    onUpdate?.(currentAnswer.id, {
-      mark: "△",
-      score,
-    });
+    onUpdate(
+      currentAnswer.id,
+      {
+        mark,
+        score:
+          Math.max(
+            0,
+            Math.min(
+              maxScore,
+              score
+            )
+          ),
+      }
+    );
+  }
+
+  function setCorrect() {
+    setResult(
+      "○",
+      maxScore
+    );
 
     moveNext();
   }
 
+  function setIncorrect() {
+    setResult(
+      "×",
+      0
+    );
+
+    moveNext();
+  }
+
+  function setPartial() {
+    if (!currentAnswer) {
+      return;
+    }
+
+    const defaultScore =
+      Math.floor(
+        maxScore / 2
+      );
+
+    setResult(
+      "△",
+      defaultScore
+    );
+  }
+
   function moveNext() {
-    setCurrentIndex((current) =>
-      Math.min(current + 1, answers.length - 1)
+    setCurrentIndex(
+      (current) =>
+        Math.min(
+          current + 1,
+          visibleAnswers.length -
+            1
+        )
     );
   }
 
   function movePrevious() {
-    setCurrentIndex((current) =>
-      Math.max(current - 1, 0)
+    setCurrentIndex(
+      (current) =>
+        Math.max(
+          current - 1,
+          0
+        )
     );
   }
 
+  function jumpTo(
+    index: number
+  ) {
+    setCurrentIndex(index);
+  }
+
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
+    function handleKeyDown(
+      event: KeyboardEvent
+    ) {
+      if (disabled) {
+        return;
+      }
+
+      const target =
+        event.target as HTMLElement | null;
 
       if (
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "SELECT"
+        target?.tagName ===
+          "INPUT" ||
+        target?.tagName ===
+          "TEXTAREA" ||
+        target?.tagName ===
+          "SELECT"
       ) {
         return;
       }
 
-      const key = event.key.toLowerCase();
+      const key =
+        event.key.toLowerCase();
 
       if (key === "k") {
+        event.preventDefault();
         setCorrect();
       }
 
       if (key === "l") {
-        setWrong();
+        event.preventDefault();
+        setIncorrect();
       }
 
-      if (event.key === "Enter") {
-        moveNext();
-      }
-
-      if (event.key === "ArrowLeft") {
+      if (
+        event.key ===
+        "ArrowLeft"
+      ) {
+        event.preventDefault();
         movePrevious();
       }
 
-      if (event.key === "ArrowRight") {
+      if (
+        event.key ===
+        "ArrowRight"
+      ) {
+        event.preventDefault();
         moveNext();
       }
     }
@@ -146,133 +261,335 @@ export default function QuestionCrossSection({
         handleKeyDown
       );
     };
-  }, [currentAnswer, maxScore, answers.length]);
+  }, [
+    disabled,
+    currentAnswer,
+    visibleAnswers.length,
+    maxScore,
+  ]);
 
-  if (!currentAnswer) {
+  if (
+    visibleAnswers.length ===
+    0
+  ) {
     return (
-      <section className="crossSection">
-        <h2>問題別串刺し採点</h2>
-        <p>採点対象の答案がありません。</p>
-      </section>
+      <div className="emptyState">
+        表示できる答案がありません。
+      </div>
     );
   }
 
   return (
-    <section className="crossSection">
-      <header className="crossSectionHeader">
+    <div className="crossSection">
+      <div className="crossSectionHeader">
         <div>
           <h2>
-            第{questionNumber}問
+            第
+            {questionNumber}
+            問
           </h2>
 
-          <div className="crossSectionAnswer">
+          <p>
             正解：
-            <strong>{correctAnswer}</strong>
-          </div>
-
-          <div className="crossSectionScore">
-            配点：{maxScore}点
-          </div>
+            <strong>
+              {correctAnswer}
+            </strong>
+            {"　"}
+            配点：
+            <strong>
+              {maxScore}点
+            </strong>
+          </p>
         </div>
 
-        <div className="crossSectionProgress">
-          {currentIndex + 1} / {answers.length}
-        </div>
-      </header>
+        <div className="crossSectionStats">
+          <span>
+            全{answers.length}枚
+          </span>
 
-      <div className="crossSectionBody">
+          <span>
+            採点済み：
+            {gradedCount}
+          </span>
+
+          <span>
+            ○：
+            {correctCount}
+          </span>
+
+          <span>
+            △：
+            {partialCount}
+          </span>
+
+          <span>
+            ×：
+            {incorrectCount}
+          </span>
+        </div>
+      </div>
+
+      <div className="crossSectionToolbar">
+        <button
+          type="button"
+          className="secondaryButton"
+          disabled={
+            currentIndex === 0
+          }
+          onClick={
+            movePrevious
+          }
+        >
+          ← 前
+        </button>
+
+        <span>
+          {currentIndex + 1}
+          {" / "}
+          {visibleAnswers.length}
+        </span>
+
+        <button
+          type="button"
+          className="secondaryButton"
+          disabled={
+            currentIndex ===
+            visibleAnswers.length -
+              1
+          }
+          onClick={
+            moveNext
+          }
+        >
+          次 →
+        </button>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            marginLeft: "auto",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={
+              showOnlyUngraded
+            }
+            onChange={(event) => {
+              setShowOnlyUngraded(
+                event.target.checked
+              );
+              setCurrentIndex(0);
+            }}
+          />
+
+          未採点のみ
+        </label>
+      </div>
+
+      <div className="crossSectionMain">
         <div className="crossSectionImage">
           <img
-            src={currentAnswer.imageUrl}
-            alt="生徒答案"
+            src={
+              currentAnswer.imageUrl
+            }
+            alt={`第${questionNumber}問の答案`}
+            draggable={false}
           />
+
+          <div className="crossSectionAnswer">
+            {currentAnswer.answerText ||
+              "OCR結果なし"}
+          </div>
         </div>
 
-        <div className="crossSectionAnswerArea">
-          <div className="answerText">
-            {currentAnswer.answerText || "答案"}
+        <div className="crossSectionGrading">
+          <div className="selectionPanel">
+            <span>
+              生徒番号
+            </span>
+
+            <strong>
+              {currentAnswer.studentNumber ??
+                "非表示"}
+            </strong>
           </div>
 
-          <div className="currentResult">
-            {currentAnswer.mark === "△"
-              ? `△${currentAnswer.score ?? 0}`
-              : currentAnswer.mark ?? "未採点"}
-          </div>
-
-          <div className="crossSectionButtons">
+          <div
+            className="crossSectionButtons"
+          >
             <button
               type="button"
-              onClick={setCorrect}
-            >
-              ○
-              <span>K</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={setTriangle}
-            >
-              △
-            </button>
-
-            <button
-              type="button"
-              onClick={setWrong}
-            >
-              ×
-              <span>L</span>
-            </button>
-          </div>
-
-          <div className="crossSectionNavigation">
-            <button
-              type="button"
-              onClick={movePrevious}
-              disabled={currentIndex === 0}
-            >
-              ← 前
-            </button>
-
-            <button
-              type="button"
-              onClick={moveNext}
-              disabled={
-                currentIndex === answers.length - 1
+              disabled={disabled}
+              onClick={
+                setCorrect
+              }
+              className={
+                currentAnswer.mark ===
+                "○"
+                  ? "crossButton selected"
+                  : "crossButton"
               }
             >
-              次 →
+              <strong>
+                ○
+              </strong>
+
+              <span>
+                {maxScore}点
+              </span>
+
+              <small>
+                K
+              </small>
             </button>
+
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={
+                setPartial
+              }
+              className={
+                currentAnswer.mark ===
+                "△"
+                  ? "crossButton selected"
+                  : "crossButton"
+              }
+            >
+              <strong>
+                △
+              </strong>
+
+              <span>
+                部分点
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={
+                setIncorrect
+              }
+              className={
+                currentAnswer.mark ===
+                "×"
+                  ? "crossButton selected"
+                  : "crossButton"
+              }
+            >
+              <strong>
+                ×
+              </strong>
+
+              <span>
+                0点
+              </span>
+
+              <small>
+                L
+              </small>
+            </button>
+          </div>
+
+          {currentAnswer.mark ===
+            "△" && (
+            <label>
+              部分点
+
+              <input
+                type="number"
+                min={0}
+                max={maxScore}
+                step={1}
+                value={
+                  currentAnswer.score ??
+                  0
+                }
+                disabled={
+                  disabled
+                }
+                onChange={(
+                  event
+                ) =>
+                  setResult(
+                    "△",
+                    Number(
+                      event.target
+                        .value
+                    )
+                  )
+                }
+              />
+            </label>
+          )}
+
+          <div
+            className="selectionPanel"
+            style={{
+              marginTop: 16,
+            }}
+          >
+            <span>
+              現在の採点
+            </span>
+
+            <strong>
+              {currentAnswer.mark ??
+                "未採点"}
+              {"　"}
+              {currentAnswer.score ??
+                0}
+              /
+              {maxScore}
+            </strong>
           </div>
         </div>
       </div>
 
       <div className="crossSectionList">
-        {answers.map((answer, index) => (
-          <button
-            key={answer.id}
-            type="button"
-            className={
-              index === currentIndex
-                ? "crossAnswerItem active"
-                : "crossAnswerItem"
-            }
-            onClick={() =>
-              setCurrentIndex(index)
-            }
-          >
-            <img
-              src={answer.imageUrl}
-              alt=""
-            />
+        {visibleAnswers.map(
+          (answer, index) => (
+            <button
+              type="button"
+              key={answer.id}
+              className={
+                index ===
+                currentIndex
+                  ? "crossThumb active"
+                  : "crossThumb"
+              }
+              onClick={() =>
+                jumpTo(index)
+              }
+            >
+              <img
+                src={
+                  answer.imageUrl
+                }
+                alt=""
+                draggable={false}
+              />
 
-            <span>
-              {answer.mark === "△"
-                ? `△${answer.score ?? 0}`
-                : answer.mark ?? "未採点"}
-            </span>
-          </button>
-        ))}
+              <span>
+                {answer.mark ??
+                  "・"}
+              </span>
+
+              <small>
+                {answer.score ??
+                  0}
+                /
+                {maxScore}
+              </small>
+            </button>
+          )
+        )}
       </div>
-    </section>
+    </div>
   );
 }
