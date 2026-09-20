@@ -17,32 +17,47 @@ import {
   db,
 } from "@/lib/firebase";
 
+/* =========================================================
+   型
+   ========================================================= */
+
 export type ReportSubject = {
   subject: string;
+
   score: number;
+
   maxScore: number;
+
   percentage: number;
+
   deviationScore?: number;
+
   rank?: number;
 };
 
 export type ReportSection = {
   name: string;
+
   score: number;
+
   maxScore: number;
 };
 
 export type ReportRubric = {
   name: string;
+
   score: number;
+
   maxScore: number;
 };
 
 export type GradeReportData = {
   studentName: string;
+
   studentNumber: string;
 
   testName: string;
+
   testDate: string;
 
   subjects: ReportSubject[];
@@ -52,14 +67,19 @@ export type GradeReportData = {
   rubrics: ReportRubric[];
 
   totalScore: number;
+
   totalMaxScore: number;
+
   totalPercentage: number;
 
   totalDeviationScore?: number;
 
   overallRank?: number;
+
   schoolRank?: number;
+
   gradeRank?: number;
+
   classRank?: number;
 
   isRetest: boolean;
@@ -71,6 +91,7 @@ export type GradeReport = {
   id: string;
 
   testId: string;
+
   studentNumber: string;
 
   data: GradeReportData;
@@ -84,7 +105,32 @@ export type GradeReport = {
   templateId?: string;
 
   createdAt?: unknown;
+
   updatedAt?: unknown;
+};
+
+/* =========================================================
+   Firestore Score 型
+   ========================================================= */
+
+type ReportScore = {
+  id: string;
+
+  testId: string;
+
+  studentNumber: string;
+
+  subjectId: string;
+
+  score: number;
+
+  maxScore: number;
+
+  percentage: number;
+
+  deviationScores?: unknown;
+
+  rankings?: unknown;
 };
 
 /* =========================================================
@@ -109,6 +155,7 @@ export async function getGradeReport(
 
   return {
     id: snapshot.id,
+
     ...snapshot.data(),
   } as GradeReport;
 }
@@ -127,16 +174,19 @@ export async function getStudentGradeReport(
         db,
         "gradeReports"
       ),
+
       where(
         "testId",
         "==",
         testId
       ),
+
       where(
         "studentNumber",
         "==",
         studentNumber
       ),
+
       orderBy(
         "createdAt",
         "desc"
@@ -148,7 +198,9 @@ export async function getStudentGradeReport(
       reportQuery
     );
 
-  if (snapshot.empty) {
+  if (
+    snapshot.empty
+  ) {
     return null;
   }
 
@@ -157,6 +209,7 @@ export async function getStudentGradeReport(
 
   return {
     id: item.id,
+
     ...item.data(),
   } as GradeReport;
 }
@@ -174,11 +227,13 @@ export async function getGradeReports(
         db,
         "gradeReports"
       ),
+
       where(
         "testId",
         "==",
         testId
       ),
+
       orderBy(
         "studentNumber",
         "asc"
@@ -194,6 +249,7 @@ export async function getGradeReports(
     (item) =>
       ({
         id: item.id,
+
         ...item.data(),
       }) as GradeReport
   );
@@ -249,8 +305,7 @@ export async function createGradeReport(
           isRetest:
             Boolean(
               input.isRetest ??
-                input.data
-                  .isRetest
+                input.data.isRetest
             ),
         },
 
@@ -288,7 +343,9 @@ export async function updateGradeReport(
       | "paper_only";
   }
 ) {
-  if (changes.data) {
+  if (
+    changes.data
+  ) {
     validateReportData(
       changes.data
     );
@@ -322,10 +379,6 @@ export async function generateGradeReport(
     studentNumber
   );
 
-  /*
-   * 既存の成績表があれば更新。
-   * なければ新規作成。
-   */
   const existing =
     await getStudentGradeReport(
       testId,
@@ -437,9 +490,11 @@ async function buildGradeReportData(
   const test =
     testSnapshot.data();
 
-  const subjects =
+  const subjects: ReportSubject[] =
     scoreSnapshot.map(
-      (score) => ({
+      (
+        score: ReportScore
+      ) => ({
         subject:
           String(
             score.subjectId
@@ -447,17 +502,20 @@ async function buildGradeReportData(
 
         score:
           Number(
-            score.score ?? 0
+            score.score ??
+              0
           ),
 
         maxScore:
           Number(
-            score.maxScore ?? 0
+            score.maxScore ??
+              0
           ),
 
         percentage:
           Number(
-            score.percentage ?? 0
+            score.percentage ??
+              0
           ),
 
         deviationScore:
@@ -474,43 +532,57 @@ async function buildGradeReportData(
 
   const totalScore =
     subjects.reduce(
-      (sum, subject) =>
+      (
+        sum,
+        subject
+      ) =>
         sum +
         subject.score,
+
       0
     );
 
   const totalMaxScore =
     subjects.reduce(
-      (sum, subject) =>
+      (
+        sum,
+        subject
+      ) =>
         sum +
         subject.maxScore,
+
       0
     );
 
   const totalPercentage =
-    totalMaxScore === 0
+    totalMaxScore ===
+    0
       ? 0
-      : (totalScore /
-          totalMaxScore) *
+      : (
+          totalScore /
+          totalMaxScore
+        ) *
         100;
 
   return {
     studentName:
       String(
-        student.name ?? ""
+        student.name ??
+          ""
       ),
 
     studentNumber,
 
     testName:
       String(
-        test.name ?? ""
+        test.name ??
+          ""
       ),
 
     testDate:
       String(
-        test.date ?? ""
+        test.date ??
+          ""
       ),
 
     subjects,
@@ -557,18 +629,20 @@ async function buildGradeReportData(
 async function getScores(
   testId: string,
   studentNumber: string
-) {
+): Promise<ReportScore[]> {
   const scoreQuery =
     query(
       collection(
         db,
         "scores"
       ),
+
       where(
         "testId",
         "==",
         testId
       ),
+
       where(
         "studentNumber",
         "==",
@@ -582,10 +656,56 @@ async function getScores(
     );
 
   return snapshot.docs.map(
-    (item) => ({
-      id: item.id,
-      ...item.data(),
-    })
+    (
+      item
+    ): ReportScore => {
+      const data =
+        item.data();
+
+      return {
+        id:
+          item.id,
+
+        testId:
+          typeof data.testId ===
+          "string"
+            ? data.testId
+            : testId,
+
+        studentNumber:
+          typeof data.studentNumber ===
+          "string"
+            ? data.studentNumber
+            : studentNumber,
+
+        subjectId:
+          typeof data.subjectId ===
+          "string"
+            ? data.subjectId
+            : "",
+
+        score:
+          toNumber(
+            data.score
+          ),
+
+        maxScore:
+          toNumber(
+            data.maxScore
+          ),
+
+        percentage:
+          toNumber(
+            data.percentage
+          ),
+
+        deviationScores:
+          data.deviationScores,
+
+        rankings:
+          data.rankings,
+      };
+    }
   );
 }
 
@@ -598,8 +718,11 @@ async function getRankings(
   studentNumber: string
 ): Promise<{
   overall?: number;
+
   school?: number;
+
   grade?: number;
+
   class?: number;
 }> {
   const rankingQuery =
@@ -608,11 +731,13 @@ async function getRankings(
         db,
         "rankings"
       ),
+
       where(
         "testId",
         "==",
         testId
       ),
+
       where(
         "studentNumber",
         "==",
@@ -627,8 +752,11 @@ async function getRankings(
 
   const result: {
     overall?: number;
+
     school?: number;
+
     grade?: number;
+
     class?: number;
   } = {};
 
@@ -656,28 +784,32 @@ async function getRankings(
     }
 
     if (
-      type === "overall"
+      type ===
+      "overall"
     ) {
       result.overall =
         rank;
     }
 
     if (
-      type === "school"
+      type ===
+      "school"
     ) {
       result.school =
         rank;
     }
 
     if (
-      type === "grade"
+      type ===
+      "grade"
     ) {
       result.grade =
         rank;
     }
 
     if (
-      type === "class"
+      type ===
+      "class"
     ) {
       result.class =
         rank;
@@ -692,10 +824,7 @@ async function getRankings(
    ========================================================= */
 
 function getDeviation(
-  score: Record<
-    string,
-    unknown
-  >
+  score: ReportScore
 ): number | undefined {
   const deviations =
     score.deviationScores;
@@ -736,7 +865,23 @@ function getDeviation(
       : undefined;
   }
 
-  return undefined;
+  /*
+   * deviationScoreが直接保存されている
+   * データ構造にも対応。
+   */
+  const direct =
+    (
+      deviations as Record<
+        string,
+        unknown
+      >
+    ).deviationScore;
+
+  return Number.isFinite(
+    Number(direct)
+  )
+    ? Number(direct)
+    : undefined;
 }
 
 /* =========================================================
@@ -744,10 +889,7 @@ function getDeviation(
    ========================================================= */
 
 function getSubjectRank(
-  score: Record<
-    string,
-    unknown
-  >
+  score: ReportScore
 ): number | undefined {
   const rankings =
     score.rankings;
@@ -788,11 +930,26 @@ function getSubjectRank(
       : undefined;
   }
 
-  return undefined;
+  /*
+   * rankが直接保存されている場合にも対応。
+   */
+  const direct =
+    (
+      rankings as Record<
+        string,
+        unknown
+      >
+    ).rank;
+
+  return Number.isFinite(
+    Number(direct)
+  )
+    ? Number(direct)
+    : undefined;
 }
 
 /* =========================================================
-   バリデーション
+   生徒番号チェック
    ========================================================= */
 
 function validateStudentNumber(
@@ -808,6 +965,10 @@ function validateStudentNumber(
     );
   }
 }
+
+/* =========================================================
+   成績表データチェック
+   ========================================================= */
 
 function validateReportData(
   data: GradeReportData
@@ -858,4 +1019,55 @@ function validateReportData(
       );
     }
   }
+
+  for (
+    const section of
+      data.sections
+  ) {
+    if (
+      section.score <
+        0 ||
+      section.score >
+        section.maxScore
+    ) {
+      throw new Error(
+        `${section.name}の得点が不正です。`
+      );
+    }
+  }
+
+  for (
+    const rubric of
+      data.rubrics
+  ) {
+    if (
+      rubric.score <
+        0 ||
+      rubric.score >
+        rubric.maxScore
+    ) {
+      throw new Error(
+        `${rubric.name}の得点が不正です。`
+      );
+    }
+  }
+}
+
+/* =========================================================
+   数値変換
+   ========================================================= */
+
+function toNumber(
+  value: unknown
+): number {
+  const number =
+    Number(
+      value ?? 0
+    );
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
 }
