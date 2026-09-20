@@ -39,6 +39,14 @@ import {
   requireRole,
 } from "./auth";
 
+import {
+  createManagedUser,
+  disableManagedUser,
+  enableManagedUser,
+  generateManagedPasswordResetLink,
+  updateManagedUserRole,
+} from "./userManagement";
+
 /* =========================================================
    Firebase Admin SDK
    ========================================================= */
@@ -46,7 +54,7 @@ import {
 initializeApp();
 
 /* =========================================================
-   Cloud Functions 共通設定
+   Cloud Functions共通設定
    ========================================================= */
 
 setGlobalOptions({
@@ -124,14 +132,14 @@ export const startAnswerProcessing =
         );
       }
 
-      const invalidAnswerId =
+      const invalid =
         answerIds.some(
           (id) =>
             typeof id !== "string" ||
             id.trim() === ""
         );
 
-      if (invalidAnswerId) {
+      if (invalid) {
         throw new HttpsError(
           "invalid-argument",
           "answerIdsに不正な値があります。"
@@ -164,7 +172,7 @@ export const startAnswerProcessing =
   );
 
 /* =========================================================
-   答案処理ジョブ開始
+   答案処理ジョブ実行
    ========================================================= */
 
 export const answerJobCreated =
@@ -234,11 +242,8 @@ export const calculateScores =
         ]
       );
 
-      const data =
-        request.data ?? {};
-
       const testId =
-        data.testId;
+        request.data?.testId;
 
       if (
         typeof testId !== "string" ||
@@ -283,11 +288,8 @@ export const calculateDeviationScores =
         ]
       );
 
-      const data =
-        request.data ?? {};
-
       const testId =
-        data.testId;
+        request.data?.testId;
 
       if (
         typeof testId !== "string" ||
@@ -332,11 +334,8 @@ export const calculateRank =
         ]
       );
 
-      const data =
-        request.data ?? {};
-
       const testId =
-        data.testId;
+        request.data?.testId;
 
       if (
         typeof testId !== "string" ||
@@ -380,14 +379,11 @@ export const executeCsvImport =
         ]
       );
 
-      const data =
-        request.data ?? {};
-
       const importId =
-        data.importId;
+        request.data?.importId;
 
       const type =
-        data.type;
+        request.data?.type;
 
       if (
         typeof importId !== "string" ||
@@ -412,7 +408,9 @@ export const executeCsvImport =
 
       return processCsvImport({
         importId,
+
         type,
+
         requestedBy:
           request.auth.uid,
       });
@@ -420,7 +418,7 @@ export const executeCsvImport =
   );
 
 /* =========================================================
-   現在のユーザー権限取得
+   現在のユーザー権限
    ========================================================= */
 
 export const getCurrentUserRole =
@@ -440,9 +438,23 @@ export const getCurrentUserRole =
 
       return {
         success: true,
+
         uid:
           request.auth.uid,
+
         role,
       };
     }
   );
+
+/* =========================================================
+   ユーザー管理
+   ========================================================= */
+
+export {
+  createManagedUser,
+  disableManagedUser,
+  enableManagedUser,
+  generateManagedPasswordResetLink,
+  updateManagedUserRole,
+};
