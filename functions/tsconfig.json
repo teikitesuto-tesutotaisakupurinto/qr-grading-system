@@ -3,28 +3,19 @@
     "target": "ES2022",
     "module": "commonjs",
     "moduleResolution": "node",
-
     "outDir": "lib",
-
     "sourceMap": true,
-
     "strict": true,
-
     "esModuleInterop": true,
-
     "allowSyntheticDefaultImports": true,
-
     "resolveJsonModule": true,
-
     "skipLibCheck": true,
-
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": true
   },
-
   "include": [
     "src/**/*.ts"
   ],
-
   "exclude": [
     "node_modules",
     "lib"
