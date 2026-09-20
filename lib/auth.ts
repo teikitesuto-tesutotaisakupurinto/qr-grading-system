@@ -7,7 +7,6 @@ import {
   setPersistence,
   signInWithPopup,
   signOut,
-  updatePassword,
   User,
 } from "firebase/auth";
 
@@ -24,7 +23,7 @@ import {
 } from "@/lib/firebase";
 
 /* =========================================================
-   Roles
+   権限
    ========================================================= */
 
 export type UserRole =
@@ -34,7 +33,7 @@ export type UserRole =
   | "生徒";
 
 /* =========================================================
-   App User
+   アプリユーザー
    ========================================================= */
 
 export type AppUser = {
@@ -56,7 +55,7 @@ export type AppUser = {
 };
 
 /* =========================================================
-   Google Login
+   Googleログイン
    ========================================================= */
 
 export async function loginWithGoogle(): Promise<AppUser> {
@@ -72,32 +71,40 @@ export async function loginWithGoogle(): Promise<AppUser> {
     prompt: "select_account",
   });
 
-  const credential =
+  const result =
     await signInWithPopup(
       auth,
       provider
     );
 
   return getAppUser(
-    credential.user
+    result.user
   );
 }
 
 /* =========================================================
-   Logout
+   ログアウト
    ========================================================= */
 
-export async function logout() {
+export async function logout(): Promise<void> {
   await signOut(auth);
 }
 
 /* =========================================================
-   Current user
+   現在のFirebaseユーザー
    ========================================================= */
 
-export async function getCurrentUser(): Promise<
-  AppUser | null
-> {
+export function getFirebaseUser():
+  User | null {
+  return auth.currentUser;
+}
+
+/* =========================================================
+   現在のアプリユーザー
+   ========================================================= */
+
+export async function getCurrentUser():
+  Promise<AppUser | null> {
   const firebaseUser =
     auth.currentUser;
 
@@ -111,7 +118,7 @@ export async function getCurrentUser(): Promise<
 }
 
 /* =========================================================
-   Firebase User → App User
+   Firebase User → AppUser
    ========================================================= */
 
 export async function getAppUser(
@@ -129,12 +136,6 @@ export async function getAppUser(
       userRef
     );
 
-  /*
-   * Googleログイン直後にFirestoreの
-   * users/{uid} が存在しない場合。
-   *
-   * 勝手に管理者権限を付与しない。
-   */
   if (
     !snapshot.exists()
   ) {
@@ -215,79 +216,7 @@ export async function getAppUser(
 }
 
 /* =========================================================
-   Google Login後のユーザー登録
-   ========================================================= */
-
-export async function ensureGoogleUserProfile(
-  firebaseUser: User
-): Promise<AppUser> {
-  const userRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid
-    );
-
-  const snapshot =
-    await getDoc(
-      userRef
-    );
-
-  /*
-   * 既に管理者が登録している場合。
-   */
-  if (
-    snapshot.exists()
-  ) {
-    return getAppUser(
-      firebaseUser
-    );
-  }
-
-  /*
-   * 新規Googleユーザーには
-   * 権限を与えない。
-   *
-   * active=false
-   * roleは未登録扱い。
-   *
-   * 管理者が後から正式登録する。
-   */
-  await setDoc(
-    userRef,
-    {
-      name:
-        firebaseUser.displayName ??
-        "",
-
-      email:
-        firebaseUser.email,
-
-      active:
-        false,
-
-      schoolIds:
-        [],
-
-      createdAt:
-        serverTimestamp(),
-
-      updatedAt:
-        serverTimestamp(),
-    },
-    {
-      merge:
-        true,
-    }
-  );
-
-  throw new Error(
-    "Googleアカウントを認証しましたが、まだシステムに登録されていません。管理者に登録を依頼してください。"
-  );
-}
-
-/* =========================================================
-   Auth Observer
+   認証状態監視
    ========================================================= */
 
 export function observeAuth(
@@ -308,9 +237,7 @@ export function observeAuth(
         if (
           !firebaseUser
         ) {
-          callback(
-            null
-          );
+          callback(null);
 
           return;
         }
@@ -339,38 +266,70 @@ export function observeAuth(
 }
 
 /* =========================================================
-   Password Change
+   Googleログイン後のユーザー登録確認
    ========================================================= */
 
-export async function changePassword(
-  newPassword: string
-) {
-  const user =
-    auth.currentUser;
-
-  if (!user) {
-    throw new Error(
-      "ログインしてください。"
+export async function ensureUserProfile(
+  firebaseUser: User
+): Promise<AppUser> {
+  const userRef =
+    doc(
+      db,
+      "users",
+      firebaseUser.uid
     );
-  }
+
+  const snapshot =
+    await getDoc(
+      userRef
+    );
 
   if (
-    newPassword.length <
-    8
+    snapshot.exists()
   ) {
-    throw new Error(
-      "パスワードは8文字以上にしてください。"
+    return getAppUser(
+      firebaseUser
     );
   }
 
-  await updatePassword(
-    user,
-    newPassword
+  /*
+   * 初回Googleログインだけでは
+   * 権限を与えない。
+   */
+  await setDoc(
+    userRef,
+    {
+      name:
+        firebaseUser.displayName ??
+        "",
+
+      email:
+        firebaseUser.email,
+
+      role:
+        "生徒",
+
+      schoolIds:
+        [],
+
+      active:
+        false,
+
+      createdAt:
+        serverTimestamp(),
+
+      updatedAt:
+        serverTimestamp(),
+    }
+  );
+
+  throw new Error(
+    "Googleアカウントは認証されましたが、システムへの登録が完了していません。管理者に登録を依頼してください。"
   );
 }
 
 /* =========================================================
-   Role
+   権限確認
    ========================================================= */
 
 export async function hasRole(
@@ -401,7 +360,33 @@ export async function hasAnyRole(
 }
 
 /* =========================================================
-   Role validation
+   校舎アクセス確認
+   ========================================================= */
+
+export async function canAccessSchool(
+  schoolId: string
+): Promise<boolean> {
+  const user =
+    await getCurrentUser();
+
+  if (!user) {
+    return false;
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  return user.schoolIds.includes(
+    schoolId
+  );
+}
+
+/* =========================================================
+   ロール検証
    ========================================================= */
 
 function isValidRole(
