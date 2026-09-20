@@ -1,9 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  useSearchParams,
+} from "next/navigation";
 
 import SchoolHeader from "@/components/SchoolHeader";
 import StepBar from "@/components/StepBar";
+
+import {
+  getAnswers,
+  getGradingJob,
+  startAutoGrading,
+} from "@/lib/answers";
 
 type ProcessingStatus =
   | "待機中"
@@ -19,174 +33,303 @@ type ProcessingItem = {
   status: ProcessingStatus;
 };
 
-const initialItems: ProcessingItem[] = [
-  {
-    name: "QR認識",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-  {
-    name: "四隅マーカー検出",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-  {
-    name: "傾き・台形補正",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-  {
-    name: "答案位置合わせ",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-  {
-    name: "OCR",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-  {
-    name: "自動採点",
-    total: 3000,
-    processed: 0,
-    status: "待機中",
-  },
-];
-
 export default function AutoGradingPage() {
-  const [items, setItems] =
-    useState<ProcessingItem[]>(
-      initialItems
-    );
+  const searchParams =
+    useSearchParams();
 
-  const [running, setRunning] =
-    useState(false);
+  const testId =
+    searchParams.get(
+      "testId"
+    ) ?? "";
 
-  const [finished, setFinished] =
-    useState(false);
+  const subjectId =
+    searchParams.get(
+      "subjectId"
+    ) ?? "";
 
-  const [errorCount, setErrorCount] =
-    useState(0);
+  const [
+    jobId,
+    setJobId,
+  ] = useState<
+    string | null
+  >(null);
 
-  const [reviewCount, setReviewCount] =
-    useState(0);
+  const [
+    total,
+    setTotal,
+  ] = useState<number>(0);
 
-  const total = 3000;
+  const [
+    processed,
+    setProcessed,
+  ] = useState<number>(0);
 
-  const processed =
-    items.find(
-      (item) =>
-        item.name === "自動採点"
-    )?.processed ?? 0;
+  const [
+    succeeded,
+    setSucceeded,
+  ] = useState<number>(0);
+
+  const [
+    reviewCount,
+    setReviewCount,
+  ] = useState<number>(0);
+
+  const [
+    errorCount,
+    setErrorCount,
+  ] = useState<number>(0);
+
+  const [
+    running,
+    setRunning,
+  ] = useState(false);
+
+  const [
+    finished,
+    setFinished,
+  ] = useState(false);
+
+  const [
+    errorMessage,
+    setErrorMessage,
+  ] = useState("");
 
   const progress =
-    total === 0
-      ? 0
-      : Math.round(
-          (processed / total) * 100
-        );
+    useMemo(() => {
+      if (total <= 0) {
+        return 0;
+      }
+
+      return Math.min(
+        100,
+        Math.round(
+          (processed /
+            total) *
+            100
+        )
+      );
+    }, [
+      processed,
+      total,
+    ]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!jobId) {
+      return;
+    }
 
-    if (processed >= total) {
-      setRunning(false);
-      setFinished(true);
+    let cancelled =
+      false;
 
-      setItems((current) =>
-        current.map((item) => ({
-          ...item,
-          processed:
-            item.total,
-          status:
-            item.name === "自動採点"
-              ? "完了"
-              : item.status,
-        }))
+    const timer =
+      window.setInterval(
+        async () => {
+          try {
+            const job =
+              await getGradingJob(
+                jobId
+              );
+
+            if (
+              cancelled ||
+              !job
+            ) {
+              return;
+            }
+
+            setProcessed(
+              Number(
+                job.processed ??
+                  0
+              )
+            );
+
+            setSucceeded(
+              Number(
+                job.succeeded ??
+                  0
+              )
+            );
+
+            setReviewCount(
+              Number(
+                job.reviewRequired ??
+                  0
+              )
+            );
+
+            setErrorCount(
+              Number(
+                job.errors ??
+                  0
+              )
+            );
+
+            if (
+              job.status ===
+                "completed" ||
+              job.status ===
+                "completed_with_errors"
+            ) {
+              setRunning(false);
+              setFinished(true);
+
+              if (
+                job.status ===
+                "completed_with_errors"
+              ) {
+                setErrorMessage(
+                  "一部の答案でエラーが発生しました。"
+                );
+              }
+
+              window.clearInterval(
+                timer
+              );
+            }
+
+            if (
+              job.status ===
+              "failed"
+            ) {
+              setRunning(false);
+
+              setErrorMessage(
+                typeof job.errorMessage ===
+                  "string"
+                  ? job.errorMessage
+                  : "答案処理に失敗しました。"
+              );
+
+              window.clearInterval(
+                timer
+              );
+            }
+          } catch (error) {
+            if (
+              !cancelled
+            ) {
+              setErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "ジョブ状態を取得できません。"
+              );
+            }
+          }
+        },
+        2000
+      );
+
+    return () => {
+      cancelled = true;
+
+      window.clearInterval(
+        timer
+      );
+    };
+  }, [jobId]);
+
+  async function startProcessing() {
+    if (
+      !testId ||
+      !subjectId
+    ) {
+      setErrorMessage(
+        "testIdとsubjectIdが必要です。"
       );
 
       return;
     }
 
-    const timer = setTimeout(() => {
-      setItems((current) =>
-        current.map((item, index) => {
-          const next =
-            Math.min(
-              item.processed +
-                (index === 5
-                  ? 75
-                  : 100),
-              item.total
-            );
+    setRunning(true);
+    setFinished(false);
 
-          let status:
-            | ProcessingStatus =
-            next >= item.total
-              ? "完了"
-              : "処理中";
+    setErrorMessage("");
 
-          if (
-            item.name ===
-              "四隅マーカー検出" &&
-            next > 0 &&
-            next % 997 < 100
-          ) {
-            status = "要確認";
-          }
+    setProcessed(0);
+    setSucceeded(0);
+    setReviewCount(0);
+    setErrorCount(0);
 
-          return {
-            ...item,
-            processed: next,
-            status,
-          };
-        })
+    setJobId(null);
+
+    try {
+      const answers =
+        await getAnswers(
+          testId,
+          subjectId,
+          "uploaded"
+        );
+
+      if (
+        answers.length ===
+        0
+      ) {
+        setRunning(false);
+
+        setErrorMessage(
+          "未処理の答案がありません。"
+        );
+
+        return;
+      }
+
+      const result =
+        await startAutoGrading(
+          testId,
+          subjectId,
+          answers.map(
+            (answer) =>
+              answer.id
+          )
+        );
+
+      setJobId(
+        result.jobId
       );
 
-      if (
-        Math.random() < 0.08
-      ) {
-        setReviewCount(
-          (current) =>
-            current + 1
-        );
-      }
+      setTotal(
+        Number(
+          result.total
+        )
+      );
+    } catch (error) {
+      setRunning(false);
 
-      if (
-        Math.random() < 0.01
-      ) {
-        setErrorCount(
-          (current) =>
-            current + 1
-        );
-      }
-    }, 100);
-
-    return () =>
-      clearTimeout(timer);
-  }, [running, processed]);
-
-  function startProcessing() {
-    setItems(
-      initialItems.map(
-        (item) => ({
-          ...item,
-          processed: 0,
-          status: "待機中",
-        })
-      )
-    );
-
-    setErrorCount(0);
-    setReviewCount(0);
-    setFinished(false);
-    setRunning(true);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "自動採点の開始に失敗しました。"
+      );
+    }
   }
+
+  const items: ProcessingItem[] =
+    [
+      "QR認識",
+      "四隅マーカー検出",
+      "傾き・台形補正",
+      "答案位置合わせ",
+      "OCR",
+      "自動採点",
+    ].map(
+      (name) => ({
+        name,
+
+        total,
+
+        processed,
+
+        status:
+          errorCount > 0
+            ? "要確認"
+            : finished
+            ? "完了"
+            : running
+            ? "処理中"
+            : "待機中",
+      })
+    );
 
   return (
     <main className="page">
@@ -195,7 +338,9 @@ export default function AutoGradingPage() {
       />
 
       <section className="content">
-        <StepBar currentStep={4} />
+        <StepBar
+          currentStep={4}
+        />
 
         <div className="pageHeader">
           <div>
@@ -204,7 +349,7 @@ export default function AutoGradingPage() {
             </h1>
 
             <p>
-              QR認識・画像補正・OCR・自動採点を一括処理します。
+              QR認識・画像補正・OCR・自動採点をCloud Functionsで処理します。
             </p>
           </div>
         </div>
@@ -212,7 +357,8 @@ export default function AutoGradingPage() {
         <section className="stepCard">
           <div
             style={{
-              display: "flex",
+              display:
+                "flex",
               justifyContent:
                 "space-between",
               alignItems:
@@ -222,11 +368,15 @@ export default function AutoGradingPage() {
           >
             <div>
               <strong>
-                第1回確認テスト
+                テスト：
+                {testId ||
+                  "未指定"}
               </strong>
 
               <div>
-                数学
+                教科：
+                {subjectId ||
+                  "未指定"}
               </div>
             </div>
 
@@ -248,26 +398,29 @@ export default function AutoGradingPage() {
               borderRadius: 7,
               overflow:
                 "hidden",
-              marginBottom: 12,
             }}
           >
             <div
               style={{
-                width: `${progress}%`,
-                height: "100%",
+                width:
+                  `${progress}%`,
+                height:
+                  "100%",
                 background:
                   "#222",
                 transition:
-                  "width .1s linear",
+                  "width .2s linear",
               }}
             />
           </div>
 
           <div
             style={{
-              display: "flex",
+              display:
+                "flex",
               justifyContent:
                 "space-between",
+              marginTop: 8,
             }}
           >
             <span>
@@ -283,6 +436,17 @@ export default function AutoGradingPage() {
             </span>
           </div>
 
+          {errorMessage && (
+            <div
+              className="selectionPanel"
+              style={{
+                marginTop: 16,
+              }}
+            >
+              {errorMessage}
+            </div>
+          )}
+
           <div
             className="actionBar"
             style={{
@@ -292,13 +456,17 @@ export default function AutoGradingPage() {
             <button
               type="button"
               className="primaryButton"
-              disabled={running}
+              disabled={
+                running
+              }
               onClick={
                 startProcessing
               }
             >
-              {finished
-                ? "もう一度実行"
+              {running
+                ? "処理中..."
+                : finished
+                ? "再実行"
                 : "自動採点を開始"}
             </button>
           </div>
@@ -310,81 +478,96 @@ export default function AutoGradingPage() {
             marginTop: 24,
           }}
         >
-          {items.map((item) => {
-            const itemProgress =
-              Math.round(
-                (item.processed /
-                  item.total) *
-                  100
-              );
+          {items.map(
+            (item) => {
+              const itemProgress =
+                item.total <= 0
+                  ? 0
+                  : Math.min(
+                      100,
+                      Math.round(
+                        (item.processed /
+                          item.total) *
+                          100
+                      )
+                    );
 
-            return (
-              <div
-                key={item.name}
-                style={{
-                  padding:
-                    "18px",
-                  borderBottom:
-                    "1px solid #eee",
-                }}
-              >
+              return (
                 <div
+                  key={
+                    item.name
+                  }
                   style={{
-                    display:
-                      "flex",
-                    justifyContent:
-                      "space-between",
-                    marginBottom:
-                      8,
-                  }}
-                >
-                  <strong>
-                    {item.name}
-                  </strong>
-
-                  <span>
-                    {item.processed.toLocaleString()}
-                    {" / "}
-                    {item.total.toLocaleString()}
-                  </span>
-                </div>
-
-                <div
-                  style={{
-                    height: 8,
-                    background:
-                      "#eee",
-                    borderRadius:
-                      4,
-                    overflow:
-                      "hidden",
+                    padding:
+                      "18px",
+                    borderBottom:
+                      "1px solid #eee",
                   }}
                 >
                   <div
                     style={{
-                      width: `${itemProgress}%`,
-                      height: "100%",
-                      background:
-                        "#555",
+                      display:
+                        "flex",
+                      justifyContent:
+                        "space-between",
+                      marginBottom:
+                        8,
                     }}
-                  />
-                </div>
+                  >
+                    <strong>
+                      {
+                        item.name
+                      }
+                    </strong>
 
-                <div
-                  style={{
-                    marginTop:
-                      6,
-                    color:
-                      "#777",
-                    fontSize:
-                      12,
-                  }}
-                >
-                  {item.status}
+                    <span>
+                      {item.processed.toLocaleString()}
+                      {" / "}
+                      {item.total.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      height: 8,
+                      background:
+                        "#eee",
+                      borderRadius:
+                        4,
+                      overflow:
+                        "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width:
+                          `${itemProgress}%`,
+                        height:
+                          "100%",
+                        background:
+                          "#555",
+                      }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop:
+                        6,
+                      color:
+                        "#777",
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
+                      item.status
+                    }
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            }
+          )}
         </section>
 
         <section
@@ -397,6 +580,17 @@ export default function AutoGradingPage() {
             marginTop: 24,
           }}
         >
+          <div className="selectionPanel">
+            <strong>
+              成功
+            </strong>
+
+            <p>
+              {succeeded}
+              枚
+            </p>
+          </div>
+
           <div className="selectionPanel">
             <strong>
               要確認
@@ -418,16 +612,6 @@ export default function AutoGradingPage() {
               枚
             </p>
           </div>
-
-          <div className="selectionPanel">
-            <strong>
-              次の工程
-            </strong>
-
-            <p>
-              一次確認
-            </p>
-          </div>
         </section>
 
         {finished && (
@@ -443,18 +627,12 @@ export default function AutoGradingPage() {
 
             <p>
               自動採点が完了しました。
-              「要確認」の答案は一次確認で確認してください。
+              要確認答案は一次確認で確認してください。
             </p>
 
             <a
               href="/grading/first"
               className="primaryButton"
-              style={{
-                display:
-                  "inline-flex",
-                alignItems:
-                  "center",
-              }}
             >
               一次確認へ
             </a>
