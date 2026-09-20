@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useEffect,
   useMemo,
   useState,
@@ -28,12 +29,51 @@ type ProcessingStatus =
 
 type ProcessingItem = {
   name: string;
+
   total: number;
+
   processed: number;
+
   status: ProcessingStatus;
 };
 
+/* =========================================================
+   Page
+   ========================================================= */
+
 export default function AutoGradingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="page">
+          <SchoolHeader
+            title="自動採点"
+          />
+
+          <section className="content">
+            <StepBar
+              currentStep={4}
+            />
+
+            <section className="stepCard">
+              <p>
+                自動採点画面を読み込んでいます...
+              </p>
+            </section>
+          </section>
+        </main>
+      }
+    >
+      <AutoGradingContent />
+    </Suspense>
+  );
+}
+
+/* =========================================================
+   Auto grading content
+   ========================================================= */
+
+function AutoGradingContent() {
   const searchParams =
     useSearchParams();
 
@@ -57,27 +97,37 @@ export default function AutoGradingPage() {
   const [
     total,
     setTotal,
-  ] = useState<number>(0);
+  ] = useState<number>(
+    0
+  );
 
   const [
     processed,
     setProcessed,
-  ] = useState<number>(0);
+  ] = useState<number>(
+    0
+  );
 
   const [
     succeeded,
     setSucceeded,
-  ] = useState<number>(0);
+  ] = useState<number>(
+    0
+  );
 
   const [
     reviewCount,
     setReviewCount,
-  ] = useState<number>(0);
+  ] = useState<number>(
+    0
+  );
 
   const [
     errorCount,
     setErrorCount,
-  ] = useState<number>(0);
+  ] = useState<number>(
+    0
+  );
 
   const [
     running,
@@ -94,14 +144,21 @@ export default function AutoGradingPage() {
     setErrorMessage,
   ] = useState("");
 
+  /* =======================================================
+     Progress
+     ======================================================= */
+
   const progress =
     useMemo(() => {
-      if (total <= 0) {
+      if (
+        total <= 0
+      ) {
         return 0;
       }
 
       return Math.min(
         100,
+
         Math.round(
           (processed /
             total) *
@@ -112,6 +169,10 @@ export default function AutoGradingPage() {
       processed,
       total,
     ]);
+
+  /* =======================================================
+     Job polling
+     ======================================================= */
 
   useEffect(() => {
     if (!jobId) {
@@ -171,8 +232,13 @@ export default function AutoGradingPage() {
               job.status ===
                 "completed_with_errors"
             ) {
-              setRunning(false);
-              setFinished(true);
+              setRunning(
+                false
+              );
+
+              setFinished(
+                true
+              );
 
               if (
                 job.status ===
@@ -192,7 +258,9 @@ export default function AutoGradingPage() {
               job.status ===
               "failed"
             ) {
-              setRunning(false);
+              setRunning(
+                false
+              );
 
               setErrorMessage(
                 typeof job.errorMessage ===
@@ -205,7 +273,9 @@ export default function AutoGradingPage() {
                 timer
               );
             }
-          } catch (error) {
+          } catch (
+            error
+          ) {
             if (
               !cancelled
             ) {
@@ -221,13 +291,20 @@ export default function AutoGradingPage() {
       );
 
     return () => {
-      cancelled = true;
+      cancelled =
+        true;
 
       window.clearInterval(
         timer
       );
     };
-  }, [jobId]);
+  }, [
+    jobId,
+  ]);
+
+  /* =======================================================
+     Start processing
+     ======================================================= */
 
   async function startProcessing() {
     if (
@@ -241,17 +318,41 @@ export default function AutoGradingPage() {
       return;
     }
 
-    setRunning(true);
-    setFinished(false);
+    setRunning(
+      true
+    );
 
-    setErrorMessage("");
+    setFinished(
+      false
+    );
 
-    setProcessed(0);
-    setSucceeded(0);
-    setReviewCount(0);
-    setErrorCount(0);
+    setErrorMessage(
+      ""
+    );
 
-    setJobId(null);
+    setProcessed(
+      0
+    );
+
+    setSucceeded(
+      0
+    );
+
+    setReviewCount(
+      0
+    );
+
+    setErrorCount(
+      0
+    );
+
+    setJobId(
+      null
+    );
+
+    setTotal(
+      0
+    );
 
     try {
       const answers =
@@ -265,7 +366,9 @@ export default function AutoGradingPage() {
         answers.length ===
         0
       ) {
-        setRunning(false);
+        setRunning(
+          false
+        );
 
         setErrorMessage(
           "未処理の答案がありません。"
@@ -279,7 +382,9 @@ export default function AutoGradingPage() {
           testId,
           subjectId,
           answers.map(
-            (answer) =>
+            (
+              answer
+            ) =>
               answer.id
           )
         );
@@ -293,8 +398,12 @@ export default function AutoGradingPage() {
           result.total
         )
       );
-    } catch (error) {
-      setRunning(false);
+    } catch (
+      error
+    ) {
+      setRunning(
+        false
+      );
 
       setErrorMessage(
         error instanceof Error
@@ -304,7 +413,12 @@ export default function AutoGradingPage() {
     }
   }
 
-  const items: ProcessingItem[] =
+  /* =======================================================
+     Processing items
+     ======================================================= */
+
+  const items:
+    ProcessingItem[] =
     [
       "QR認識",
       "四隅マーカー検出",
@@ -313,7 +427,9 @@ export default function AutoGradingPage() {
       "OCR",
       "自動採点",
     ].map(
-      (name) => ({
+      (
+        name
+      ) => ({
         name,
 
         total,
@@ -330,6 +446,10 @@ export default function AutoGradingPage() {
             : "待機中",
       })
     );
+
+  /* =======================================================
+     Render
+     ======================================================= */
 
   return (
     <main className="page">
@@ -349,7 +469,7 @@ export default function AutoGradingPage() {
             </h1>
 
             <p>
-              QR認識・画像補正・OCR・自動採点をCloud Functionsで処理します。
+              QR認識・画像補正・OCR・自動採点を処理します。
             </p>
           </div>
         </div>
@@ -359,11 +479,15 @@ export default function AutoGradingPage() {
             style={{
               display:
                 "flex",
+
               justifyContent:
                 "space-between",
+
               alignItems:
                 "center",
-              marginBottom: 18,
+
+              marginBottom:
+                18,
             }}
           >
             <div>
@@ -392,10 +516,15 @@ export default function AutoGradingPage() {
 
           <div
             style={{
-              height: 14,
+              height:
+                14,
+
               background:
                 "#eee",
-              borderRadius: 7,
+
+              borderRadius:
+                7,
+
               overflow:
                 "hidden",
             }}
@@ -404,10 +533,13 @@ export default function AutoGradingPage() {
               style={{
                 width:
                   `${progress}%`,
+
                 height:
                   "100%",
+
                 background:
                   "#222",
+
                 transition:
                   "width .2s linear",
               }}
@@ -418,9 +550,12 @@ export default function AutoGradingPage() {
             style={{
               display:
                 "flex",
+
               justifyContent:
                 "space-between",
-              marginTop: 8,
+
+              marginTop:
+                8,
             }}
           >
             <span>
@@ -440,7 +575,8 @@ export default function AutoGradingPage() {
             <div
               className="selectionPanel"
               style={{
-                marginTop: 16,
+                marginTop:
+                  16,
               }}
             >
               {errorMessage}
@@ -450,7 +586,8 @@ export default function AutoGradingPage() {
           <div
             className="actionBar"
             style={{
-              marginTop: 20,
+              marginTop:
+                20,
             }}
           >
             <button
@@ -475,16 +612,21 @@ export default function AutoGradingPage() {
         <section
           className="listCard"
           style={{
-            marginTop: 24,
+            marginTop:
+              24,
           }}
         >
           {items.map(
-            (item) => {
+            (
+              item
+            ) => {
               const itemProgress =
-                item.total <= 0
+                item.total <=
+                0
                   ? 0
                   : Math.min(
                       100,
+
                       Math.round(
                         (item.processed /
                           item.total) *
@@ -500,6 +642,7 @@ export default function AutoGradingPage() {
                   style={{
                     padding:
                       "18px",
+
                     borderBottom:
                       "1px solid #eee",
                   }}
@@ -508,8 +651,10 @@ export default function AutoGradingPage() {
                     style={{
                       display:
                         "flex",
+
                       justifyContent:
                         "space-between",
+
                       marginBottom:
                         8,
                     }}
@@ -529,11 +674,15 @@ export default function AutoGradingPage() {
 
                   <div
                     style={{
-                      height: 8,
+                      height:
+                        8,
+
                       background:
                         "#eee",
+
                       borderRadius:
                         4,
+
                       overflow:
                         "hidden",
                     }}
@@ -542,8 +691,10 @@ export default function AutoGradingPage() {
                       style={{
                         width:
                           `${itemProgress}%`,
+
                         height:
                           "100%",
+
                         background:
                           "#555",
                       }}
@@ -554,8 +705,10 @@ export default function AutoGradingPage() {
                     style={{
                       marginTop:
                         6,
+
                       color:
                         "#777",
+
                       fontSize:
                         12,
                     }}
@@ -574,10 +727,15 @@ export default function AutoGradingPage() {
           style={{
             display:
               "grid",
+
             gridTemplateColumns:
               "repeat(3, 1fr)",
-            gap: 12,
-            marginTop: 24,
+
+            gap:
+              12,
+
+            marginTop:
+              24,
           }}
         >
           <div className="selectionPanel">
@@ -618,7 +776,8 @@ export default function AutoGradingPage() {
           <section
             className="stepCard"
             style={{
-              marginTop: 24,
+              marginTop:
+                24,
             }}
           >
             <h2>
