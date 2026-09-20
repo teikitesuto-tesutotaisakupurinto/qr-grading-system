@@ -7,41 +7,132 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-deploy:
     name: Build and Deploy
     runs-on: ubuntu-latest
 
     steps:
+      # =====================================================
+      # Checkout
+      # =====================================================
+
       - name: Checkout
         uses: actions/checkout@v5
+
+      # =====================================================
+      # Node.js
+      # =====================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+
+      # =====================================================
+      # Install
+      # =====================================================
 
       - name: Install dependencies
         run: npm install
+
+      # =====================================================
+      # Firebase configuration check
+      # =====================================================
+
+      - name: Check Firebase configuration
+        env:
+          FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+        run: |
+          set -e
+
+          test -n "$FIREBASE_API_KEY" || {
+            echo "ERROR: NEXT_PUBLIC_FIREBASE_API_KEY がGitHub Secretsにありません。"
+            exit 1
+          }
+
+          test -n "$FIREBASE_AUTH_DOMAIN" || {
+            echo "ERROR: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN がGitHub Secretsにありません。"
+            exit 1
+          }
+
+          test -n "$FIREBASE_PROJECT_ID" || {
+            echo "ERROR: NEXT_PUBLIC_FIREBASE_PROJECT_ID がGitHub Secretsにありません。"
+            exit 1
+          }
+
+          test -n "$FIREBASE_MESSAGING_SENDER_ID" || {
+            echo "ERROR: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID がGitHub Secretsにありません。"
+            exit 1
+          }
+
+          test -n "$FIREBASE_APP_ID" || {
+            echo "ERROR: NEXT_PUBLIC_FIREBASE_APP_ID がGitHub Secretsにありません。"
+            exit 1
+          }
+
+          echo "Firebase公開設定: OK"
+
+      # =====================================================
+      # Next.js Build
+      # =====================================================
 
       - name: Build Next.js
         env:
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
           NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
+      # =====================================================
+      # Firebase Authentication
+      # =====================================================
+
       - name: Authenticate Firebase
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
+      # =====================================================
+      # Firebase CLI
+      # =====================================================
+
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
+      # =====================================================
+      # Firebase Hosting Deploy
+      # =====================================================
+
       - name: Deploy Firebase Hosting
-        run: firebase deploy --only hosting --project "${{ secrets.FIREBASE_PROJECT_ID }}"
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          set -e
+
+          firebase deploy \
+            --only hosting \
+            --project "$FIREBASE_PROJECT_ID"
+
+      # =====================================================
+      # Finish
+      # =====================================================
+
+      - name: Deployment complete
+        run: |
+          echo "======================================"
+          echo "Firebase Hosting deployment completed."
+          echo "======================================"
