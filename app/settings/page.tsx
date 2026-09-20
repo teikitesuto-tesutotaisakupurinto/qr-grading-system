@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import {
+  ChangeEvent,
+  useState,
+} from "react";
 
 import SchoolHeader from "@/components/SchoolHeader";
 
 type Settings = {
   schoolName: string;
   logoText: string;
+  logoUrl: string;
   defaultYear: string;
   studentNumberDigits: number;
   allowStudentAnswerViewBeforeGrading: boolean;
@@ -20,62 +24,184 @@ type Settings = {
 
 const initialSettings: Settings = {
   schoolName: "○○塾",
+
   logoText: "塾ロゴ",
+
+  logoUrl: "",
+
   defaultYear: "2026",
+
   studentNumberDigits: 6,
-  allowStudentAnswerViewBeforeGrading: true,
-  requireSecondReview: true,
-  hideStudentIdentityInCrossSection: true,
-  enableDeviationScore: true,
-  enableRanking: true,
-  enableRetest: true,
-  answerUploadImmediatelyVisible: true,
+
+  allowStudentAnswerViewBeforeGrading:
+    true,
+
+  requireSecondReview:
+    true,
+
+  hideStudentIdentityInCrossSection:
+    true,
+
+  enableDeviationScore:
+    true,
+
+  enableRanking:
+    true,
+
+  enableRetest:
+    true,
+
+  answerUploadImmediatelyVisible:
+    true,
 };
 
 export default function SettingsPage() {
-  const [settings, setSettings] =
+  const [
+    settings,
+    setSettings,
+  ] =
     useState<Settings>(
       initialSettings
     );
 
-  const [saved, setSaved] =
+  const [
+    saved,
+    setSaved,
+  ] =
     useState(false);
 
-  function update<K extends keyof Settings>(
+  const [
+    logoPreview,
+    setLogoPreview,
+  ] =
+    useState(
+      initialSettings.logoUrl
+    );
+
+  function update<
+    K extends keyof Settings
+  >(
     key: K,
     value: Settings[K]
   ) {
-    setSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
+    setSettings(
+      (current) => ({
+        ...current,
+
+        [key]: value,
+      })
+    );
 
     setSaved(false);
   }
 
+  function handleLogoChange(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const file =
+      event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (
+      ![
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+      ].includes(
+        file.type
+      )
+    ) {
+      alert(
+        "PNG・JPG・WebPの画像を選択してください。"
+      );
+
+      event.target.value =
+        "";
+
+      return;
+    }
+
+    if (
+      file.size >
+      5 * 1024 * 1024
+    ) {
+      alert(
+        "ロゴ画像は5MB以下にしてください。"
+      );
+
+      event.target.value =
+        "";
+
+      return;
+    }
+
+    const url =
+      URL.createObjectURL(
+        file
+      );
+
+    setLogoPreview(
+      url
+    );
+
+    update(
+      "logoUrl",
+      url
+    );
+  }
+
+  function removeLogo() {
+    setLogoPreview("");
+
+    update(
+      "logoUrl",
+      ""
+    );
+  }
+
   function saveSettings() {
     /*
-      本番では Firestore の
-      systemSettings ドキュメントへ保存します。
-    */
+     * 現在は画面上の設定を保持する段階。
+     *
+     * 次の段階で、
+     *
+     * Firestore
+     * ↓
+     * systemSettings
+     *
+     * へ正式保存します。
+     */
 
-    setSaved(true);
+    setSaved(
+      true
+    );
   }
 
   return (
     <main className="page">
-      <SchoolHeader title="設定" />
+      <SchoolHeader
+        title="設定"
+      />
 
       <section className="content">
         <div className="pageHeader">
           <div>
-            <h1>設定</h1>
+            <h1>
+              設定
+            </h1>
 
             <p>
               システム全体の基本設定を管理します。
             </p>
           </div>
         </div>
+
+        {/* =================================================
+            塾基本情報
+            ================================================= */}
 
         <section className="stepCard">
           <h2>
@@ -86,44 +212,243 @@ export default function SettingsPage() {
             塾名
 
             <input
-              value={settings.schoolName}
-              onChange={(event) =>
+              value={
+                settings.schoolName
+              }
+              onChange={(
+                event
+              ) =>
                 update(
                   "schoolName",
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
             />
           </label>
 
-          <label>
-            右上ロゴ表示名
+          <label
+            style={{
+              marginTop: 16,
+            }}
+          >
+            ロゴ表示名
 
             <input
-              value={settings.logoText}
-              onChange={(event) =>
+              value={
+                settings.logoText
+              }
+              onChange={(
+                event
+              ) =>
                 update(
                   "logoText",
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
             />
           </label>
 
-          <label>
+          <label
+            style={{
+              display:
+                "block",
+
+              marginTop:
+                16,
+            }}
+          >
             基準年度
 
             <input
-              value={settings.defaultYear}
-              onChange={(event) =>
+              value={
+                settings.defaultYear
+              }
+              onChange={(
+                event
+              ) =>
                 update(
                   "defaultYear",
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
             />
           </label>
         </section>
+
+        {/* =================================================
+            塾ロゴ
+            ================================================= */}
+
+        <section
+          className="stepCard"
+          style={{
+            marginTop: 20,
+          }}
+        >
+          <h2>
+            塾ロゴ
+          </h2>
+
+          <p
+            style={{
+              color: "#666",
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            QRシール発行シートの左上に表示するロゴです。
+          </p>
+
+          {logoPreview ? (
+            <div
+              style={{
+                marginTop:
+                  16,
+
+                display:
+                  "flex",
+
+                alignItems:
+                  "center",
+
+                gap: 20,
+              }}
+            >
+              <div
+                style={{
+                  width:
+                    220,
+
+                  height:
+                    90,
+
+                  border:
+                    "1px solid #ddd",
+
+                  display:
+                    "flex",
+
+                  alignItems:
+                    "center",
+
+                  justifyContent:
+                    "center",
+
+                  background:
+                    "#fff",
+
+                  overflow:
+                    "hidden",
+                }}
+              >
+                <img
+                  src={
+                    logoPreview
+                  }
+                  alt="塾ロゴ"
+                  style={{
+                    maxWidth:
+                      "100%",
+
+                    maxHeight:
+                      "100%",
+
+                    objectFit:
+                      "contain",
+                  }}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={
+                  removeLogo
+                }
+              >
+                ロゴを削除
+              </button>
+            </div>
+          ) : (
+            <div
+              style={{
+                marginTop:
+                  16,
+
+                width:
+                  220,
+
+                height:
+                  90,
+
+                border:
+                  "1px dashed #bbb",
+
+                display:
+                  "flex",
+
+                alignItems:
+                  "center",
+
+                justifyContent:
+                  "center",
+
+                color:
+                  "#777",
+              }}
+            >
+              ロゴ未登録
+            </div>
+          )}
+
+          <label
+            className="secondaryButton"
+            style={{
+              display:
+                "inline-block",
+
+              marginTop:
+                16,
+
+              cursor:
+                "pointer",
+            }}
+          >
+            ロゴ画像を選択
+
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={
+                handleLogoChange
+              }
+            />
+          </label>
+
+          <p
+            style={{
+              marginTop:
+                10,
+
+              fontSize:
+                13,
+
+              color:
+                "#777",
+            }}
+          >
+            PNG・JPG・WebP / 5MB以下
+          </p>
+        </section>
+
+        {/* =================================================
+            生徒番号
+            ================================================= */}
 
         <section
           className="stepCard"
@@ -141,15 +466,21 @@ export default function SettingsPage() {
             </strong>
 
             <span>
-              {settings.studentNumberDigits}
+              {
+                settings.studentNumberDigits
+              }
               桁
             </span>
           </div>
 
           <p>
-            生徒番号はランダム6桁・数字のみで発行します。
+            生徒番号は6桁の数字で管理します。
           </p>
         </section>
+
+        {/* =================================================
+            答案・採点
+            ================================================= */}
 
         <section
           className="stepCard"
@@ -166,7 +497,9 @@ export default function SettingsPage() {
             checked={
               settings.answerUploadImmediatelyVisible
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "answerUploadImmediatelyVisible",
                 value
@@ -179,7 +512,9 @@ export default function SettingsPage() {
             checked={
               settings.allowStudentAnswerViewBeforeGrading
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "allowStudentAnswerViewBeforeGrading",
                 value
@@ -192,7 +527,9 @@ export default function SettingsPage() {
             checked={
               settings.requireSecondReview
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "requireSecondReview",
                 value
@@ -205,7 +542,9 @@ export default function SettingsPage() {
             checked={
               settings.hideStudentIdentityInCrossSection
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "hideStudentIdentityInCrossSection",
                 value
@@ -213,6 +552,10 @@ export default function SettingsPage() {
             }
           />
         </section>
+
+        {/* =================================================
+            成績
+            ================================================= */}
 
         <section
           className="stepCard"
@@ -229,7 +572,9 @@ export default function SettingsPage() {
             checked={
               settings.enableDeviationScore
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "enableDeviationScore",
                 value
@@ -242,7 +587,9 @@ export default function SettingsPage() {
             checked={
               settings.enableRanking
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "enableRanking",
                 value
@@ -255,7 +602,9 @@ export default function SettingsPage() {
             checked={
               settings.enableRetest
             }
-            onChange={(value) =>
+            onChange={(
+              value
+            ) =>
               update(
                 "enableRetest",
                 value
@@ -263,6 +612,10 @@ export default function SettingsPage() {
             }
           />
         </section>
+
+        {/* =================================================
+            保存
+            ================================================= */}
 
         <section
           className="stepCard"
@@ -277,7 +630,9 @@ export default function SettingsPage() {
           <button
             type="button"
             className="primaryButton"
-            onClick={saveSettings}
+            onClick={
+              saveSettings
+            }
           >
             設定を保存
           </button>
@@ -285,8 +640,11 @@ export default function SettingsPage() {
           {saved && (
             <p
               style={{
-                marginTop: 12,
-                color: "#555",
+                marginTop:
+                  12,
+
+                color:
+                  "#555",
               }}
             >
               設定を保存しました。
@@ -298,9 +656,15 @@ export default function SettingsPage() {
   );
 }
 
+/* =========================================================
+   Toggle
+   ========================================================= */
+
 type SettingToggleProps = {
   label: string;
+
   checked: boolean;
+
   onChange: (
     value: boolean
   ) => void;
@@ -314,21 +678,35 @@ function SettingToggle({
   return (
     <label
       style={{
-        display: "flex",
-        alignItems: "center",
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
         gap: 10,
-        padding: "12px 0",
-        cursor: "pointer",
+
+        padding:
+          "12px 0",
+
+        cursor:
+          "pointer",
+
         borderBottom:
           "1px solid #eee",
       }}
     >
       <input
         type="checkbox"
-        checked={checked}
-        onChange={(event) =>
+        checked={
+          checked
+        }
+        onChange={(
+          event
+        ) =>
           onChange(
-            event.target.checked
+            event.target
+              .checked
           )
         }
       />
