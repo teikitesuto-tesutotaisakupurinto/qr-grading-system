@@ -17,6 +17,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
@@ -24,7 +29,7 @@ jobs:
         working-directory: functions
         run: npm install
 
-      - name: Create Functions environment file
+      - name: Create Functions environment
         working-directory: functions
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -41,15 +46,12 @@ jobs:
         run: npm run build
 
       - name: Deploy Firebase Functions
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
-          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-service-account.json"
-          firebase deploy --only functions --project "${{ secrets.FIREBASE_PROJECT_ID }}"
+          firebase deploy \
+            --only functions \
+            --project "${{ secrets.FIREBASE_PROJECT_ID }}"
 
-      - name: Remove credentials
+      - name: Remove temporary environment
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/firebase-service-account.json"
           rm -f functions/.env
