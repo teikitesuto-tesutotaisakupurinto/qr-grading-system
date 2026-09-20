@@ -3,25 +3,14 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
-/* =========================================================
-   Supabase
-   ========================================================= */
-
-const ANSWERS_BUCKET = "answers";
+const ANSWERS_BUCKET =
+  "answers";
 
 let client:
   | SupabaseClient
   | null = null;
 
-/* =========================================================
-   Admin Client
-   ========================================================= */
-
-export function getSupabaseAdmin(): SupabaseClient {
-  if (client) {
-    return client;
-  }
-
+function getConfig() {
   const url =
     process.env.SUPABASE_URL;
 
@@ -40,10 +29,24 @@ export function getSupabaseAdmin(): SupabaseClient {
     );
   }
 
+  return {
+    url,
+    secretKey,
+  };
+}
+
+export function getSupabaseAdmin(): SupabaseClient {
+  if (client) {
+    return client;
+  }
+
+  const config =
+    getConfig();
+
   client =
     createClient(
-      url,
-      secretKey,
+      config.url,
+      config.secretKey,
       {
         auth: {
           persistSession:
@@ -61,15 +64,10 @@ export function getSupabaseAdmin(): SupabaseClient {
   return client;
 }
 
-/* =========================================================
-   答案ファイル保存
-   ========================================================= */
-
-export async function uploadAnswerFile(
+export async function createUploadUrl(
   fileKey: string,
-  data: Buffer,
   contentType: string
-) {
+): Promise<string> {
   const supabase =
     getSupabaseAdmin();
 
@@ -78,33 +76,21 @@ export async function uploadAnswerFile(
       .from(
         ANSWERS_BUCKET
       )
-      .upload(
-        fileKey,
-        data,
-        {
-          contentType,
-
-          upsert: false,
-
-          cacheControl:
-            "3600",
-        }
+      .createSignedUploadUrl(
+        fileKey
       );
 
   if (
     result.error
   ) {
     throw new Error(
-      `答案ファイルの保存に失敗しました: ${result.error.message}`
+      `アップロードURLの生成に失敗しました: ${result.error.message}`
     );
   }
 
-  return result.data;
+  return result.data
+    .signedUrl;
 }
-
-/* =========================================================
-   答案ファイル取得
-   ========================================================= */
 
 export async function downloadAnswerFile(
   fileKey: string
@@ -137,10 +123,6 @@ export async function downloadAnswerFile(
   );
 }
 
-/* =========================================================
-   署名付き閲覧URL
-   ========================================================= */
-
 export async function createAnswerSignedUrl(
   fileKey: string,
   expiresIn = 3600
@@ -166,12 +148,9 @@ export async function createAnswerSignedUrl(
     );
   }
 
-  return result.data.signedUrl;
+  return result.data
+    .signedUrl;
 }
-
-/* =========================================================
-   答案ファイル削除
-   ========================================================= */
 
 export async function deleteAnswerFile(
   fileKey: string
@@ -197,57 +176,4 @@ export async function deleteAnswerFile(
   }
 
   return result.data;
-}
-
-/* =========================================================
-   ファイル存在確認
-   ========================================================= */
-
-export async function answerFileExists(
-  fileKey: string
-): Promise<boolean> {
-  const supabase =
-    getSupabaseAdmin();
-
-  const parts =
-    fileKey.split("/");
-
-  const fileName =
-    parts.pop();
-
-  if (!fileName) {
-    return false;
-  }
-
-  const directory =
-    parts.join("/");
-
-  const result =
-    await supabase.storage
-      .from(
-        ANSWERS_BUCKET
-      )
-      .list(
-        directory,
-        {
-          search:
-            fileName,
-
-          limit: 10,
-        }
-      );
-
-  if (
-    result.error
-  ) {
-    throw new Error(
-      `答案ファイルの存在確認に失敗しました: ${result.error.message}`
-    );
-  }
-
-  return result.data.some(
-    (file) =>
-      file.name ===
-      fileName
-  );
 }
