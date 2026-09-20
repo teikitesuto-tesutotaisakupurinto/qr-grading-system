@@ -1,35 +1,53 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
-import { login } from "@/lib/auth";
+import {
+  useState,
+} from "react";
+
+import {
+  useRouter,
+} from "next/navigation";
+
+import {
+  loginWithGoogle,
+} from "@/lib/auth";
 
 export default function LoginPage() {
-  const router = useRouter();
+  const router =
+    useRouter();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-    if (loading) return;
-
-    setError("");
-    setLoading(true);
-
+  async function handleGoogleLogin() {
     try {
-      await login(email.trim(), password);
+      setLoading(true);
 
-      router.replace("/");
-    } catch {
+      setError("");
+
+      await loginWithGoogle();
+
+      router.replace(
+        "/"
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        error
+      );
+
       setError(
-        "メールアドレスまたはパスワードを確認してください。"
+        error instanceof Error
+          ? error.message
+          : "Googleログインに失敗しました。"
       );
     } finally {
       setLoading(false);
@@ -37,83 +55,186 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="loginPage">
-      <section className="loginCard">
-        <div className="loginLogo">
-          塾ロゴ
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        padding:
+          24,
+
+        background:
+          "#f7f7f7",
+      }}
+    >
+      <section
+        style={{
+          width:
+            "100%",
+
+          maxWidth:
+            440,
+
+          background:
+            "#fff",
+
+          border:
+            "1px solid #ddd",
+
+          borderRadius:
+            12,
+
+          padding:
+            40,
+
+          boxShadow:
+            "0 8px 30px rgba(0,0,0,.06)",
+        }}
+      >
+        <div
+          style={{
+            textAlign:
+              "center",
+
+            marginBottom:
+              32,
+          }}
+        >
+          <h1
+            style={{
+              margin:
+                "0 0 12px",
+            }}
+          >
+            QR答案採点システム
+          </h1>
+
+          <p
+            style={{
+              margin: 0,
+
+              color:
+                "#666",
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            登録済みのGoogleアカウントで
+            ログインしてください。
+          </p>
         </div>
 
-        <h1>QR答案採点システム</h1>
+        <button
+          type="button"
+          disabled={
+            loading
+          }
+          onClick={
+            handleGoogleLogin
+          }
+          style={{
+            width:
+              "100%",
 
-        <p className="loginSubtitle">
-          ログイン
-        </p>
+            height:
+              52,
 
-        <form onSubmit={handleSubmit}>
-          <label className="formLabel">
-            メールアドレス
+            border:
+              "1px solid #ccc",
 
-            <input
-              type="email"
-              value={email}
-              onChange={(event) =>
-                setEmail(event.target.value)
-              }
-              autoComplete="email"
-              required
-            />
-          </label>
+            borderRadius:
+              8,
 
-          <label className="formLabel">
-            パスワード
+            background:
+              "#fff",
 
-            <div className="passwordInput">
-              <input
-                type={
-                  showPassword
-                    ? "text"
-                    : "password"
-                }
-                value={password}
-                onChange={(event) =>
-                  setPassword(event.target.value)
-                }
-                autoComplete="current-password"
-                required
-              />
+            color:
+              "#222",
 
-              <button
-                type="button"
-                onClick={() =>
-                  setShowPassword(
-                    (current) => !current
-                  )
-                }
-                className="passwordToggle"
-              >
-                {showPassword
-                  ? "隠す"
-                  : "表示"}
-              </button>
-            </div>
-          </label>
+            fontSize:
+              16,
 
-          {error && (
-            <div className="formError">
-              {error}
-            </div>
-          )}
+            fontWeight:
+              600,
 
-          <button
-            type="submit"
-            className="primaryButton loginButton"
-            disabled={loading}
+            cursor:
+              loading
+                ? "default"
+                : "pointer",
+
+            opacity:
+              loading
+                ? 0.6
+                : 1,
+          }}
+        >
+          {loading
+            ? "Googleでログインしています..."
+            : "Googleでログイン"}
+        </button>
+
+        {error && (
+          <div
+            style={{
+              marginTop:
+                20,
+
+              padding:
+                14,
+
+              border:
+                "1px solid #e5b5b5",
+
+              borderRadius:
+                8,
+
+              background:
+                "#fff5f5",
+
+              color:
+                "#9b1c1c",
+
+              lineHeight:
+                1.6,
+
+              fontSize:
+                14,
+            }}
           >
-            {loading
-              ? "ログイン中..."
-              : "ログイン"}
-          </button>
-        </form>
+            {error}
+          </div>
+        )}
+
+        <p
+          style={{
+            marginTop:
+              24,
+
+            textAlign:
+              "center",
+
+            fontSize:
+              12,
+
+            color:
+              "#888",
+
+            lineHeight:
+              1.6,
+          }}
+        >
+          このシステムは登録済みユーザーのみ利用できます。
+        </p>
       </section>
     </main>
   );
