@@ -1,26 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  reactStrictMode: true,
+  output: "export",
 
   images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "*.firebasestorage.app",
-      },
-      {
-        protocol: "https",
-        hostname: "*.googleusercontent.com",
-      },
-    ],
+    unoptimized: true,
   },
 
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "50mb",
-    },
-  },
+  trailingSlash: true,
 };
 
 export default nextConfig;
