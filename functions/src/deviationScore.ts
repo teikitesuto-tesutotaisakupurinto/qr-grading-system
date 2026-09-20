@@ -1,66 +1,87 @@
 import {
+  FieldValue,
   getFirestore,
 } from "firebase-admin/firestore";
 
-const db = getFirestore();
+/* =========================================================
+   Firestore
+   ========================================================= */
+
+const db =
+  getFirestore();
+
+/* =========================================================
+   型
+   ========================================================= */
 
 type ScoreDocument = {
+  id?: string;
+
   studentNumber: string;
+
   testId: string;
+
   subjectId: string;
+
   score: number;
+
   maxScore: number;
+
   percentage: number;
+};
+
+type StudentInfo = {
+  id: string;
 
   schoolId?: string;
+
   grade?: string;
+
   classId?: string;
-};
 
-type PopulationType =
-  | "overall"
-  | "school"
-  | "grade"
-  | "class";
-
-type Population = {
-  type: PopulationType;
-  key: string;
-  label: string;
-  studentNumbers: string[];
-};
-
-type Statistics = {
-  count: number;
-  mean: number;
-  standardDeviation: number;
+  className?: string;
 };
 
 type DeviationResult = {
   studentNumber: string;
+
   testId: string;
+
   subjectId: string;
 
-  populationType: PopulationType;
-  populationKey: string;
-
   score: number;
-  mean: number;
-  standardDeviation: number;
+
+  maxScore: number;
+
+  percentage: number;
+
   deviationScore: number;
 
-  calculatedAt: FirebaseFirestore.FieldValue;
+  population: number;
+
+  mean: number;
+
+  standardDeviation: number;
 };
 
-/**
- * テスト全体の偏差値を計算します。
- */
+/* =========================================================
+   テスト偏差値計算
+   ========================================================= */
+
 export async function calculateTestDeviationScores(
   testId: string
 ) {
+  if (!testId.trim()) {
+    throw new Error(
+      "testIdがありません。"
+    );
+  }
+
   const scoresSnapshot =
     await db
-      .collection("scores")
+      .collection(
+        "scores"
+      )
       .where(
         "testId",
         "==",
@@ -73,481 +94,385 @@ export async function calculateTestDeviationScores(
   ) {
     return {
       testId,
-      processed: 0,
+
+      processed:
+        0,
+
       results: [],
     };
   }
 
-  const scores =
+  const scores: ScoreDocument[] =
     scoresSnapshot.docs.map(
-      (doc) =>
+      (item) =>
         ({
-          ...doc.data(),
+          id: item.id,
+
+          ...item.data(),
         }) as ScoreDocument
     );
 
-  const populations =
-    await buildPopulations(
-      scores
+  const studentsSnapshot =
+    await db
+      .collection(
+        "students"
+      )
+      .get();
+
+  const students: StudentInfo[] =
+    studentsSnapshot.docs.map(
+      (item) =>
+        ({
+          id: item.id,
+
+          ...item.data(),
+        }) as StudentInfo
     );
 
-  const resultIds: string[] =
+  const studentMap =
+    new Map<
+      string,
+      StudentInfo
+    >();
+
+  for (
+    const student of
+      students
+  ) {
+    studentMap.set(
+      student.id,
+      student
+    );
+  }
+
+  const grouped =
+    new Map<
+      string,
+      ScoreDocument[]
+    >();
+
+  for (
+    const score of
+      scores
+  ) {
+    const key =
+      score.subjectId;
+
+    const list =
+      grouped.get(
+        key
+      ) ?? [];
+
+    list.push(
+      score
+    );
+
+    grouped.set(
+      key,
+      list
+    );
+  }
+
+  const results:
+    DeviationResult[] =
     [];
 
   for (
-    const population of
-      populations
+    const [
+      subjectId,
+      subjectScores,
+    ] of grouped
   ) {
-    const populationScores =
-      scores.filter((score) =>
-        population.studentNumbers.includes(
-          score.studentNumber
+    const values =
+      subjectScores
+        .map(
+          (score) =>
+            Number(
+              score.score
+            )
         )
+        .filter(
+          (value) =>
+            Number.isFinite(
+              value
+            )
+        );
+
+    if (
+      values.length === 0
+    ) {
+      continue;
+    }
+
+    const mean =
+      calculateMean(
+        values
       );
 
-    const subjectIds =
-      Array.from(
-        new Set(
-          populationScores.map(
-            (score) =>
-              score.subjectId
-          )
-        )
+    const standardDeviation =
+      calculateStandardDeviation(
+        values,
+        mean
       );
 
     for (
-      const subjectId of
-        subjectIds
+      const score of
+        subjectScores
     ) {
-      const subjectScores =
-        populationScores.filter(
-          (score) =>
-            score.subjectId ===
-            subjectId
+      const student =
+        studentMap.get(
+          score.studentNumber
         );
 
-      const statistics =
-        calculateStatistics(
-          subjectScores
+      const percentage =
+        Number.isFinite(
+          score.percentage
+        )
+          ? score.percentage
+          : score.maxScore > 0
+          ? (
+              score.score /
+              score.maxScore
+            ) *
+            100
+          : 0;
+
+      const deviationScore =
+        calculateDeviation(
+          score.score,
+          mean,
+          standardDeviation
         );
 
-      const batch =
-        db.batch();
+      results.push({
+        studentNumber:
+          score.studentNumber,
 
-      for (
-        const score of
-          subjectScores
-      ) {
-        const deviation =
-          calculateDeviationScore(
-            score.score,
-            statistics.mean,
-            statistics.standardDeviation
-          );
+        testId,
 
-        const resultId =
-          [
-            testId,
-            subjectId,
-            score.studentNumber,
-            population.type,
-            population.key,
-          ].join("_");
+        subjectId,
 
-        const reference =
-          db
-            .collection(
-              "deviationScores"
-            )
-            .doc(resultId);
+        score:
+          score.score,
 
-        const result:
-          DeviationResult = {
-            studentNumber:
-              score.studentNumber,
+        maxScore:
+          score.maxScore,
 
-            testId,
+        percentage,
 
-            subjectId,
+        deviationScore,
 
-            populationType:
-              population.type,
+        population:
+          values.length,
 
-            populationKey:
-              population.key,
+        mean,
 
-            score:
-              score.score,
+        standardDeviation,
+      });
 
-            mean:
-              statistics.mean,
-
-            standardDeviation:
-              statistics.standardDeviation,
-
-            deviationScore:
-              deviation,
-
-            calculatedAt:
-              FirebaseFirestore.FieldValue.serverTimestamp(),
-          };
-
-        batch.set(
-          reference,
-          result,
-          {
-            merge: true,
-          }
-        );
-
-        /*
-         * 生徒の scores にも
-         * 母集団別偏差値を保存。
-         */
-        const scoreReference =
-          db
-            .collection("scores")
-            .doc(
-              `${testId}_${subjectId}_${score.studentNumber}`
-            );
-
-        batch.set(
-          scoreReference,
-          {
-            deviationScores: {
-              [population.type]: {
-                key:
-                  population.key,
-
-                value:
-                  deviation,
-              },
-            },
-          },
-          {
-            merge: true,
-          }
-        );
-
-        resultIds.push(
-          resultId
-        );
-      }
-
-      await batch.commit();
+      /*
+       * StudentInfoを参照して、
+       * 校舎・学年・クラス別計算へ
+       * 拡張できるようにしておく。
+       */
+      void student;
     }
+  }
+
+  /*
+   * Firestore保存
+   */
+  const BATCH_SIZE = 400;
+
+  for (
+    let start = 0;
+    start < results.length;
+    start += BATCH_SIZE
+  ) {
+    const batch =
+      db.batch();
+
+    const chunk =
+      results.slice(
+        start,
+        start +
+          BATCH_SIZE
+      );
+
+    for (
+      const result of
+        chunk
+    ) {
+      const id =
+        createDeviationDocumentId(
+          result
+        );
+
+      const reference =
+        db
+          .collection(
+            "deviationScores"
+          )
+          .doc(id);
+
+      batch.set(
+        reference,
+        {
+          studentNumber:
+            result.studentNumber,
+
+          testId:
+            result.testId,
+
+          subjectId:
+            result.subjectId,
+
+          score:
+            result.score,
+
+          maxScore:
+            result.maxScore,
+
+          percentage:
+            result.percentage,
+
+          deviationScore:
+            result.deviationScore,
+
+          population:
+            result.population,
+
+          mean:
+            result.mean,
+
+          standardDeviation:
+            result.standardDeviation,
+
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        }
+      );
+    }
+
+    await batch.commit();
   }
 
   return {
     testId,
+
     processed:
-      resultIds.length,
-    results: resultIds,
+      results.length,
+
+    results,
   };
 }
 
-/**
- * 母集団を作成します。
- *
- * 全校
- * 校舎
- * 学年
- * クラス
- */
-async function buildPopulations(
-  scores: ScoreDocument[]
-): Promise<Population[]> {
-  const studentsSnapshot =
-    await db
-      .collection("students")
-      .get();
+/* =========================================================
+   平均
+   ========================================================= */
 
-  const students =
-    studentsSnapshot.docs.map(
-      (doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })
-    );
-
-  const populations: Population[] =
-    [];
-
-  /*
-   * 全校
-   */
-  populations.push({
-    type: "overall",
-    key: "all",
-    label: "全校",
-    studentNumbers:
-      students.map(
-        (student) =>
-          student.id
-      ),
-  });
-
-  /*
-   * 校舎
-   */
-  const schools =
-    new Map<
-      string,
-      string[]
-    >();
-
-  for (
-    const student of students
+function calculateMean(
+  values: number[]
+): number {
+  if (
+    values.length === 0
   ) {
-    const schoolId =
-      typeof student.schoolId ===
-      "string"
-        ? student.schoolId
-        : "";
-
-    if (!schoolId) {
-      continue;
-    }
-
-    const current =
-      schools.get(
-        schoolId
-      ) ?? [];
-
-    current.push(
-      student.id
-    );
-
-    schools.set(
-      schoolId,
-      current
-    );
+    return 0;
   }
 
-  for (
-    const [
-      schoolId,
-      studentNumbers,
-    ] of schools
-  ) {
-    populations.push({
-      type: "school",
-      key: schoolId,
-      label: schoolId,
-      studentNumbers,
-    });
-  }
-
-  /*
-   * 学年
-   */
-  const grades =
-    new Map<
-      string,
-      string[]
-    >();
-
-  for (
-    const student of students
-  ) {
-    const grade =
-      typeof student.grade ===
-      "string"
-        ? student.grade
-        : "";
-
-    if (!grade) {
-      continue;
-    }
-
-    const current =
-      grades.get(
-        grade
-      ) ?? [];
-
-    current.push(
-      student.id
-    );
-
-    grades.set(
-      grade,
-      current
-    );
-  }
-
-  for (
-    const [
-      grade,
-      studentNumbers,
-    ] of grades
-  ) {
-    populations.push({
-      type: "grade",
-      key: grade,
-      label: grade,
-      studentNumbers,
-    });
-  }
-
-  /*
-   * クラス
-   */
-  const classes =
-    new Map<
-      string,
-      string[]
-    >();
-
-  for (
-    const student of students
-  ) {
-    const classId =
-      typeof student.classId ===
-      "string"
-        ? student.classId
-        : typeof student.className ===
-          "string"
-        ? student.className
-        : "";
-
-    if (!classId) {
-      continue;
-    }
-
-    const current =
-      classes.get(
-        classId
-      ) ?? [];
-
-    current.push(
-      student.id
-    );
-
-    classes.set(
-      classId,
-      current
-    );
-  }
-
-  for (
-    const [
-      classId,
-      studentNumbers,
-    ] of classes
-  ) {
-    populations.push({
-      type: "class",
-      key: classId,
-      label: classId,
-      studentNumbers,
-    });
-  }
-
-  /*
-   * 実際にscoresに存在する生徒だけを
-   *対象にするため、空母集団は除外。
-   */
-  const scoreStudentNumbers =
-    new Set(
-      scores.map(
-        (score) =>
-          score.studentNumber
-      )
-    );
-
-  return populations
-    .map((population) => ({
-      ...population,
-      studentNumbers:
-        population.studentNumbers.filter(
-          (studentNumber) =>
-            scoreStudentNumbers.has(
-              studentNumber
-            )
-        ),
-    }))
-    .filter(
-      (population) =>
-        population.studentNumbers
-          .length > 0
-    );
-}
-
-/**
- * 平均・標準偏差を計算します。
- */
-function calculateStatistics(
-  scores: ScoreDocument[]
-): Statistics {
-  const values =
-    scores.map(
-      (score) =>
-        score.score
-    );
-
-  if (values.length === 0) {
-    return {
-      count: 0,
-      mean: 0,
-      standardDeviation: 0,
-    };
-  }
-
-  const mean =
+  const total =
     values.reduce(
       (sum, value) =>
         sum + value,
       0
-    ) / values.length;
+    );
+
+  return (
+    total /
+    values.length
+  );
+}
+
+/* =========================================================
+   標準偏差
+   ========================================================= */
+
+function calculateStandardDeviation(
+  values: number[],
+  mean: number
+): number {
+  if (
+    values.length <= 1
+  ) {
+    return 0;
+  }
 
   const variance =
     values.reduce(
-      (sum, value) =>
-        sum +
-        Math.pow(
-          value - mean,
-          2
-        ),
+      (sum, value) => {
+        const difference =
+          value - mean;
+
+        return (
+          sum +
+          difference *
+            difference
+        );
+      },
       0
-    ) / values.length;
+    ) /
+    values.length;
 
-  return {
-    count:
-      values.length,
-
-    mean,
-
-    standardDeviation:
-      Math.sqrt(
-        variance
-      ),
-  };
+  return Math.sqrt(
+    variance
+  );
 }
 
-/**
- * 偏差値 = 50 + 10 × (得点 - 平均) / 標準偏差
- */
-function calculateDeviationScore(
+/* =========================================================
+   偏差値
+   ========================================================= */
+
+function calculateDeviation(
   score: number,
   mean: number,
   standardDeviation: number
 ): number {
   if (
-    standardDeviation === 0
+    standardDeviation ===
+      0 ||
+    !Number.isFinite(
+      standardDeviation
+    )
   ) {
     return 50;
   }
 
-  const value =
+  return (
     50 +
     10 *
-      ((score - mean) /
-        standardDeviation);
+      (
+        (score -
+          mean) /
+        standardDeviation
+      )
+  );
+}
 
-  /*
-   * 小数第1位まで。
-   */
-  return Math.round(
-    value * 10
-  ) / 10;
+/* =========================================================
+   Document ID
+   ========================================================= */
+
+function createDeviationDocumentId(
+  result: DeviationResult
+): string {
+  return [
+    result.testId,
+
+    result.subjectId,
+
+    result.studentNumber,
+  ].join("_");
 }
