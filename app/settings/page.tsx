@@ -2,27 +2,63 @@
 
 import {
   ChangeEvent,
+  useEffect,
   useState,
 } from "react";
 
+import {
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+
 import SchoolHeader from "@/components/SchoolHeader";
+
+import {
+  db,
+} from "@/lib/firebase";
+
+import {
+  getCurrentUser,
+  type AppUser,
+} from "@/lib/auth";
+
+import {
+  getSupabase,
+} from "@/lib/supabase";
+
+/* =========================================================
+   Settings
+   ========================================================= */
 
 type Settings = {
   schoolName: string;
+
   logoText: string;
+
   logoUrl: string;
+
   defaultYear: string;
+
   studentNumberDigits: number;
+
   allowStudentAnswerViewBeforeGrading: boolean;
+
   requireSecondReview: boolean;
+
   hideStudentIdentityInCrossSection: boolean;
+
   enableDeviationScore: boolean;
+
   enableRanking: boolean;
+
   enableRetest: boolean;
+
   answerUploadImmediatelyVisible: boolean;
 };
 
-const initialSettings: Settings = {
+const defaultSettings: Settings = {
   schoolName: "○○塾",
 
   logoText: "塾ロゴ",
@@ -55,28 +91,178 @@ const initialSettings: Settings = {
     true,
 };
 
+/* =========================================================
+   Page
+   ========================================================= */
+
 export default function SettingsPage() {
+  const [
+    user,
+    setUser,
+  ] = useState<AppUser | null>(
+    null
+  );
+
   const [
     settings,
     setSettings,
-  ] =
-    useState<Settings>(
-      initialSettings
-    );
+  ] = useState<Settings>(
+    defaultSettings
+  );
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
+
+  const [
+    saving,
+    setSaving,
+  ] = useState(false);
+
+  const [
+    uploadingLogo,
+    setUploadingLogo,
+  ] = useState(false);
 
   const [
     saved,
     setSaved,
-  ] =
-    useState(false);
+  ] = useState(false);
 
   const [
-    logoPreview,
-    setLogoPreview,
-  ] =
-    useState(
-      initialSettings.logoUrl
-    );
+    error,
+    setError,
+  ] = useState("");
+
+  /* =======================================================
+     schoolId
+     ======================================================= */
+
+  const schoolId =
+    user?.schoolIds?.[0] ??
+    "";
+
+  /* =======================================================
+     初期読み込み
+     ======================================================= */
+
+  useEffect(() => {
+    let cancelled =
+      false;
+
+    async function load() {
+      try {
+        setLoading(true);
+
+        setError("");
+
+        const currentUser =
+          await getCurrentUser();
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!currentUser) {
+          throw new Error(
+            "ログインしてください。"
+          );
+        }
+
+        setUser(
+          currentUser
+        );
+
+        const currentSchoolId =
+          currentUser.schoolIds?.[0] ??
+          "";
+
+        if (!currentSchoolId) {
+          throw new Error(
+            "所属校舎が設定されていません。"
+          );
+        }
+
+        const schoolSnapshot =
+          await getDoc(
+            doc(
+              db,
+              "schools",
+              currentSchoolId
+            )
+          );
+
+        if (
+          schoolSnapshot.exists()
+        ) {
+          const data =
+            schoolSnapshot.data();
+
+          const savedSettings =
+            data.settings;
+
+          setSettings({
+            ...defaultSettings,
+
+            schoolName:
+              typeof data.name ===
+              "string"
+                ? data.name
+                : defaultSettings.schoolName,
+
+            logoText:
+              typeof data.logoText ===
+              "string"
+                ? data.logoText
+                : defaultSettings.logoText,
+
+            logoUrl:
+              typeof data.logoUrl ===
+              "string"
+                ? data.logoUrl
+                : defaultSettings.logoUrl,
+
+            ...(savedSettings &&
+            typeof savedSettings ===
+              "object"
+              ? savedSettings
+              : {}),
+          });
+
+          return;
+        }
+
+        setSettings(
+          defaultSettings
+        );
+      } catch (
+        err
+      ) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "設定を読み込めませんでした。"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* =======================================================
+     Update
+     ======================================================= */
 
   function update<
     K extends keyof Settings
@@ -85,7 +271,9 @@ export default function SettingsPage() {
     value: Settings[K]
   ) {
     setSettings(
-      (current) => ({
+      (
+        current
+      ) => ({
         ...current,
 
         [key]: value,
@@ -95,31 +283,45 @@ export default function SettingsPage() {
     setSaved(false);
   }
 
-  function handleLogoChange(
+  /* =======================================================
+     Logo upload
+     ======================================================= */
+
+  async function handleLogoChange(
     event: ChangeEvent<HTMLInputElement>
   ) {
     const file =
       event.target.files?.[0];
 
+    event.target.value =
+      "";
+
     if (!file) {
       return;
     }
 
+    if (!schoolId) {
+      setError(
+        "所属校舎が設定されていません。"
+      );
+
+      return;
+    }
+
+    const allowedTypes = [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+    ];
+
     if (
-      ![
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-      ].includes(
+      !allowedTypes.includes(
         file.type
       )
     ) {
-      alert(
-        "PNG・JPG・WebPの画像を選択してください。"
+      setError(
+        "PNG・JPG・WebPのみ使用できます。"
       );
-
-      event.target.value =
-        "";
 
       return;
     }
@@ -128,57 +330,267 @@ export default function SettingsPage() {
       file.size >
       5 * 1024 * 1024
     ) {
-      alert(
+      setError(
         "ロゴ画像は5MB以下にしてください。"
       );
-
-      event.target.value =
-        "";
 
       return;
     }
 
-    const url =
-      URL.createObjectURL(
-        file
+    try {
+      setUploadingLogo(
+        true
       );
 
-    setLogoPreview(
-      url
-    );
+      setError("");
 
-    update(
-      "logoUrl",
-      url
+      setSaved(false);
+
+      const supabase =
+        getSupabase();
+
+      const extension =
+        file.type ===
+        "image/png"
+          ? "png"
+          : file.type ===
+            "image/webp"
+          ? "webp"
+          : "jpg";
+
+      const path =
+        `${schoolId}/logo.${extension}`;
+
+      const upload =
+        await supabase.storage
+          .from(
+            "school-assets"
+          )
+          .upload(
+            path,
+            file,
+            {
+              upsert:
+                true,
+
+              contentType:
+                file.type,
+
+              cacheControl:
+                "3600",
+            }
+          );
+
+      if (
+        upload.error
+      ) {
+        throw new Error(
+          `ロゴのアップロードに失敗しました: ${upload.error.message}`
+        );
+      }
+
+      const publicUrl =
+        supabase.storage
+          .from(
+            "school-assets"
+          )
+          .getPublicUrl(
+            path
+          )
+          .data
+          .publicUrl;
+
+      setSettings(
+        (
+          current
+        ) => ({
+          ...current,
+
+          logoUrl:
+            publicUrl,
+        })
+      );
+    } catch (
+      err
+    ) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "ロゴのアップロードに失敗しました。"
+      );
+    } finally {
+      setUploadingLogo(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Logo delete
+     ======================================================= */
+
+  async function removeLogo() {
+    if (!schoolId) {
+      return;
+    }
+
+    try {
+      setUploadingLogo(
+        true
+      );
+
+      setError("");
+
+      const supabase =
+        getSupabase();
+
+      await supabase.storage
+        .from(
+          "school-assets"
+        )
+        .remove([
+          `${schoolId}/logo.png`,
+          `${schoolId}/logo.jpg`,
+          `${schoolId}/logo.webp`,
+        ]);
+
+      setSettings(
+        (
+          current
+        ) => ({
+          ...current,
+
+          logoUrl: "",
+        })
+      );
+
+      setSaved(false);
+    } catch (
+      err
+    ) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "ロゴの削除に失敗しました。"
+      );
+    } finally {
+      setUploadingLogo(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Save
+     ======================================================= */
+
+  async function saveSettings() {
+    if (!schoolId) {
+      setError(
+        "所属校舎が設定されていません。"
+      );
+
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      setSaved(false);
+
+      setError("");
+
+      await setDoc(
+        doc(
+          db,
+          "schools",
+          schoolId
+        ),
+        {
+          name:
+            settings.schoolName,
+
+          logoText:
+            settings.logoText,
+
+          logoUrl:
+            settings.logoUrl,
+
+          settings: {
+            defaultYear:
+              settings.defaultYear,
+
+            studentNumberDigits:
+              settings.studentNumberDigits,
+
+            allowStudentAnswerViewBeforeGrading:
+              settings.allowStudentAnswerViewBeforeGrading,
+
+            requireSecondReview:
+              settings.requireSecondReview,
+
+            hideStudentIdentityInCrossSection:
+              settings.hideStudentIdentityInCrossSection,
+
+            enableDeviationScore:
+              settings.enableDeviationScore,
+
+            enableRanking:
+              settings.enableRanking,
+
+            enableRetest:
+              settings.enableRetest,
+
+            answerUploadImmediatelyVisible:
+              settings.answerUploadImmediatelyVisible,
+          },
+
+          updatedAt:
+            serverTimestamp(),
+        },
+        {
+          merge:
+            true,
+        }
+      );
+
+      setSaved(true);
+    } catch (
+      err
+    ) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "設定の保存に失敗しました。"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /* =======================================================
+     Loading
+     ======================================================= */
+
+  if (loading) {
+    return (
+      <main className="page">
+        <SchoolHeader
+          title="設定"
+        />
+
+        <section className="content">
+          <div className="stepCard">
+            設定を読み込んでいます...
+          </div>
+        </section>
+      </main>
     );
   }
 
-  function removeLogo() {
-    setLogoPreview("");
-
-    update(
-      "logoUrl",
-      ""
-    );
-  }
-
-  function saveSettings() {
-    /*
-     * 現在は画面上の設定を保持する段階。
-     *
-     * 次の段階で、
-     *
-     * Firestore
-     * ↓
-     * systemSettings
-     *
-     * へ正式保存します。
-     */
-
-    setSaved(
-      true
-    );
-  }
+  /* =======================================================
+     Render
+     ======================================================= */
 
   return (
     <main className="page">
@@ -198,6 +610,18 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+
+        {error && (
+          <div
+            className="selectionPanel"
+            style={{
+              marginBottom:
+                20,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         {/* =================================================
             塾基本情報
@@ -229,7 +653,11 @@ export default function SettingsPage() {
 
           <label
             style={{
-              marginTop: 16,
+              display:
+                "block",
+
+              marginTop:
+                16,
             }}
           >
             ロゴ表示名
@@ -294,7 +722,8 @@ export default function SettingsPage() {
 
           <p
             style={{
-              color: "#666",
+              color:
+                "#666",
 
               lineHeight:
                 1.7,
@@ -303,12 +732,9 @@ export default function SettingsPage() {
             QRシール発行シートの左上に表示するロゴです。
           </p>
 
-          {logoPreview ? (
+          {settings.logoUrl ? (
             <div
               style={{
-                marginTop:
-                  16,
-
                 display:
                   "flex",
 
@@ -316,18 +742,18 @@ export default function SettingsPage() {
                   "center",
 
                 gap: 20,
+
+                marginTop:
+                  16,
               }}
             >
               <div
                 style={{
                   width:
-                    220,
+                    240,
 
                   height:
-                    90,
-
-                  border:
-                    "1px solid #ddd",
+                    100,
 
                   display:
                     "flex",
@@ -338,6 +764,9 @@ export default function SettingsPage() {
                   justifyContent:
                     "center",
 
+                  border:
+                    "1px solid #ddd",
+
                   background:
                     "#fff",
 
@@ -347,7 +776,7 @@ export default function SettingsPage() {
               >
                 <img
                   src={
-                    logoPreview
+                    settings.logoUrl
                   }
                   alt="塾ロゴ"
                   style={{
@@ -366,6 +795,9 @@ export default function SettingsPage() {
               <button
                 type="button"
                 className="secondaryButton"
+                disabled={
+                  uploadingLogo
+                }
                 onClick={
                   removeLogo
                 }
@@ -380,13 +812,10 @@ export default function SettingsPage() {
                   16,
 
                 width:
-                  220,
+                  240,
 
                 height:
-                  90,
-
-                border:
-                  "1px dashed #bbb",
+                  100,
 
                 display:
                   "flex",
@@ -396,6 +825,9 @@ export default function SettingsPage() {
 
                 justifyContent:
                   "center",
+
+                border:
+                  "1px dashed #aaa",
 
                 color:
                   "#777",
@@ -415,15 +847,27 @@ export default function SettingsPage() {
                 16,
 
               cursor:
-                "pointer",
+                uploadingLogo
+                  ? "default"
+                  : "pointer",
+
+              opacity:
+                uploadingLogo
+                  ? 0.6
+                  : 1,
             }}
           >
-            ロゴ画像を選択
+            {uploadingLogo
+              ? "処理中..."
+              : "ロゴ画像を選択"}
 
             <input
               type="file"
-              accept="image/png,image/jpeg,image/webp"
               hidden
+              disabled={
+                uploadingLogo
+              }
+              accept="image/png,image/jpeg,image/webp"
               onChange={
                 handleLogoChange
               }
@@ -435,11 +879,11 @@ export default function SettingsPage() {
               marginTop:
                 10,
 
-              fontSize:
-                13,
-
               color:
                 "#777",
+
+              fontSize:
+                13,
             }}
           >
             PNG・JPG・WebP / 5MB以下
@@ -614,7 +1058,7 @@ export default function SettingsPage() {
         </section>
 
         {/* =================================================
-            保存
+            Save
             ================================================= */}
 
         <section
@@ -630,11 +1074,17 @@ export default function SettingsPage() {
           <button
             type="button"
             className="primaryButton"
+            disabled={
+              saving ||
+              uploadingLogo
+            }
             onClick={
               saveSettings
             }
           >
-            設定を保存
+            {saving
+              ? "保存中..."
+              : "設定を保存"}
           </button>
 
           {saved && (
