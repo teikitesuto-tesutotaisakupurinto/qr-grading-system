@@ -1,0 +1,55 @@
+name: Deploy Firebase Functions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-functions:
+    name: Deploy Cloud Functions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Install Functions dependencies
+        working-directory: functions
+        run: npm install
+
+      - name: Create Functions environment file
+        working-directory: functions
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          printf '%s\n' \
+            "SUPABASE_URL=${SUPABASE_URL}" \
+            "SUPABASE_SECRET_KEY=${SUPABASE_SECRET_KEY}" \
+            "NODE_ENV=production" \
+            > .env
+
+      - name: Build Functions
+        working-directory: functions
+        run: npm run build
+
+      - name: Deploy Firebase Functions
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-service-account.json"
+          firebase deploy --only functions --project "${{ secrets.FIREBASE_PROJECT_ID }}"
+
+      - name: Remove credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/firebase-service-account.json"
+          rm -f functions/.env
