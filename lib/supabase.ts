@@ -5,35 +5,13 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
-/* =========================================================
-   Supabase設定
-   ========================================================= */
-
 const supabaseUrl =
   process.env
     .NEXT_PUBLIC_SUPABASE_URL;
 
-const supabasePublishableKey =
+const publishableKey =
   process.env
     .NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-/* =========================================================
-   設定チェック
-   ========================================================= */
-
-if (
-  typeof window !== "undefined" &&
-  (!supabaseUrl ||
-    !supabasePublishableKey)
-) {
-  console.error(
-    "Supabaseの環境変数が設定されていません。"
-  );
-}
-
-/* =========================================================
-   Supabase Client
-   ========================================================= */
 
 let client:
   | SupabaseClient
@@ -46,22 +24,27 @@ export function getSupabase(): SupabaseClient {
 
   if (
     !supabaseUrl ||
-    !supabasePublishableKey
+    !publishableKey
   ) {
     throw new Error(
-      "Supabaseの接続設定がありません。"
+      "Supabaseの環境変数が設定されていません。"
     );
   }
 
   client =
     createClient(
       supabaseUrl,
-      supabasePublishableKey,
+      publishableKey,
       {
         auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
+          persistSession:
+            false,
+
+          autoRefreshToken:
+            false,
+
+          detectSessionInUrl:
+            false,
         },
       }
     );
@@ -74,10 +57,6 @@ export const supabase =
     "undefined"
     ? getSupabase()
     : null;
-
-/* =========================================================
-   Bucket
-   ========================================================= */
 
 export const ANSWERS_BUCKET =
   "answers";
