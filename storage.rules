@@ -1,0 +1,227 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    /* =====================================================
+       共通関数
+       ===================================================== */
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return firestore.get(
+        /databases/(default)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function hasRole(role) {
+      return signedIn()
+        && userData().role == role;
+    }
+
+    function hasAnyRole(roles) {
+      return signedIn()
+        && userData().role in roles;
+    }
+
+    function isHeadOffice() {
+      return hasRole('本部管理者');
+    }
+
+    function isManager() {
+      return hasAnyRole([
+        '本部管理者',
+        '校舎管理者'
+      ]);
+    }
+
+    function isGrader() {
+      return hasAnyRole([
+        '本部管理者',
+        '校舎管理者',
+        '講師'
+      ]);
+    }
+
+    function isStudent() {
+      return hasRole('生徒');
+    }
+
+    function isOwnStudent(
+      studentNumber
+    ) {
+      return isStudent()
+        && userData().studentNumber ==
+           studentNumber;
+    }
+
+    function belongsToStudentSchool(
+      studentNumber
+    ) {
+      return isManager()
+        || (
+          isGrader()
+          && get(
+            /databases/(default)/documents/students/$(studentNumber)
+          ).data.schoolId
+             in userData().schoolIds
+        );
+    }
+
+    /* =====================================================
+       答案画像
+       answers/{testId}/{subjectId}/{studentNumber}/...
+       ===================================================== */
+
+    match /answers/{testId}/{subjectId}/{studentNumber}/{fileName} {
+
+      /*
+       * 閲覧
+       *
+       * 本部管理者
+       * 校舎管理者
+       * 講師
+       * 本人生徒
+       */
+      allow read:
+        if isOwnStudent(studentNumber)
+        || belongsToStudentSchool(
+          studentNumber
+        );
+
+      /*
+       * アップロード
+       *
+       * 採点担当者・管理者のみ。
+       */
+      allow create:
+        if isGrader()
+        && belongsToStudentSchool(
+          studentNumber
+        )
+        && request.resource.size
+           <= 20 * 1024 * 1024;
+
+      /*
+       * 更新
+       */
+      allow update:
+        if isGrader()
+        && belongsToStudentSchool(
+          studentNumber
+        )
+        && request.resource.size
+           <= 20 * 1024 * 1024;
+
+      /*
+       * 削除
+       *
+       * 講師は削除不可。
+       * 管理者のみ。
+       */
+      allow delete:
+        if isManager()
+        && belongsToStudentSchool(
+          studentNumber
+        );
+    }
+
+    /* =====================================================
+       解答画像
+       ===================================================== */
+
+    match /answerKeys/{testId}/{subjectId}/{fileName} {
+
+      allow read:
+        if isGrader();
+
+      allow write:
+        if isManager()
+        && request.resource.size
+           <= 50 * 1024 * 1024;
+    }
+
+    /* =====================================================
+       QR関連ファイル
+       ===================================================== */
+
+    match /qr/{schoolId}/{fileName} {
+
+      allow read:
+        if signedIn();
+
+      allow write:
+        if isManager()
+        && (
+          isHeadOffice()
+          || schoolId in userData().schoolIds
+        );
+    }
+
+    /* =====================================================
+       成績表PDF
+       ===================================================== */
+
+    match /reports/{studentNumber}/{fileName} {
+
+      allow read:
+        if isOwnStudent(studentNumber)
+        || (
+          isGrader()
+          && belongsToStudentSchool(
+            studentNumber
+          )
+        );
+
+      allow write:
+        if isManager()
+        && belongsToStudentSchool(
+          studentNumber
+        );
+    }
+
+    /* =====================================================
+       CSV
+       ===================================================== */
+
+    match /csv/{importId}/{fileName} {
+
+      allow read, write:
+        if isManager()
+        && request.resource.size
+           <= 100 * 1024 * 1024;
+    }
+
+    /* =====================================================
+       一時ファイル
+       ===================================================== */
+
+    match /temp/{uid}/{fileName} {
+
+      allow read:
+        if signedIn()
+        && request.auth.uid == uid;
+
+      allow write:
+        if signedIn()
+        && request.auth.uid == uid
+        && request.resource.size
+           <= 100 * 1024 * 1024;
+
+      allow delete:
+        if signedIn()
+        && request.auth.uid == uid;
+    }
+
+    /* =====================================================
+       その他はすべて拒否
+       ===================================================== */
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
