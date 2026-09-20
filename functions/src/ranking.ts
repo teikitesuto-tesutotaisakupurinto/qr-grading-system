@@ -3,10 +3,6 @@ import {
   getFirestore,
 } from "firebase-admin/firestore";
 
-/* =========================================================
-   Firestore
-   ========================================================= */
-
 const db =
   getFirestore();
 
@@ -65,6 +61,16 @@ type RankingResult = {
   maxScore: number;
 };
 
+type RankingCandidate = {
+  studentNumber: string;
+
+  score: number;
+
+  maxScore: number;
+
+  total: number;
+};
+
 /* =========================================================
    順位計算
    ========================================================= */
@@ -81,25 +87,24 @@ export async function calculateTestRankings(
   const [
     scoresSnapshot,
     studentsSnapshot,
-  ] =
-    await Promise.all([
-      db
-        .collection(
-          "scores"
-        )
-        .where(
-          "testId",
-          "==",
-          testId
-        )
-        .get(),
+  ] = await Promise.all([
+    db
+      .collection(
+        "scores"
+      )
+      .where(
+        "testId",
+        "==",
+        testId
+      )
+      .get(),
 
-      db
-        .collection(
-          "students"
-        )
-        .get(),
-    ]);
+    db
+      .collection(
+        "students"
+      )
+      .get(),
+  ]);
 
   if (
     scoresSnapshot.empty
@@ -107,50 +112,56 @@ export async function calculateTestRankings(
     return {
       testId,
 
-      processed:
-        0,
+      processed: 0,
 
-      rankings: [],
+      rankings:
+        [] as RankingResult[],
     };
   }
 
   const scores: ScoreDocument[] =
     scoresSnapshot.docs.map(
-      (item) =>
-        ({
+      (item) => {
+        const data =
+          item.data();
+
+        return {
           studentNumber:
-            item.data()
-              .studentNumber,
+            typeof data.studentNumber ===
+            "string"
+              ? data.studentNumber
+              : "",
 
           testId:
-            item.data()
-              .testId,
+            typeof data.testId ===
+            "string"
+              ? data.testId
+              : testId,
 
           subjectId:
-            item.data()
-              .subjectId,
+            typeof data.subjectId ===
+            "string"
+              ? data.subjectId
+              : "",
 
           score:
             Number(
-              item.data()
-                .score ??
-                0
+              data.score ?? 0
             ),
 
           maxScore:
             Number(
-              item.data()
-                .maxScore ??
+              data.maxScore ??
                 0
             ),
 
           percentage:
             Number(
-              item.data()
-                .percentage ??
+              data.percentage ??
                 0
             ),
-        }) as ScoreDocument
+        };
+      }
     );
 
   const students: StudentInfo[] =
@@ -189,42 +200,23 @@ export async function calculateTestRankings(
     [];
 
   /* =======================================================
-     全校順位
+     全校
      ======================================================= */
 
-  const overall =
+  addRankingResults(
+    results,
+
+    testId,
+
+    "overall",
+
     createRanking(
       totalScores
-    );
-
-  results.push(
-    ...overall.map(
-      (item) => ({
-        testId,
-
-        studentNumber:
-          item.studentNumber,
-
-        rankingType:
-          "overall",
-
-        rank:
-          item.rank,
-
-        total:
-          item.total,
-
-        score:
-          item.score,
-
-        maxScore:
-          item.maxScore,
-      })
     )
   );
 
   /* =======================================================
-     校舎順位
+     校舎
      ======================================================= */
 
   const schoolGroups =
@@ -247,40 +239,21 @@ export async function calculateTestRankings(
       continue;
     }
 
-    const ranking =
+    addRankingResults(
+      results,
+
+      testId,
+
+      "school",
+
       createRanking(
         group
-      );
-
-    results.push(
-      ...ranking.map(
-        (item) => ({
-          testId,
-
-          studentNumber:
-            item.studentNumber,
-
-          rankingType:
-            "school",
-
-          rank:
-            item.rank,
-
-          total:
-            item.total,
-
-          score:
-            item.score,
-
-          maxScore:
-            item.maxScore,
-        })
       )
     );
   }
 
   /* =======================================================
-     学年順位
+     学年
      ======================================================= */
 
   const gradeGroups =
@@ -303,40 +276,21 @@ export async function calculateTestRankings(
       continue;
     }
 
-    const ranking =
+    addRankingResults(
+      results,
+
+      testId,
+
+      "grade",
+
       createRanking(
         group
-      );
-
-    results.push(
-      ...ranking.map(
-        (item) => ({
-          testId,
-
-          studentNumber:
-            item.studentNumber,
-
-          rankingType:
-            "grade",
-
-          rank:
-            item.rank,
-
-          total:
-            item.total,
-
-          score:
-            item.score,
-
-          maxScore:
-            item.maxScore,
-        })
       )
     );
   }
 
   /* =======================================================
-     クラス順位
+     クラス
      ======================================================= */
 
   const classGroups =
@@ -359,40 +313,21 @@ export async function calculateTestRankings(
       continue;
     }
 
-    const ranking =
+    addRankingResults(
+      results,
+
+      testId,
+
+      "class",
+
       createRanking(
         group
-      );
-
-    results.push(
-      ...ranking.map(
-        (item) => ({
-          testId,
-
-          studentNumber:
-            item.studentNumber,
-
-          rankingType:
-            "class",
-
-          rank:
-            item.rank,
-
-          total:
-            item.total,
-
-          score:
-            item.score,
-
-          maxScore:
-            item.maxScore,
-        })
       )
     );
   }
 
   /* =======================================================
-     教科別順位
+     教科
      ======================================================= */
 
   const subjectGroups =
@@ -408,56 +343,45 @@ export async function calculateTestRankings(
       group,
     ] of subjectGroups
   ) {
-    const subjectRanking =
-      createRanking(
-        group.map(
-          (item) => ({
-            studentNumber:
-              item.studentNumber,
+    if (!subjectId) {
+      continue;
+    }
 
-            score:
-              item.score,
-
-            maxScore:
-              item.maxScore,
-
-            total:
-              item.score,
-          })
-        )
-      );
-
-    results.push(
-      ...subjectRanking.map(
+    const candidates:
+      RankingCandidate[] =
+      group.map(
         (item) => ({
-          testId,
-
           studentNumber:
             item.studentNumber,
-
-          rankingType:
-            "subject",
-
-          subjectId,
-
-          rank:
-            item.rank,
-
-          total:
-            item.total,
 
           score:
             item.score,
 
           maxScore:
             item.maxScore,
+
+          total:
+            item.score,
         })
-      )
+      );
+
+    addRankingResults(
+      results,
+
+      testId,
+
+      "subject",
+
+      createRanking(
+        candidates
+      ),
+
+      subjectId
     );
   }
 
   /* =======================================================
-     Firestore保存
+     保存
      ======================================================= */
 
   const BATCH_SIZE = 400;
@@ -481,16 +405,17 @@ export async function calculateTestRankings(
       const result of
         chunk
     ) {
-      const documentId = [
-        result.testId,
+      const documentId =
+        [
+          result.testId,
 
-        result.rankingType,
+          result.rankingType,
 
-        result.subjectId ??
-          "all",
+          result.subjectId ??
+            "all",
 
-        result.studentNumber,
-      ].join("_");
+          result.studentNumber,
+        ].join("_");
 
       batch.set(
         db
@@ -553,24 +478,64 @@ export async function calculateTestRankings(
 }
 
 /* =========================================================
+   結果追加
+   ========================================================= */
+
+function addRankingResults(
+  output: RankingResult[],
+  testId: string,
+  rankingType: RankingType,
+  rankings: Array<
+    RankingCandidate & {
+      rank: number;
+    }
+  >,
+  subjectId?: string
+) {
+  for (
+    const item of
+      rankings
+  ) {
+    output.push({
+      testId,
+
+      studentNumber:
+        item.studentNumber,
+
+      rankingType,
+
+      ...(subjectId
+        ? {
+            subjectId,
+          }
+        : {}),
+
+      rank:
+        item.rank,
+
+      total:
+        item.total,
+
+      score:
+        item.score,
+
+      maxScore:
+        item.maxScore,
+    });
+  }
+}
+
+/* =========================================================
    合計点
    ========================================================= */
 
 function calculateTotalScores(
   scores: ScoreDocument[]
-) {
+): RankingCandidate[] {
   const map =
     new Map<
       string,
-      {
-        studentNumber: string;
-
-        score: number;
-
-        maxScore: number;
-
-        total: number;
-      }
+      RankingCandidate
     >();
 
   for (
@@ -616,16 +581,12 @@ function calculateTotalScores(
    ========================================================= */
 
 function createRanking(
-  values: Array<{
-    studentNumber: string;
-
-    score: number;
-
-    maxScore: number;
-
-    total: number;
-  }>
-) {
+  values: RankingCandidate[]
+): Array<
+  RankingCandidate & {
+    rank: number;
+  }
+> {
   const sorted =
     [...values].sort(
       (a, b) =>
