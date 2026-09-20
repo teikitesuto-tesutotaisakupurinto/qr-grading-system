@@ -1,4 +1,6 @@
-import { initializeApp } from "firebase-admin/app";
+import {
+  initializeApp,
+} from "firebase-admin/app";
 
 import {
   getFirestore,
@@ -70,23 +72,30 @@ setGlobalOptions({
   region:
     "asia-northeast1",
 
-  maxInstances: 50,
+  maxInstances:
+    50,
 
-  memory: "1GiB",
+  memory:
+    "1GiB",
 
-  timeoutSeconds: 540,
+  timeoutSeconds:
+    540,
 });
 
 /* =========================================================
-   答案アップロードURL発行
+   答案アップロードURL
    ========================================================= */
 
 export const createAnswerUploadUrl =
   onCall(
     {
-      timeoutSeconds: 60,
-      memory: "256MiB",
+      timeoutSeconds:
+        60,
+
+      memory:
+        "256MiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -180,17 +189,15 @@ export const createAnswerUploadUrl =
         );
       }
 
-      const maxSize =
-        20 *
-        1024 *
-        1024;
-
       if (
         !Number.isFinite(
           size
         ) ||
         size <= 0 ||
-        size > maxSize
+        size >
+          20 *
+            1024 *
+            1024
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -213,10 +220,6 @@ export const createAnswerUploadUrl =
       const db =
         getFirestore();
 
-      /*
-       * 先にanswersドキュメントを作り、
-       * そのIDをStorageのキーに使用する。
-       */
       const answerRef =
         db
           .collection(
@@ -240,10 +243,6 @@ export const createAnswerUploadUrl =
         `${answerId}.${extension}`,
       ].join("/");
 
-      /*
-       * Supabase Private Bucket用
-       * 署名付きPUT URL。
-       */
       const uploadUrl =
         await createUploadUrl(
           fileKey,
@@ -286,7 +285,8 @@ export const createAnswerUploadUrl =
       });
 
       return {
-        success: true,
+        success:
+          true,
 
         answerId,
 
@@ -304,9 +304,13 @@ export const createAnswerUploadUrl =
 export const startAnswerProcessing =
   onCall(
     {
-      timeoutSeconds: 60,
-      memory: "512MiB",
+      timeoutSeconds:
+        60,
+
+      memory:
+        "512MiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -343,16 +347,27 @@ export const startAnswerProcessing =
         Array.isArray(
           data.answerIds
         )
-          ? data.answerIds
+          ? data.answerIds.filter(
+              (
+                id
+              ): id is string =>
+                typeof id ===
+                  "string" &&
+                id.trim() !== ""
+            )
           : [];
 
-      if (
-        !testId ||
-        !subjectId
-      ) {
+      if (!testId) {
         throw new HttpsError(
           "invalid-argument",
-          "testIdとsubjectIdが必要です。"
+          "testIdが必要です。"
+        );
+      }
+
+      if (!subjectId) {
+        throw new HttpsError(
+          "invalid-argument",
+          "subjectIdが必要です。"
         );
       }
 
@@ -376,30 +391,10 @@ export const startAnswerProcessing =
         );
       }
 
-      const validIds =
-        answerIds.filter(
-          (
-            id
-          ): id is string =>
-            typeof id ===
-              "string" &&
-            id.trim() !== ""
-        );
-
-      if (
-        validIds.length !==
-        answerIds.length
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "answerIdsに不正な値があります。"
-        );
-      }
-
       const uniqueIds =
         Array.from(
           new Set(
-            validIds
+            answerIds
           )
         );
 
@@ -417,7 +412,8 @@ export const startAnswerProcessing =
         });
 
       return {
-        success: true,
+        success:
+          true,
 
         jobId,
 
@@ -431,7 +427,7 @@ export const startAnswerProcessing =
   );
 
 /* =========================================================
-   答案処理ジョブ
+   ジョブ自動実行
    ========================================================= */
 
 export const answerJobCreated =
@@ -449,6 +445,7 @@ export const answerJobCreated =
       retry:
         true,
     },
+
     async (event) => {
       const snapshot =
         event.data;
@@ -459,10 +456,6 @@ export const answerJobCreated =
 
       const data =
         snapshot.data();
-
-      if (!data) {
-        return;
-      }
 
       if (
         data.status !==
@@ -479,7 +472,7 @@ export const answerJobCreated =
   );
 
 /* =========================================================
-   成績計算
+   成績
    ========================================================= */
 
 export const calculateScores =
@@ -491,6 +484,7 @@ export const calculateScores =
       memory:
         "1GiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -529,7 +523,7 @@ export const calculateScores =
   );
 
 /* =========================================================
-   偏差値計算
+   偏差値
    ========================================================= */
 
 export const calculateDeviationScores =
@@ -541,6 +535,7 @@ export const calculateDeviationScores =
       memory:
         "1GiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -579,7 +574,7 @@ export const calculateDeviationScores =
   );
 
 /* =========================================================
-   順位計算
+   順位
    ========================================================= */
 
 export const calculateRank =
@@ -591,6 +586,7 @@ export const calculateRank =
       memory:
         "1GiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -629,7 +625,7 @@ export const calculateRank =
   );
 
 /* =========================================================
-   CSVインポート
+   CSV
    ========================================================= */
 
 export const executeCsvImport =
@@ -641,6 +637,7 @@ export const executeCsvImport =
       memory:
         "1GiB",
     },
+
     async (request) => {
       if (!request.auth) {
         throw new HttpsError(
@@ -700,7 +697,7 @@ export const executeCsvImport =
   );
 
 /* =========================================================
-   現在のユーザー権限
+   現在ユーザー権限
    ========================================================= */
 
 export const getCurrentUserRole =
@@ -719,7 +716,8 @@ export const getCurrentUserRole =
         );
 
       return {
-        success: true,
+        success:
+          true,
 
         uid:
           request.auth.uid,
@@ -742,7 +740,7 @@ export {
 };
 
 /* =========================================================
-   ファイル拡張子
+   拡張子
    ========================================================= */
 
 function getFileExtension(
