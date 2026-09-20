@@ -1,6 +1,11 @@
 import { initializeApp } from "firebase-admin/app";
 
 import {
+  getFirestore,
+  FieldValue,
+} from "firebase-admin/firestore";
+
+import {
   onCall,
   HttpsError,
 } from "firebase-functions/v2/https";
@@ -47,25 +52,253 @@ import {
   updateManagedUserRole,
 } from "./userManagement";
 
+import {
+  createUploadUrl,
+} from "./supabase";
+
 /* =========================================================
-   Firebase Admin SDK
+   Firebase Admin
    ========================================================= */
 
 initializeApp();
 
 /* =========================================================
-   Cloud Functions共通設定
+   共通設定
    ========================================================= */
 
 setGlobalOptions({
-  region: "asia-northeast1",
+  region:
+    "asia-northeast1",
+
   maxInstances: 50,
+
   memory: "1GiB",
+
   timeoutSeconds: 540,
 });
 
 /* =========================================================
-   答案処理ジョブ作成
+   答案アップロードURL発行
+   ========================================================= */
+
+export const createAnswerUploadUrl =
+  onCall(
+    {
+      timeoutSeconds: 60,
+      memory: "256MiB",
+    },
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError(
+          "unauthenticated",
+          "ログインが必要です。"
+        );
+      }
+
+      await requireRole(
+        request.auth.uid,
+        [
+          "本部管理者",
+          "校舎管理者",
+          "講師",
+        ]
+      );
+
+      const data =
+        request.data ?? {};
+
+      const testId =
+        typeof data.testId ===
+        "string"
+          ? data.testId.trim()
+          : "";
+
+      const subjectId =
+        typeof data.subjectId ===
+        "string"
+          ? data.subjectId.trim()
+          : "";
+
+      const fileName =
+        typeof data.fileName ===
+        "string"
+          ? data.fileName.trim()
+          : "";
+
+      const contentType =
+        typeof data.contentType ===
+        "string"
+          ? data.contentType
+          : "";
+
+      const size =
+        Number(
+          data.size
+        );
+
+      const studentNumber =
+        typeof data.studentNumber ===
+        "string"
+          ? data.studentNumber.trim()
+          : undefined;
+
+      if (!testId) {
+        throw new HttpsError(
+          "invalid-argument",
+          "testIdが必要です。"
+        );
+      }
+
+      if (!subjectId) {
+        throw new HttpsError(
+          "invalid-argument",
+          "subjectIdが必要です。"
+        );
+      }
+
+      if (!fileName) {
+        throw new HttpsError(
+          "invalid-argument",
+          "ファイル名が必要です。"
+        );
+      }
+
+      const allowedTypes = [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+      ];
+
+      if (
+        !allowedTypes.includes(
+          contentType
+        )
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "PDF・JPG・PNGのみ対応しています。"
+        );
+      }
+
+      const maxSize =
+        20 *
+        1024 *
+        1024;
+
+      if (
+        !Number.isFinite(
+          size
+        ) ||
+        size <= 0 ||
+        size > maxSize
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "ファイルサイズが不正です。"
+        );
+      }
+
+      if (
+        studentNumber &&
+        !/^\d{6}$/.test(
+          studentNumber
+        )
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "生徒番号は6桁数字で指定してください。"
+        );
+      }
+
+      const db =
+        getFirestore();
+
+      /*
+       * 先にanswersドキュメントを作り、
+       * そのIDをStorageのキーに使用する。
+       */
+      const answerRef =
+        db
+          .collection(
+            "answers"
+          )
+          .doc();
+
+      const answerId =
+        answerRef.id;
+
+      const extension =
+        getFileExtension(
+          fileName,
+          contentType
+        );
+
+      const fileKey = [
+        "answers",
+        testId,
+        subjectId,
+        `${answerId}.${extension}`,
+      ].join("/");
+
+      /*
+       * Supabase Private Bucket用
+       * 署名付きPUT URL。
+       */
+      const uploadUrl =
+        await createUploadUrl(
+          fileKey,
+          contentType
+        );
+
+      await answerRef.set({
+        id:
+          answerId,
+
+        testId,
+
+        subjectId,
+
+        ...(studentNumber
+          ? {
+              studentNumber,
+            }
+          : {}),
+
+        fileKey,
+
+        fileName,
+
+        contentType,
+
+        size,
+
+        status:
+          "uploaded",
+
+        createdBy:
+          request.auth.uid,
+
+        createdAt:
+          FieldValue.serverTimestamp(),
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      });
+
+      return {
+        success: true,
+
+        answerId,
+
+        fileKey,
+
+        uploadUrl,
+      };
+    }
+  );
+
+/* =========================================================
+   答案処理開始
    ========================================================= */
 
 export const startAnswerProcessing =
@@ -95,27 +328,37 @@ export const startAnswerProcessing =
         request.data ?? {};
 
       const testId =
-        data.testId;
+        typeof data.testId ===
+        "string"
+          ? data.testId.trim()
+          : "";
 
       const subjectId =
-        data.subjectId;
+        typeof data.subjectId ===
+        "string"
+          ? data.subjectId.trim()
+          : "";
 
       const answerIds =
-        data.answerIds;
+        Array.isArray(
+          data.answerIds
+        )
+          ? data.answerIds
+          : [];
 
       if (
-        typeof testId !== "string" ||
-        typeof subjectId !== "string" ||
-        !Array.isArray(answerIds)
+        !testId ||
+        !subjectId
       ) {
         throw new HttpsError(
           "invalid-argument",
-          "testId、subjectId、answerIdsが必要です。"
+          "testIdとsubjectIdが必要です。"
         );
       }
 
       if (
-        answerIds.length === 0
+        answerIds.length ===
+        0
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -124,55 +367,71 @@ export const startAnswerProcessing =
       }
 
       if (
-        answerIds.length > 10000
+        answerIds.length >
+        10000
       ) {
         throw new HttpsError(
           "invalid-argument",
-          "一度に処理できる答案数は10000件までです。"
+          "一度に処理できる答案は10000件までです。"
         );
       }
 
-      const invalid =
-        answerIds.some(
-          (id) =>
-            typeof id !== "string" ||
-            id.trim() === ""
+      const validIds =
+        answerIds.filter(
+          (
+            id
+          ): id is string =>
+            typeof id ===
+              "string" &&
+            id.trim() !== ""
         );
 
-      if (invalid) {
+      if (
+        validIds.length !==
+        answerIds.length
+      ) {
         throw new HttpsError(
           "invalid-argument",
           "answerIdsに不正な値があります。"
         );
       }
 
-      const uniqueAnswerIds =
+      const uniqueIds =
         Array.from(
-          new Set(answerIds)
+          new Set(
+            validIds
+          )
         );
 
       const jobId =
         await createAnswerProcessingJob({
           testId,
+
           subjectId,
+
           answerIds:
-            uniqueAnswerIds,
+            uniqueIds,
+
           requestedBy:
             request.auth.uid,
         });
 
       return {
         success: true,
+
         jobId,
+
         total:
-          uniqueAnswerIds.length,
-        status: "queued",
+          uniqueIds.length,
+
+        status:
+          "queued",
       };
     }
   );
 
 /* =========================================================
-   答案処理ジョブ実行
+   答案処理ジョブ
    ========================================================= */
 
 export const answerJobCreated =
@@ -181,11 +440,14 @@ export const answerJobCreated =
       document:
         "gradingJobs/{jobId}",
 
-      memory: "1GiB",
+      memory:
+        "1GiB",
 
-      timeoutSeconds: 540,
+      timeoutSeconds:
+        540,
 
-      retry: true,
+      retry:
+        true,
     },
     async (event) => {
       const snapshot =
@@ -203,7 +465,8 @@ export const answerJobCreated =
       }
 
       if (
-        data.status !== "queued"
+        data.status !==
+        "queued"
       ) {
         return;
       }
@@ -216,14 +479,17 @@ export const answerJobCreated =
   );
 
 /* =========================================================
-   成績集計
+   成績計算
    ========================================================= */
 
 export const calculateScores =
   onCall(
     {
-      timeoutSeconds: 540,
-      memory: "1GiB",
+      timeoutSeconds:
+        540,
+
+      memory:
+        "1GiB",
     },
     async (request) => {
       if (!request.auth) {
@@ -246,8 +512,9 @@ export const calculateScores =
         request.data?.testId;
 
       if (
-        typeof testId !== "string" ||
-        testId.trim() === ""
+        typeof testId !==
+          "string" ||
+        !testId.trim()
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -268,8 +535,11 @@ export const calculateScores =
 export const calculateDeviationScores =
   onCall(
     {
-      timeoutSeconds: 540,
-      memory: "1GiB",
+      timeoutSeconds:
+        540,
+
+      memory:
+        "1GiB",
     },
     async (request) => {
       if (!request.auth) {
@@ -292,8 +562,9 @@ export const calculateDeviationScores =
         request.data?.testId;
 
       if (
-        typeof testId !== "string" ||
-        testId.trim() === ""
+        typeof testId !==
+          "string" ||
+        !testId.trim()
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -314,8 +585,11 @@ export const calculateDeviationScores =
 export const calculateRank =
   onCall(
     {
-      timeoutSeconds: 540,
-      memory: "1GiB",
+      timeoutSeconds:
+        540,
+
+      memory:
+        "1GiB",
     },
     async (request) => {
       if (!request.auth) {
@@ -338,8 +612,9 @@ export const calculateRank =
         request.data?.testId;
 
       if (
-        typeof testId !== "string" ||
-        testId.trim() === ""
+        typeof testId !==
+          "string" ||
+        !testId.trim()
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -360,8 +635,11 @@ export const calculateRank =
 export const executeCsvImport =
   onCall(
     {
-      timeoutSeconds: 540,
-      memory: "1GiB",
+      timeoutSeconds:
+        540,
+
+      memory:
+        "1GiB",
     },
     async (request) => {
       if (!request.auth) {
@@ -386,8 +664,9 @@ export const executeCsvImport =
         request.data?.type;
 
       if (
-        typeof importId !== "string" ||
-        importId.trim() === ""
+        typeof importId !==
+          "string" ||
+        !importId.trim()
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -396,9 +675,12 @@ export const executeCsvImport =
       }
 
       if (
-        type !== "students" &&
-        type !== "scores" &&
-        type !== "retests"
+        type !==
+          "students" &&
+        type !==
+          "scores" &&
+        type !==
+          "retests"
       ) {
         throw new HttpsError(
           "invalid-argument",
@@ -458,3 +740,43 @@ export {
   generateManagedPasswordResetLink,
   updateManagedUserRole,
 };
+
+/* =========================================================
+   ファイル拡張子
+   ========================================================= */
+
+function getFileExtension(
+  fileName: string,
+  contentType: string
+): string {
+  const extension =
+    fileName
+      .split(".")
+      .pop()
+      ?.toLowerCase();
+
+  if (
+    extension === "jpg" ||
+    extension === "jpeg" ||
+    extension === "png" ||
+    extension === "pdf"
+  ) {
+    return extension;
+  }
+
+  if (
+    contentType ===
+    "image/jpeg"
+  ) {
+    return "jpg";
+  }
+
+  if (
+    contentType ===
+    "image/png"
+  ) {
+    return "png";
+  }
+
+  return "pdf";
+}
