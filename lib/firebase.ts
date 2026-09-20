@@ -12,14 +12,6 @@ import {
   getFirestore,
 } from "firebase/firestore";
 
-import {
-  getStorage,
-} from "firebase/storage";
-
-/* =========================================================
-   Firebase設定
-   ========================================================= */
-
 const firebaseConfig = {
   apiKey:
     process.env
@@ -33,10 +25,6 @@ const firebaseConfig = {
     process.env
       .NEXT_PUBLIC_FIREBASE_PROJECT_ID,
 
-  storageBucket:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-
   messagingSenderId:
     process.env
       .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
@@ -46,62 +34,6 @@ const firebaseConfig = {
       .NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-/* =========================================================
-   設定値チェック
-   ========================================================= */
-
-const requiredConfig = [
-  [
-    "NEXT_PUBLIC_FIREBASE_API_KEY",
-    firebaseConfig.apiKey,
-  ],
-  [
-    "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
-    firebaseConfig.authDomain,
-  ],
-  [
-    "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
-    firebaseConfig.projectId,
-  ],
-  [
-    "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
-    firebaseConfig.storageBucket,
-  ],
-  [
-    "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
-    firebaseConfig.messagingSenderId,
-  ],
-  [
-    "NEXT_PUBLIC_FIREBASE_APP_ID",
-    firebaseConfig.appId,
-  ],
-] as const;
-
-const missingConfig =
-  requiredConfig
-    .filter(
-      ([, value]) =>
-        !value
-    )
-    .map(
-      ([name]) => name
-    );
-
-if (
-  missingConfig.length > 0 &&
-  typeof window !==
-    "undefined"
-) {
-  console.error(
-    "Firebase設定が不足しています:",
-    missingConfig
-  );
-}
-
-/* =========================================================
-   Firebase App
-   ========================================================= */
-
 export const app =
   getApps().length > 0
     ? getApp()
@@ -109,29 +41,10 @@ export const app =
         firebaseConfig
       );
 
-/* =========================================================
-   Firebase Authentication
-   ========================================================= */
-
 export const auth =
   getAuth(app);
 
-/* =========================================================
-   Cloud Firestore
-   ========================================================= */
-
 export const db =
   getFirestore(app);
-
-/* =========================================================
-   Firebase Storage
-   ========================================================= */
-
-export const storage =
-  getStorage(app);
-
-/* =========================================================
-   Default
-   ========================================================= */
 
 export default app;
