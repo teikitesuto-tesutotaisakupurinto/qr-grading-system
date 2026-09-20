@@ -4,61 +4,46 @@ import {
 } from "@supabase/supabase-js";
 
 /* =========================================================
-   Supabase設定
+   Supabase
    ========================================================= */
 
-const supabaseUrl =
-  process.env.SUPABASE_URL;
-
-const supabaseSecretKey =
-  process.env.SUPABASE_SECRET_KEY;
-
-const ANSWERS_BUCKET =
-  "answers";
-
-/* =========================================================
-   設定チェック
-   ========================================================= */
-
-function getConfig() {
-  if (
-    !supabaseUrl ||
-    !supabaseSecretKey
-  ) {
-    throw new Error(
-      "Supabase Functions用の環境変数が設定されていません。"
-    );
-  }
-
-  return {
-    url:
-      supabaseUrl,
-
-    secretKey:
-      supabaseSecretKey,
-  };
-}
-
-/* =========================================================
-   Admin Client
-   ========================================================= */
+const ANSWERS_BUCKET = "answers";
 
 let client:
   | SupabaseClient
   | null = null;
+
+/* =========================================================
+   Admin Client
+   ========================================================= */
 
 export function getSupabaseAdmin(): SupabaseClient {
   if (client) {
     return client;
   }
 
-  const config =
-    getConfig();
+  const url =
+    process.env.SUPABASE_URL;
+
+  const secretKey =
+    process.env.SUPABASE_SECRET_KEY;
+
+  if (!url) {
+    throw new Error(
+      "SUPABASE_URL が設定されていません。"
+    );
+  }
+
+  if (!secretKey) {
+    throw new Error(
+      "SUPABASE_SECRET_KEY が設定されていません。"
+    );
+  }
 
   client =
     createClient(
-      config.url,
-      config.secretKey,
+      url,
+      secretKey,
       {
         auth: {
           persistSession:
@@ -77,7 +62,7 @@ export function getSupabaseAdmin(): SupabaseClient {
 }
 
 /* =========================================================
-   答案アップロード
+   答案ファイル保存
    ========================================================= */
 
 export async function uploadAnswerFile(
@@ -118,7 +103,7 @@ export async function uploadAnswerFile(
 }
 
 /* =========================================================
-   答案ダウンロード
+   答案ファイル取得
    ========================================================= */
 
 export async function downloadAnswerFile(
@@ -153,7 +138,7 @@ export async function downloadAnswerFile(
 }
 
 /* =========================================================
-   署名付きダウンロードURL
+   署名付き閲覧URL
    ========================================================= */
 
 export async function createAnswerSignedUrl(
@@ -181,8 +166,7 @@ export async function createAnswerSignedUrl(
     );
   }
 
-  return result.data
-    .signedUrl;
+  return result.data.signedUrl;
 }
 
 /* =========================================================
@@ -225,20 +209,13 @@ export async function answerFileExists(
   const supabase =
     getSupabaseAdmin();
 
-  /*
-   * Storage APIにはオブジェクト単体の
-   * existsがないため、親ディレクトリの
-   *一覧から確認する。
-   */
   const parts =
     fileKey.split("/");
 
   const fileName =
     parts.pop();
 
-  if (
-    !fileName
-  ) {
+  if (!fileName) {
     return false;
   }
 
@@ -255,6 +232,7 @@ export async function answerFileExists(
         {
           search:
             fileName,
+
           limit: 10,
         }
       );
@@ -272,30 +250,4 @@ export async function answerFileExists(
       file.name ===
       fileName
   );
-}
-
-/* =========================================================
-   Key生成
-   ========================================================= */
-
-export function createAnswerFileKey(
-  testId: string,
-  subjectId: string,
-  answerId: string,
-  extension: string
-): string {
-  const safeExtension =
-    extension
-      .replace(
-        /[^a-zA-Z0-9]/g,
-        ""
-      )
-      .toLowerCase();
-
-  return [
-    "answers",
-    testId,
-    subjectId,
-    `${answerId}.${safeExtension}`,
-  ].join("/");
 }
