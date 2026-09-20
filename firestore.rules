@@ -1,0 +1,545 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* =====================================================
+       共通関数
+       ===================================================== */
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function hasRole(role) {
+      return signedIn()
+        && userData().role == role;
+    }
+
+    function hasAnyRole(roles) {
+      return signedIn()
+        && userData().role in roles;
+    }
+
+    function isHeadOffice() {
+      return hasRole('本部管理者');
+    }
+
+    function isManager() {
+      return hasAnyRole([
+        '本部管理者',
+        '校舎管理者'
+      ]);
+    }
+
+    function isGrader() {
+      return hasAnyRole([
+        '本部管理者',
+        '校舎管理者',
+        '講師'
+      ]);
+    }
+
+    function isStudent() {
+      return hasRole('生徒');
+    }
+
+    function belongsToSchool(schoolId) {
+      return isHeadOffice()
+        || (
+          signedIn()
+          && schoolId in userData().schoolIds
+        );
+    }
+
+    function isOwnStudent(studentNumber) {
+      return signedIn()
+        && userData().studentNumber == studentNumber;
+    }
+
+    function canReadStudent(studentNumber) {
+      return isManager()
+        || (
+          isGrader()
+          && belongsToSchool(
+            get(
+              /databases/$(database)/documents/students/$(studentNumber)
+            ).data.schoolId
+          )
+        )
+        || isOwnStudent(studentNumber);
+    }
+
+    function canWriteStudent(studentNumber) {
+      return isManager()
+        || (
+          isGrader()
+          && belongsToSchool(
+            get(
+              /databases/$(database)/documents/students/$(studentNumber)
+            ).data.schoolId
+          )
+        );
+    }
+
+    function canReadAnswer(answerId) {
+      let answer =
+        get(
+          /databases/$(database)/documents/answers/$(answerId)
+        ).data;
+
+      return isManager()
+        || (
+          isGrader()
+          && belongsToSchool(
+            get(
+              /databases/$(database)/documents/students/$(answer.studentNumber)
+            ).data.schoolId
+          )
+        )
+        || (
+          isStudent()
+          && answer.studentNumber ==
+             userData().studentNumber
+        );
+    }
+
+    function canWriteAnswer(answerId) {
+      let answer =
+        get(
+          /databases/$(database)/documents/answers/$(answerId)
+        ).data;
+
+      return isManager()
+        || (
+          isGrader()
+          && belongsToSchool(
+            get(
+              /databases/$(database)/documents/students/$(answer.studentNumber)
+            ).data.schoolId
+          )
+        );
+    }
+
+    /* =====================================================
+       users
+       ===================================================== */
+
+    match /users/{uid} {
+
+      allow read:
+        if signedIn()
+        && (
+          request.auth.uid == uid
+          || isHeadOffice()
+        );
+
+      allow create:
+        if isHeadOffice();
+
+      allow update:
+        if isHeadOffice()
+        || request.auth.uid == uid;
+
+      allow delete:
+        if isHeadOffice();
+    }
+
+    /* =====================================================
+       schools
+       ===================================================== */
+
+    match /schools/{schoolId} {
+
+      allow read:
+        if signedIn()
+        && (
+          isHeadOffice()
+          || belongsToSchool(schoolId)
+        );
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       classes
+       ===================================================== */
+
+    match /classes/{classId} {
+
+      allow read:
+        if signedIn();
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       students
+       ===================================================== */
+
+    match /students/{studentNumber} {
+
+      allow read:
+        if canReadStudent(studentNumber);
+
+      allow create:
+        if isManager();
+
+      allow update:
+        if canWriteStudent(studentNumber);
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       QR
+       ===================================================== */
+
+    match /qrCodes/{qrId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       tests
+       ===================================================== */
+
+    match /tests/{testId} {
+
+      allow read:
+        if signedIn();
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       testSubjects
+       ===================================================== */
+
+    match /testSubjects/{subjectId} {
+
+      allow read:
+        if signedIn();
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       testSections
+       ===================================================== */
+
+    match /testSections/{sectionId} {
+
+      allow read:
+        if signedIn();
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       questions
+       ===================================================== */
+
+    match /questions/{questionId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update, delete:
+        if isGrader();
+    }
+
+    /* =====================================================
+       answerRegions
+       ===================================================== */
+
+    match /answerRegions/{regionId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update, delete:
+        if isGrader();
+    }
+
+    /* =====================================================
+       answers
+       ===================================================== */
+
+    match /answers/{answerId} {
+
+      allow read:
+        if canReadAnswer(answerId);
+
+      allow create:
+        if isGrader();
+
+      allow update:
+        if canWriteAnswer(answerId);
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       gradingResults
+       ===================================================== */
+
+    match /gradingResults/{resultId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isGrader();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       firstReviews
+       ===================================================== */
+
+    match /firstReviews/{reviewId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isGrader();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       secondReviews
+       ===================================================== */
+
+    match /secondReviews/{reviewId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isGrader();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       scores
+       ===================================================== */
+
+    match /scores/{scoreId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isGrader();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       deviationScores
+       ===================================================== */
+
+    match /deviationScores/{scoreId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       rankings
+       ===================================================== */
+
+    match /rankings/{rankingId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       gradeReports
+       ===================================================== */
+
+    match /gradeReports/{reportId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       gradeReportTemplates
+       ===================================================== */
+
+    match /gradeReportTemplates/{templateId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       retests
+       ===================================================== */
+
+    match /retests/{retestId} {
+
+      allow read:
+        if isGrader();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       gradingJobs
+       ===================================================== */
+
+    match /gradingJobs/{jobId} {
+
+      allow read:
+        if isGrader();
+
+      allow create:
+        if isGrader();
+
+      allow update:
+        if isGrader();
+
+      allow delete:
+        if isManager();
+
+      match /chunks/{chunkId} {
+
+        allow read:
+          if isGrader();
+
+        allow write:
+          if isGrader();
+      }
+    }
+
+    /* =====================================================
+       csvImports
+       ===================================================== */
+
+    match /csvImports/{importId} {
+
+      allow read:
+        if isManager();
+
+      allow create, update:
+        if isManager();
+
+      allow delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       csvImportErrors
+       ===================================================== */
+
+    match /csvImportErrors/{errorId} {
+
+      allow read:
+        if isManager();
+
+      allow create:
+        if isManager();
+
+      allow update, delete:
+        if isManager();
+    }
+
+    /* =====================================================
+       systemSettings
+       ===================================================== */
+
+    match /systemSettings/{settingId} {
+
+      allow read:
+        if signedIn();
+
+      allow create, update, delete:
+        if isHeadOffice();
+    }
+
+    /* =====================================================
+       auditLogs
+       ===================================================== */
+
+    match /auditLogs/{logId} {
+
+      allow read:
+        if isManager();
+
+      /*
+       * 監査ログはクライアントから
+       * 自由に書き換えられないようにする。
+       */
+      allow create:
+        if false;
+
+      allow update, delete:
+        if false;
+    }
+
+    /* =====================================================
+       その他のドキュメントを拒否
+       ===================================================== */
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
