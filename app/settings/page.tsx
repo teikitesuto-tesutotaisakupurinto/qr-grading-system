@@ -7,37 +7,63 @@ import {
 } from "react";
 
 import {
-  doc,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-} from "firebase/firestore";
-
-import SchoolHeader from "@/components/SchoolHeader";
+  onAuthStateChanged,
+} from "firebase/auth";
 
 import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+
+import {
+  auth,
   db,
 } from "@/lib/firebase";
 
 import {
-  getCurrentUser,
-  type AppUser,
-} from "@/lib/auth";
-
-import {
-  getSupabase,
+  SCHOOL_ASSETS_BUCKET,
+  supabase,
 } from "@/lib/supabase";
 
-/* =========================================================
-   Settings
-   ========================================================= */
+type UserRole =
+  | "本部管理者"
+  | "校舎管理者"
+  | "講師"
+  | "生徒";
+
+type CurrentUser = {
+  uid: string;
+
+  name: string;
+
+  organizationId: string | null;
+
+  role: UserRole | null;
+
+  schoolIds: string[];
+};
+
+type School = {
+  id: string;
+
+  name: string;
+
+  logoPath: string;
+
+  logoUrl: string;
+
+  active: boolean;
+};
 
 type Settings = {
   schoolName: string;
 
   logoText: string;
-
-  logoUrl: string;
 
   defaultYear: string;
 
@@ -58,12 +84,10 @@ type Settings = {
   answerUploadImmediatelyVisible: boolean;
 };
 
-const defaultSettings: Settings = {
+const initialSettings: Settings = {
   schoolName: "○○塾",
 
   logoText: "塾ロゴ",
-
-  logoUrl: "",
 
   defaultYear: "2026",
 
@@ -91,236 +115,417 @@ const defaultSettings: Settings = {
     true,
 };
 
-/* =========================================================
-   Page
-   ========================================================= */
-
 export default function SettingsPage() {
   const [
-    user,
-    setUser,
-  ] = useState<AppUser | null>(
-    null
-  );
+    currentUser,
+    setCurrentUser,
+  ] =
+    useState<CurrentUser | null>(
+      null
+    );
 
   const [
     settings,
     setSettings,
-  ] = useState<Settings>(
-    defaultSettings
-  );
+  ] =
+    useState<Settings>(
+      initialSettings
+    );
+
+  const [
+    schools,
+    setSchools,
+  ] =
+    useState<School[]>([]);
+
+  const [
+    selectedSchoolId,
+    setSelectedSchoolId,
+  ] =
+    useState("");
+
+  const [
+    logoFile,
+    setLogoFile,
+  ] =
+    useState<File | null>(
+      null
+    );
+
+  const [
+    logoPreview,
+    setLogoPreview,
+  ] =
+    useState("");
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     saving,
     setSaving,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
-    uploadingLogo,
-    setUploadingLogo,
-  ] = useState(false);
-
-  const [
-    saved,
-    setSaved,
-  ] = useState(false);
+    logoSaving,
+    setLogoSaving,
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
-  /* =======================================================
-     schoolId
-     ======================================================= */
+  const [
+    message,
+    setMessage,
+  ] =
+    useState("");
 
-  const schoolId =
-    user?.schoolIds?.[0] ??
-    "";
-
-  /* =======================================================
-     初期読み込み
-     ======================================================= */
+  /* ========================================================
+     認証
+     ======================================================== */
 
   useEffect(() => {
-    let cancelled =
-      false;
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (firebaseUser) => {
+          if (!firebaseUser) {
+            setLoading(false);
 
-    async function load() {
-      try {
-        setLoading(true);
+            setError(
+              "ログイン状態を確認できません。"
+            );
 
-        setError("");
+            return;
+          }
 
-        const currentUser =
-          await getCurrentUser();
+          try {
+            const snapshot =
+              await getDocs(
+                query(
+                  collection(
+                    db,
+                    "users"
+                  ),
+                  where(
+                    "__name__",
+                    "==",
+                    firebaseUser.uid
+                  )
+                )
+              );
 
-        if (cancelled) {
-          return;
+            if (
+              snapshot.empty
+            ) {
+              setLoading(false);
+
+              setError(
+                "システムのユーザー情報が登録されていません。"
+              );
+
+              return;
+            }
+
+            const data =
+              snapshot.docs[0].data();
+
+            const role =
+              isUserRole(
+                data.role
+              )
+                ? data.role
+                : null;
+
+            setCurrentUser({
+              uid:
+                firebaseUser.uid,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
+
+              role,
+
+              schoolIds:
+                Array.isArray(
+                  data.schoolIds
+                )
+                  ? data.schoolIds.filter(
+                      (
+                        value
+                      ): value is string =>
+                        typeof value ===
+                        "string"
+                    )
+                  : [],
+            });
+          } catch (err) {
+            console.error(
+              err
+            );
+
+            setError(
+              getSafeErrorMessage(
+                err
+              )
+            );
+
+            setLoading(false);
+          }
         }
-
-        if (!currentUser) {
-          throw new Error(
-            "ログインしてください。"
-          );
-        }
-
-        setUser(
-          currentUser
-        );
-
-        const currentSchoolId =
-          currentUser.schoolIds?.[0] ??
-          "";
-
-        if (!currentSchoolId) {
-          throw new Error(
-            "所属校舎が設定されていません。"
-          );
-        }
-
-        const schoolSnapshot =
-          await getDoc(
-            doc(
-              db,
-              "schools",
-              currentSchoolId
-            )
-          );
-
-        if (
-          schoolSnapshot.exists()
-        ) {
-          const data =
-            schoolSnapshot.data();
-
-          const savedSettings =
-            data.settings;
-
-          setSettings({
-            ...defaultSettings,
-
-            schoolName:
-              typeof data.name ===
-              "string"
-                ? data.name
-                : defaultSettings.schoolName,
-
-            logoText:
-              typeof data.logoText ===
-              "string"
-                ? data.logoText
-                : defaultSettings.logoText,
-
-            logoUrl:
-              typeof data.logoUrl ===
-              "string"
-                ? data.logoUrl
-                : defaultSettings.logoUrl,
-
-            ...(savedSettings &&
-            typeof savedSettings ===
-              "object"
-              ? savedSettings
-              : {}),
-          });
-
-          return;
-        }
-
-        setSettings(
-          defaultSettings
-        );
-      } catch (
-        err
-      ) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "設定を読み込めませんでした。"
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void load();
+      );
 
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, []);
 
-  /* =======================================================
-     Update
-     ======================================================= */
+  /* ========================================================
+     校舎取得
+     ======================================================== */
 
-  function update<
+  useEffect(() => {
+    if (
+      !currentUser?.organizationId
+    ) {
+      return;
+    }
+
+    void loadSchools(
+      currentUser.organizationId
+    );
+  }, [
+    currentUser?.organizationId,
+  ]);
+
+  async function loadSchools(
+    organizationId: string
+  ) {
+    try {
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "schools"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        );
+
+      const loaded =
+        snapshot.docs.map(
+          (
+            item
+          ): School => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              logoPath:
+                typeof data.logoPath ===
+                "string"
+                  ? data.logoPath
+                  : "",
+
+              logoUrl:
+                typeof data.logoUrl ===
+                "string"
+                  ? data.logoUrl
+                  : "",
+
+              active:
+                data.active !==
+                false,
+            };
+          }
+        );
+
+      setSchools(
+        loaded
+      );
+
+      if (
+        loaded.length > 0 &&
+        !selectedSchoolId
+      ) {
+        const available =
+          getAvailableSchools(
+            loaded,
+            currentUser
+          );
+
+        if (
+          available.length > 0
+        ) {
+          setSelectedSchoolId(
+            available[0].id
+          );
+        }
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
+      );
+    }
+  }
+
+  /* ========================================================
+     設定更新
+     ======================================================== */
+
+  function updateSetting<
     K extends keyof Settings
   >(
     key: K,
     value: Settings[K]
   ) {
     setSettings(
-      (
-        current
-      ) => ({
+      (current) => ({
         ...current,
 
-        [key]: value,
+        [key]:
+          value,
       })
     );
 
-    setSaved(false);
+    setMessage("");
   }
 
-  /* =======================================================
-     Logo upload
-     ======================================================= */
+  /* ========================================================
+     設定保存
+     ======================================================== */
 
-  async function handleLogoChange(
-    event: ChangeEvent<HTMLInputElement>
-  ) {
-    const file =
-      event.target.files?.[0];
-
-    event.target.value =
-      "";
-
-    if (!file) {
-      return;
-    }
-
-    if (!schoolId) {
+  async function saveSettings() {
+    if (
+      !currentUser?.organizationId
+    ) {
       setError(
-        "所属校舎が設定されていません。"
+        "組織情報を確認できません。"
       );
 
       return;
     }
 
-    const allowedTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-    ];
+    if (
+      currentUser.role !==
+        "本部管理者" &&
+      currentUser.role !==
+        "校舎管理者"
+    ) {
+      setError(
+        "設定を変更する権限がありません。"
+      );
+
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      setError("");
+      setMessage("");
+
+      /*
+       * 現在の正式スキーマでは、
+       * organizationSettingsを使用。
+       */
+
+      const settingsRef =
+        doc(
+          db,
+          "organizations",
+          currentUser.organizationId
+        );
+
+      await updateDoc(
+        settingsRef,
+        {
+          settings: {
+            ...settings,
+          },
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        "設定を保存しました。"
+      );
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /* ========================================================
+     ロゴ選択
+     ======================================================== */
+
+  function handleLogoChange(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const file =
+      event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
 
     if (
-      !allowedTypes.includes(
-        file.type
+      !file.type.startsWith(
+        "image/"
       )
     ) {
       setError(
-        "PNG・JPG・WebPのみ使用できます。"
+        "画像ファイルを選択してください。"
       );
 
       return;
@@ -337,44 +542,107 @@ export default function SettingsPage() {
       return;
     }
 
-    try {
-      setUploadingLogo(
-        true
+    setLogoFile(
+      file
+    );
+
+    const url =
+      URL.createObjectURL(
+        file
       );
 
+    setLogoPreview(
+      url
+    );
+
+    setError("");
+  }
+
+  /* ========================================================
+     ロゴアップロード
+     ======================================================== */
+
+  async function uploadLogo() {
+    if (
+      !currentUser?.organizationId
+    ) {
+      setError(
+        "組織情報を確認できません。"
+      );
+
+      return;
+    }
+
+    if (
+      !selectedSchoolId
+    ) {
+      setError(
+        "校舎を選択してください。"
+      );
+
+      return;
+    }
+
+    if (!logoFile) {
+      setError(
+        "ロゴ画像を選択してください。"
+      );
+
+      return;
+    }
+
+    if (
+      currentUser.role !==
+        "本部管理者" &&
+      currentUser.role !==
+        "校舎管理者"
+    ) {
+      setError(
+        "ロゴを変更する権限がありません。"
+      );
+
+      return;
+    }
+
+    try {
+      setLogoSaving(true);
+
       setError("");
+      setMessage("");
 
-      setSaved(false);
-
-      const supabase =
-        getSupabase();
+      if (!supabase) {
+        throw new Error(
+          "Storageに接続できません。"
+        );
+      }
 
       const extension =
-        file.type ===
-        "image/png"
-          ? "png"
-          : file.type ===
-            "image/webp"
-          ? "webp"
-          : "jpg";
+        getImageExtension(
+          logoFile
+        );
 
       const path =
-        `${schoolId}/logo.${extension}`;
+        `${currentUser.organizationId}/` +
+        `${selectedSchoolId}/` +
+        `logo.${extension}`;
 
-      const upload =
+      /*
+       * 既存ロゴを上書き。
+       */
+      const uploadResult =
         await supabase.storage
           .from(
-            "school-assets"
+            SCHOOL_ASSETS_BUCKET
           )
           .upload(
             path,
-            file,
+            logoFile,
             {
               upsert:
                 true,
 
               contentType:
-                file.type,
+                logoFile.type,
 
               cacheControl:
                 "3600",
@@ -382,257 +650,238 @@ export default function SettingsPage() {
           );
 
       if (
-        upload.error
+        uploadResult.error
       ) {
+        console.error(
+          uploadResult.error
+        );
+
         throw new Error(
-          `ロゴのアップロードに失敗しました: ${upload.error.message}`
+          "ロゴ画像を保存できませんでした。"
         );
       }
 
-      const publicUrl =
+      /*
+       * 現在はStorage URLを取得。
+       *
+       * bucketをPrivateにする場合は、
+       * 後で署名URL方式へ変更する。
+       */
+      const publicResult =
         supabase.storage
           .from(
-            "school-assets"
+            SCHOOL_ASSETS_BUCKET
           )
           .getPublicUrl(
             path
-          )
-          .data
+          );
+
+      const logoUrl =
+        publicResult.data
           .publicUrl;
 
-      setSettings(
-        (
-          current
-        ) => ({
-          ...current,
-
-          logoUrl:
-            publicUrl,
-        })
-      );
-    } catch (
-      err
-    ) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "ロゴのアップロードに失敗しました。"
-      );
-    } finally {
-      setUploadingLogo(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Logo delete
-     ======================================================= */
-
-  async function removeLogo() {
-    if (!schoolId) {
-      return;
-    }
-
-    try {
-      setUploadingLogo(
-        true
-      );
-
-      setError("");
-
-      const supabase =
-        getSupabase();
-
-      await supabase.storage
-        .from(
-          "school-assets"
-        )
-        .remove([
-          `${schoolId}/logo.png`,
-          `${schoolId}/logo.jpg`,
-          `${schoolId}/logo.webp`,
-        ]);
-
-      setSettings(
-        (
-          current
-        ) => ({
-          ...current,
-
-          logoUrl: "",
-        })
-      );
-
-      setSaved(false);
-    } catch (
-      err
-    ) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "ロゴの削除に失敗しました。"
-      );
-    } finally {
-      setUploadingLogo(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Save
-     ======================================================= */
-
-  async function saveSettings() {
-    if (!schoolId) {
-      setError(
-        "所属校舎が設定されていません。"
-      );
-
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      setSaved(false);
-
-      setError("");
-
-      await setDoc(
+      /*
+       * FirestoreにパスとURLを保存。
+       */
+      await updateDoc(
         doc(
           db,
           "schools",
-          schoolId
+          selectedSchoolId
         ),
         {
-          name:
-            settings.schoolName,
+          logoPath:
+            path,
 
-          logoText:
-            settings.logoText,
-
-          logoUrl:
-            settings.logoUrl,
-
-          settings: {
-            defaultYear:
-              settings.defaultYear,
-
-            studentNumberDigits:
-              settings.studentNumberDigits,
-
-            allowStudentAnswerViewBeforeGrading:
-              settings.allowStudentAnswerViewBeforeGrading,
-
-            requireSecondReview:
-              settings.requireSecondReview,
-
-            hideStudentIdentityInCrossSection:
-              settings.hideStudentIdentityInCrossSection,
-
-            enableDeviationScore:
-              settings.enableDeviationScore,
-
-            enableRanking:
-              settings.enableRanking,
-
-            enableRetest:
-              settings.enableRetest,
-
-            answerUploadImmediatelyVisible:
-              settings.answerUploadImmediatelyVisible,
-          },
+          logoUrl,
 
           updatedAt:
             serverTimestamp(),
-        },
-        {
-          merge:
-            true,
         }
       );
 
-      setSaved(true);
-    } catch (
-      err
-    ) {
+      setSchools(
+        (current) =>
+          current.map(
+            (
+              school
+            ) =>
+              school.id ===
+              selectedSchoolId
+                ? {
+                    ...school,
+
+                    logoPath:
+                      path,
+
+                    logoUrl,
+                  }
+                : school
+          )
+      );
+
+      setLogoFile(
+        null
+      );
+
+      setLogoPreview(
+        logoUrl
+      );
+
+      setMessage(
+        "塾ロゴを保存しました。"
+      );
+    } catch (err) {
+      console.error(
+        err
+      );
+
       setError(
         err instanceof Error
           ? err.message
-          : "設定の保存に失敗しました。"
+          : "ロゴを保存できませんでした。"
       );
     } finally {
-      setSaving(false);
+      setLogoSaving(false);
     }
   }
 
-  /* =======================================================
-     Loading
-     ======================================================= */
+  /* ========================================================
+     選択校舎
+     ======================================================== */
 
-  if (loading) {
+  const selectedSchool =
+    schools.find(
+      (
+        school
+      ) =>
+        school.id ===
+        selectedSchoolId
+    );
+
+  const availableSchools =
+    getAvailableSchools(
+      schools,
+      currentUser
+    );
+
+  /* ========================================================
+     権限
+     ======================================================== */
+
+  if (
+    currentUser &&
+    currentUser.role !==
+      "本部管理者" &&
+    currentUser.role !==
+      "校舎管理者"
+  ) {
     return (
-      <main className="page">
-        <SchoolHeader
-          title="設定"
-        />
+      <main
+        style={
+          pageStyle
+        }
+      >
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <h1>
+            設定
+          </h1>
 
-        <section className="content">
-          <div className="stepCard">
-            設定を読み込んでいます...
-          </div>
+          <p>
+            この機能を利用する権限がありません。
+          </p>
         </section>
       </main>
     );
   }
 
-  /* =======================================================
-     Render
-     ======================================================= */
-
   return (
-    <main className="page">
-      <SchoolHeader
-        title="設定"
-      />
+    <main
+      style={
+        pageStyle
+      }
+    >
+      <div
+        style={{
+          maxWidth:
+            1100,
 
-      <section className="content">
-        <div className="pageHeader">
-          <div>
-            <h1>
-              設定
-            </h1>
+          margin:
+            "0 auto",
+        }}
+      >
+        <header
+          style={{
+            marginBottom:
+              28,
+          }}
+        >
+          <h1
+            style={{
+              margin:
+                "0 0 8px",
+            }}
+          >
+            設定
+          </h1>
 
-            <p>
-              システム全体の基本設定を管理します。
-            </p>
-          </div>
-        </div>
+          <p
+            style={{
+              margin: 0,
+
+              color:
+                "#666",
+            }}
+          >
+            答案採点システムの基本設定を管理します。
+          </p>
+        </header>
 
         {error && (
           <div
-            className="selectionPanel"
-            style={{
-              marginBottom:
-                20,
-            }}
+            style={
+              errorStyle
+            }
           >
             {error}
           </div>
         )}
 
-        {/* =================================================
-            塾基本情報
-            ================================================= */}
+        {message && (
+          <div
+            style={
+              successStyle
+            }
+          >
+            {message}
+          </div>
+        )}
 
-        <section className="stepCard">
+        {/* ==================================================
+            塾基本情報
+            ================================================== */}
+
+        <section
+          style={{
+            ...cardStyle,
+
+            marginBottom:
+              20,
+          }}
+        >
           <h2>
             塾基本情報
           </h2>
 
-          <label>
+          <label
+            style={
+              labelStyle
+            }
+          >
             塾名
 
             <input
@@ -642,50 +891,22 @@ export default function SettingsPage() {
               onChange={(
                 event
               ) =>
-                update(
+                updateSetting(
                   "schoolName",
                   event.target
                     .value
                 )
               }
-            />
-          </label>
-
-          <label
-            style={{
-              display:
-                "block",
-
-              marginTop:
-                16,
-            }}
-          >
-            ロゴ表示名
-
-            <input
-              value={
-                settings.logoText
-              }
-              onChange={(
-                event
-              ) =>
-                update(
-                  "logoText",
-                  event.target
-                    .value
-                )
+              style={
+                inputStyle
               }
             />
           </label>
 
           <label
-            style={{
-              display:
-                "block",
-
-              marginTop:
-                16,
-            }}
+            style={
+              labelStyle
+            }
           >
             基準年度
 
@@ -696,28 +917,33 @@ export default function SettingsPage() {
               onChange={(
                 event
               ) =>
-                update(
+                updateSetting(
                   "defaultYear",
                   event.target
                     .value
                 )
               }
+              style={
+                inputStyle
+              }
             />
           </label>
         </section>
 
-        {/* =================================================
-            塾ロゴ
-            ================================================= */}
+        {/* ==================================================
+            校舎ロゴ
+            ================================================== */}
 
         <section
-          className="stepCard"
           style={{
-            marginTop: 20,
+            ...cardStyle,
+
+            marginBottom:
+              20,
           }}
         >
           <h2>
-            塾ロゴ
+            校舎ロゴ
           </h2>
 
           <p
@@ -725,35 +951,107 @@ export default function SettingsPage() {
               color:
                 "#666",
 
+              fontSize:
+                13,
+
               lineHeight:
                 1.7,
             }}
           >
-            QRシール発行シートの左上に表示するロゴです。
+            QRシールの左上に表示するロゴを校舎ごとに管理します。
           </p>
 
-          {settings.logoUrl ? (
+          <label
+            style={
+              labelStyle
+            }
+          >
+            校舎
+
+            <select
+              value={
+                selectedSchoolId
+              }
+              onChange={(
+                event
+              ) => {
+                setSelectedSchoolId(
+                  event.target
+                    .value
+                );
+
+                setLogoFile(
+                  null
+                );
+
+                setLogoPreview(
+                  ""
+                );
+              }}
+              style={
+                inputStyle
+              }
+            >
+              <option value="">
+                校舎を選択してください
+              </option>
+
+              {availableSchools.map(
+                (
+                  school
+                ) => (
+                  <option
+                    key={
+                      school.id
+                    }
+                    value={
+                      school.id
+                    }
+                  >
+                    {
+                      school.name
+                    }
+                  </option>
+                )
+              )}
+            </select>
+          </label>
+
+          {selectedSchool && (
             <div
               style={{
+                marginTop:
+                  24,
+
                 display:
-                  "flex",
+                  "grid",
+
+                gridTemplateColumns:
+                  "220px 1fr",
+
+                gap:
+                  28,
 
                 alignItems:
-                  "center",
-
-                gap: 20,
-
-                marginTop:
-                  16,
+                  "start",
               }}
             >
               <div
                 style={{
                   width:
-                    240,
+                    220,
 
                   height:
-                    100,
+                    140,
+
+                  border:
+                    "1px solid #ddd",
+
+                  borderRadius:
+                    10,
+
+                  background:
+                    "#fafafa",
 
                   display:
                     "flex",
@@ -764,172 +1062,197 @@ export default function SettingsPage() {
                   justifyContent:
                     "center",
 
-                  border:
-                    "1px solid #ddd",
-
-                  background:
-                    "#fff",
-
                   overflow:
                     "hidden",
                 }}
               >
-                <img
-                  src={
-                    settings.logoUrl
-                  }
-                  alt="塾ロゴ"
-                  style={{
-                    maxWidth:
-                      "100%",
+                {logoPreview ||
+                selectedSchool.logoUrl ? (
+                  <img
+                    src={
+                      logoPreview ||
+                      selectedSchool.logoUrl
+                    }
+                    alt="校舎ロゴ"
+                    style={{
+                      maxWidth:
+                        "90%",
 
-                    maxHeight:
-                      "100%",
+                      maxHeight:
+                        "90%",
 
-                    objectFit:
-                      "contain",
-                  }}
-                />
+                      objectFit:
+                        "contain",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      color:
+                        "#999",
+
+                      fontSize:
+                        13,
+                    }}
+                  >
+                    ロゴ未登録
+                  </span>
+                )}
               </div>
 
-              <button
-                type="button"
-                className="secondaryButton"
-                disabled={
-                  uploadingLogo
-                }
-                onClick={
-                  removeLogo
-                }
-              >
-                ロゴを削除
-              </button>
-            </div>
-          ) : (
-            <div
-              style={{
-                marginTop:
-                  16,
+              <div>
+                <label
+                  style={
+                    labelStyle
+                  }
+                >
+                  ロゴ画像
 
-                width:
-                  240,
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange={
+                      handleLogoChange
+                    }
+                    style={{
+                      display:
+                        "block",
 
-                height:
-                  100,
+                      marginTop:
+                        8,
+                    }}
+                  />
+                </label>
 
-                display:
-                  "flex",
+                <p
+                  style={{
+                    marginTop:
+                      12,
 
-                alignItems:
-                  "center",
+                    color:
+                      "#777",
 
-                justifyContent:
-                  "center",
+                    fontSize:
+                      12,
 
-                border:
-                  "1px dashed #aaa",
+                    lineHeight:
+                      1.7,
+                  }}
+                >
+                  PNG・JPEG・WebP・SVGに対応。
+                  <br />
+                  最大5MB。
+                </p>
 
-                color:
-                  "#777",
-              }}
-            >
-              ロゴ未登録
+                <button
+                  type="button"
+                  disabled={
+                    logoSaving ||
+                    !logoFile
+                  }
+                  onClick={
+                    uploadLogo
+                  }
+                  style={{
+                    marginTop:
+                      12,
+
+                    padding:
+                      "10px 18px",
+
+                    border:
+                      "none",
+
+                    borderRadius:
+                      7,
+
+                    background:
+                      "#111",
+
+                    color:
+                      "#fff",
+
+                    fontWeight:
+                      600,
+
+                    cursor:
+                      logoSaving ||
+                      !logoFile
+                        ? "default"
+                        : "pointer",
+
+                    opacity:
+                      logoSaving ||
+                      !logoFile
+                        ? 0.5
+                        : 1,
+                  }}
+                >
+                  {logoSaving
+                    ? "保存中..."
+                    : "ロゴを保存"}
+                </button>
+              </div>
             </div>
           )}
-
-          <label
-            className="secondaryButton"
-            style={{
-              display:
-                "inline-block",
-
-              marginTop:
-                16,
-
-              cursor:
-                uploadingLogo
-                  ? "default"
-                  : "pointer",
-
-              opacity:
-                uploadingLogo
-                  ? 0.6
-                  : 1,
-            }}
-          >
-            {uploadingLogo
-              ? "処理中..."
-              : "ロゴ画像を選択"}
-
-            <input
-              type="file"
-              hidden
-              disabled={
-                uploadingLogo
-              }
-              accept="image/png,image/jpeg,image/webp"
-              onChange={
-                handleLogoChange
-              }
-            />
-          </label>
-
-          <p
-            style={{
-              marginTop:
-                10,
-
-              color:
-                "#777",
-
-              fontSize:
-                13,
-            }}
-          >
-            PNG・JPG・WebP / 5MB以下
-          </p>
         </section>
 
-        {/* =================================================
+        {/* ==================================================
             生徒番号
-            ================================================= */}
+            ================================================== */}
 
         <section
-          className="stepCard"
           style={{
-            marginTop: 20,
+            ...cardStyle,
+
+            marginBottom:
+              20,
           }}
         >
           <h2>
             生徒番号
           </h2>
 
-          <div className="selectionPanel">
+          <div
+            style={{
+              padding:
+                14,
+
+              background:
+                "#f7f7f7",
+
+              borderRadius:
+                8,
+            }}
+          >
             <strong>
-              桁数
+              6桁
             </strong>
 
-            <span>
-              {
-                settings.studentNumberDigits
-              }
-              桁
+            <span
+              style={{
+                marginLeft:
+                  12,
+
+                color:
+                  "#666",
+              }}
+            >
+              数字のみで発行します。
             </span>
           </div>
-
-          <p>
-            生徒番号は6桁の数字で管理します。
-          </p>
         </section>
 
-        {/* =================================================
+        {/* ==================================================
             答案・採点
-            ================================================= */}
+            ================================================== */}
 
         <section
-          className="stepCard"
           style={{
-            marginTop: 20,
+            ...cardStyle,
+
+            marginBottom:
+              20,
           }}
         >
           <h2>
@@ -944,7 +1267,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "answerUploadImmediatelyVisible",
                 value
               )
@@ -959,7 +1282,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "allowStudentAnswerViewBeforeGrading",
                 value
               )
@@ -974,7 +1297,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "requireSecondReview",
                 value
               )
@@ -989,7 +1312,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "hideStudentIdentityInCrossSection",
                 value
               )
@@ -997,14 +1320,16 @@ export default function SettingsPage() {
           />
         </section>
 
-        {/* =================================================
+        {/* ==================================================
             成績
-            ================================================= */}
+            ================================================== */}
 
         <section
-          className="stepCard"
           style={{
-            marginTop: 20,
+            ...cardStyle,
+
+            marginBottom:
+              20,
           }}
         >
           <h2>
@@ -1019,7 +1344,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "enableDeviationScore",
                 value
               )
@@ -1034,7 +1359,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "enableRanking",
                 value
               )
@@ -1049,7 +1374,7 @@ export default function SettingsPage() {
             onChange={(
               value
             ) =>
-              update(
+              updateSetting(
                 "enableRetest",
                 value
               )
@@ -1057,51 +1382,59 @@ export default function SettingsPage() {
           />
         </section>
 
-        {/* =================================================
-            Save
-            ================================================= */}
+        {/* ==================================================
+            保存
+            ================================================== */}
 
         <section
-          className="stepCard"
-          style={{
-            marginTop: 20,
-          }}
+          style={
+            cardStyle
+          }
         >
-          <h2>
-            保存
-          </h2>
-
           <button
             type="button"
-            className="primaryButton"
             disabled={
-              saving ||
-              uploadingLogo
+              saving
             }
             onClick={
               saveSettings
             }
+            style={{
+              padding:
+                "12px 24px",
+
+              border:
+                "none",
+
+              borderRadius:
+                7,
+
+              background:
+                "#111",
+
+              color:
+                "#fff",
+
+              fontWeight:
+                600,
+
+              cursor:
+                saving
+                  ? "default"
+                  : "pointer",
+
+              opacity:
+                saving
+                  ? 0.6
+                  : 1,
+            }}
           >
             {saving
               ? "保存中..."
               : "設定を保存"}
           </button>
-
-          {saved && (
-            <p
-              style={{
-                marginTop:
-                  12,
-
-                color:
-                  "#555",
-              }}
-            >
-              設定を保存しました。
-            </p>
-          )}
         </section>
-      </section>
+      </div>
     </main>
   );
 }
@@ -1110,7 +1443,11 @@ export default function SettingsPage() {
    Toggle
    ========================================================= */
 
-type SettingToggleProps = {
+function SettingToggle({
+  label,
+  checked,
+  onChange,
+}: {
   label: string;
 
   checked: boolean;
@@ -1118,13 +1455,7 @@ type SettingToggleProps = {
   onChange: (
     value: boolean
   ) => void;
-};
-
-function SettingToggle({
-  label,
-  checked,
-  onChange,
-}: SettingToggleProps) {
+}) {
   return (
     <label
       style={{
@@ -1134,16 +1465,17 @@ function SettingToggle({
         alignItems:
           "center",
 
-        gap: 10,
+        gap:
+          10,
 
         padding:
-          "12px 0",
-
-        cursor:
-          "pointer",
+          "13px 0",
 
         borderBottom:
           "1px solid #eee",
+
+        cursor:
+          "pointer",
       }}
     >
       <input
@@ -1167,3 +1499,215 @@ function SettingToggle({
     </label>
   );
 }
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+function getAvailableSchools(
+  schools: School[],
+  user: CurrentUser | null
+) {
+  if (!user) {
+    return [];
+  }
+
+  const activeSchools =
+    schools.filter(
+      (
+        school
+      ) =>
+        school.active
+    );
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return activeSchools;
+  }
+
+  return activeSchools.filter(
+    (
+      school
+    ) =>
+      user.schoolIds.includes(
+        school.id
+      )
+  );
+}
+
+function getImageExtension(
+  file: File
+) {
+  switch (
+    file.type
+  ) {
+    case "image/png":
+      return "png";
+
+    case "image/jpeg":
+      return "jpg";
+
+    case "image/webp":
+      return "webp";
+
+    case "image/svg+xml":
+      return "svg";
+
+    default:
+      return "png";
+  }
+}
+
+function getSafeErrorMessage(
+  error: unknown
+) {
+  const firebaseError =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    firebaseError?.code
+  ) {
+    case "permission-denied":
+      return "この操作を行う権限がありません。";
+
+    case "unauthenticated":
+      return "ログイン状態を確認できません。";
+
+    default:
+      return "設定を保存できませんでした。";
+  }
+}
+
+/* =========================================================
+   Styles
+   ========================================================= */
+
+const pageStyle:
+  React.CSSProperties = {
+    minHeight:
+      "100vh",
+
+    padding:
+      32,
+
+    background:
+      "#f5f6f8",
+  };
+
+const cardStyle:
+  React.CSSProperties = {
+    padding:
+      24,
+
+    background:
+      "#fff",
+
+    border:
+      "1px solid #e1e4e8",
+
+    borderRadius:
+      12,
+  };
+
+const labelStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    marginTop:
+      18,
+
+    fontWeight:
+      600,
+  };
+
+const inputStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    width:
+      "100%",
+
+    marginTop:
+      7,
+
+    padding:
+      "11px 12px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      7,
+
+    background:
+      "#fff",
+  };
+
+const errorStyle:
+  React.CSSProperties = {
+    marginBottom:
+      16,
+
+    padding:
+      14,
+
+    border:
+      "1px solid #efb5b5",
+
+    borderRadius:
+      8,
+
+    background:
+      "#fff4f4",
+
+    color:
+      "#9b1c1c",
+
+    lineHeight:
+      1.6,
+  };
+
+const successStyle:
+  React.CSSProperties = {
+    marginBottom:
+      16,
+
+    padding:
+      14,
+
+    border:
+      "1px solid #b8d9c0",
+
+    borderRadius:
+      8,
+
+    background:
+      "#f2faf4",
+
+    color:
+      "#25633a",
+
+    lineHeight:
+      1.6,
+  };
