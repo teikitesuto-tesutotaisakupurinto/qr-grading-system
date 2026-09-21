@@ -25,39 +25,28 @@ export default function AuthGuard({
 }: AuthGuardProps) {
   const router = useRouter();
 
-  const pathname =
-    usePathname();
+  const pathname = usePathname();
 
   const [user, setUser] =
-    useState<AppUser | null>(
-      null
-    );
+    useState<AppUser | null>(null);
 
   const [checking, setChecking] =
     useState(true);
 
   useEffect(() => {
     /*
-     * ログインページは
-     * 認証ガードの対象外。
+     * ログイン画面は認証チェック対象外
      */
-    if (
-      pathname === "/login"
-    ) {
+    if (pathname === "/login") {
       setChecking(false);
-
       return;
     }
 
     const unsubscribe =
       observeAuth(
         (appUser) => {
-          /*
-           * 未ログイン
-           */
           if (!appUser) {
             setUser(null);
-
             setChecking(false);
 
             router.replace(
@@ -69,26 +58,14 @@ export default function AuthGuard({
             return;
           }
 
-          /*
-           * ログイン済み
-           */
-          setUser(
-            appUser
-          );
-
+          setUser(appUser);
           setChecking(false);
         },
         () => {
-          /*
-           * 認証エラー
-           */
           setUser(null);
-
           setChecking(false);
 
-          router.replace(
-            "/login"
-          );
+          router.replace("/login");
         }
       );
 
@@ -101,33 +78,29 @@ export default function AuthGuard({
   ]);
 
   /*
-   * ログインページ
+   * ログインページはそのまま表示
    */
-  if (
-    pathname === "/login"
-  ) {
+  if (pathname === "/login") {
     return <>{children}</>;
   }
 
   /*
-   * 認証確認中は何も表示しない。
+   * 認証確認中は何も表示しない
    */
   if (checking) {
     return null;
   }
 
   /*
-   * 未ログイン時は何も表示しない。
-   *
-   * router.replace("/login")
-   * がログイン画面へ移動させる。
+   * 未ログインなら何も表示しない。
+   * router.replace()で/loginへ移動する。
    */
   if (!user) {
     return null;
   }
 
   /*
-   * 認証済み
+   * ログイン済み
    */
   return <>{children}</>;
 }
