@@ -19,24 +19,15 @@ import {
 type AuthGuardProps = {
   children: ReactNode;
 
-  /*
-   * 認証必須がデフォルト。
-   * loginなど公開ページではfalseにできる。
-   */
-  requireAuth?: boolean;
-
-  /*
-   * 指定した権限だけ許可。
-   * 未指定ならログイン済みユーザー全員。
-   */
   allowedRoles?: Array<
-    NonNullable<AppUser["role"]>
+    NonNullable<
+      AppUser["role"]
+    >
   >;
 };
 
 export default function AuthGuard({
   children,
-  requireAuth = true,
   allowedRoles,
 }: AuthGuardProps) {
   const router =
@@ -65,30 +56,21 @@ export default function AuthGuard({
   ] =
     useState("");
 
-  /* =======================================================
-     Authentication
-     ======================================================= */
-
   useEffect(() => {
-    if (
-      !requireAuth
-    ) {
-      setChecking(
-        false
-      );
-
-      return;
-    }
-
-    setChecking(
-      true
-    );
+    let disposed =
+      false;
 
     const unsubscribe =
       observeAuth(
         (
           appUser
         ) => {
+          if (
+            disposed
+          ) {
+            return;
+          }
+
           setUser(
             appUser
           );
@@ -100,6 +82,12 @@ export default function AuthGuard({
         (
           authError
         ) => {
+          if (
+            disposed
+          ) {
+            return;
+          }
+
           console.error(
             "AuthGuard error:",
             authError
@@ -120,25 +108,12 @@ export default function AuthGuard({
       );
 
     return () => {
+      disposed =
+        true;
+
       unsubscribe();
     };
-  }, [
-    requireAuth,
-  ]);
-
-  /* =======================================================
-     Public page
-     ======================================================= */
-
-  if (
-    !requireAuth
-  ) {
-    return (
-      <>
-        {children}
-      </>
-    );
-  }
+  }, []);
 
   /* =======================================================
      Checking
@@ -155,7 +130,7 @@ export default function AuthGuard({
           </div>
 
           <div className="ts-loading-text">
-            認証情報を確認しています...
+            ログイン状態を確認しています...
           </div>
         </div>
       </div>
@@ -163,44 +138,28 @@ export default function AuthGuard({
   }
 
   /* =======================================================
-     Not authenticated
+     Not logged in
      ======================================================= */
 
   if (
     !user
   ) {
-    return (
-      <div className="ts-center">
-        <section className="ts-error-card">
-          <div className="ts-brand">
-            テストシステム
-          </div>
+    if (
+      typeof window !==
+      "undefined"
+    ) {
+      const next =
+        pathname ||
+        "/dashboard";
 
-          <h1>
-            ログインが必要です
-          </h1>
+      router.replace(
+        `/login?next=${encodeURIComponent(
+          next
+        )}`
+      );
+    }
 
-          <p>
-            {error ||
-              "このページを利用するにはログインしてください。"}
-          </p>
-
-          <button
-            type="button"
-            className="ts-primary"
-            onClick={() =>
-              router.replace(
-                `/login?returnTo=${encodeURIComponent(
-                  pathname
-                )}`
-              )
-            }
-          >
-            ログイン画面へ
-          </button>
-        </section>
-      </div>
-    );
+    return null;
   }
 
   /* =======================================================
@@ -211,26 +170,18 @@ export default function AuthGuard({
     !user.role
   ) {
     return (
-      <div className="ts-center">
-        <section className="ts-error-card">
-          <div className="ts-brand">
-            テストシステム
-          </div>
-
-          <h1>
-            権限が設定されていません
-          </h1>
-
-          <p>
-            管理者にアカウントの権限設定を確認してください。
-          </p>
-        </section>
-      </div>
+      <ForbiddenScreen
+        title="権限が設定されていません"
+        message={
+          error ||
+          "管理者にアカウントの権限設定を確認してください。"
+        }
+      />
     );
   }
 
   /* =======================================================
-     Role restriction
+     Role check
      ======================================================= */
 
   if (
@@ -240,13 +191,12 @@ export default function AuthGuard({
     )
   ) {
     return (
-      <ForbiddenScreen />
+      <ForbiddenScreen
+        title="この画面は利用できません"
+        message="現在のアカウントには、この画面を利用する権限がありません。"
+      />
     );
   }
-
-  /* =======================================================
-     Authorized
-     ======================================================= */
 
   return (
     <>
@@ -259,23 +209,30 @@ export default function AuthGuard({
    Forbidden
    ========================================================= */
 
-function ForbiddenScreen() {
+function ForbiddenScreen({
+  title,
+  message,
+}: {
+  title: string;
+
+  message: string;
+}) {
   const router =
     useRouter();
 
   return (
-    <div className="ts-center">
+    <main className="ts-center">
       <section className="ts-error-card">
         <div className="ts-brand">
           テストシステム
         </div>
 
         <h1>
-          権限がありません
+          {title}
         </h1>
 
         <p>
-          このページを利用する権限がありません。
+          {message}
         </p>
 
         <button
@@ -287,9 +244,9 @@ function ForbiddenScreen() {
             )
           }
         >
-          ダッシュボードへ戻る
+          ダッシュボードへ
         </button>
       </section>
-    </div>
+    </main>
   );
 }
