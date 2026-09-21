@@ -2,18 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { loginWithGoogle } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const [loading, setLoading] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const [error, setError] =
-    useState("");
+  async function handleGoogleLogin() {
+    if (loading) {
+      return;
+    }
 
-  async function login() {
     try {
       setLoading(true);
       setError("");
@@ -22,6 +24,8 @@ export default function LoginPage() {
 
       router.replace("/dashboard");
     } catch (error) {
+      console.error(error);
+
       setError(
         error instanceof Error
           ? error.message
@@ -35,22 +39,25 @@ export default function LoginPage() {
   return (
     <main className="loginPage">
       <section className="loginCard">
-        <h1>QR答案採点システム</h1>
+        <div className="loginHeader">
+          <h1>答案採点システム</h1>
 
-        <p>
-          登録済みのGoogleアカウントで
-          ログインしてください。
-        </p>
+          <p>
+            登録済みのGoogleアカウントで
+            <br />
+            ログインしてください。
+          </p>
+        </div>
 
         <button
           type="button"
           className="googleLoginButton"
           disabled={loading}
-          onClick={login}
+          onClick={handleGoogleLogin}
         >
           <img
             src="/google-logo.svg"
-            alt=""
+            alt="Google"
             width={20}
             height={20}
           />
@@ -63,14 +70,17 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <div className="errorMessage">
+          <div
+            className="loginError"
+            role="alert"
+          >
             {error}
           </div>
         )}
 
-        <small>
+        <p className="loginNotice">
           登録済みユーザーのみ利用できます。
-        </small>
+        </p>
       </section>
     </main>
   );
