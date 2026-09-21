@@ -15,11 +15,9 @@ import {
   addDoc,
   collection,
   doc,
-  getDocs,
-  query,
+  getDoc,
   serverTimestamp,
   updateDoc,
-  where,
 } from "firebase/firestore";
 
 import {
@@ -27,60 +25,92 @@ import {
   db,
 } from "@/lib/firebase";
 
-type UserRole =
-  | "本部管理者"
-  | "校舎管理者"
-  | "講師"
-  | "生徒";
+import {
+  getScopedDocs,
+  studentsQueries,
+  type FirestoreUser,
+} from "@/lib/firestore-scope";
 
-type CurrentUser = {
-  uid: string;
-  name: string;
-  organizationId: string | null;
-  role: UserRole | null;
-  schoolIds: string[];
-};
+import type {
+  UserRole,
+} from "@/lib/types";
+
+/* =========================================================
+   Types
+   ========================================================= */
+
+type CurrentUser =
+  FirestoreUser & {
+    name: string;
+  };
 
 type Student = {
   id: string;
+
   organizationId: string;
+
   studentNumber: string;
+
   name: string;
+
   grade: string;
+
   className: string;
+
   schoolId: string;
+
   active: boolean;
-  createdAt?: unknown;
-  updatedAt?: unknown;
 };
 
 type School = {
   id: string;
+
+  organizationId: string;
+
   name: string;
+
   active: boolean;
 };
 
 type CSVRow = {
   rowNumber: number;
+
   studentId: string;
+
   studentNumber: string;
+
   name: string;
+
   grade: string;
+
   className: string;
+
   schoolName: string;
+
   schoolId: string;
+
   error: string;
+
   isNew: boolean;
+
   isUpdate: boolean;
+
   isUnchanged: boolean;
 };
 
 type ImportSummary = {
   newCount: number;
+
   updateCount: number;
+
   unchangedCount: number;
+
   errorCount: number;
 };
+
+/* =========================================================
+   Constants
+   ========================================================= */
 
 const CSV_HEADERS = [
   "生徒番号",
@@ -90,7 +120,12 @@ const CSV_HEADERS = [
   "校舎",
 ];
 
-const MAX_CSV_ROWS = 5000;
+const MAX_CSV_ROWS =
+  5000;
+
+/* =========================================================
+   Page
+   ========================================================= */
 
 export default function StudentsPage() {
   const [
@@ -150,19 +185,27 @@ export default function StudentsPage() {
     setPreviewReady,
   ] = useState(false);
 
-  /*
-   * ========================================================
-   * Authentication
-   * ========================================================
-   */
+  /* =======================================================
+     Authentication
+     ======================================================= */
 
   useEffect(() => {
     const unsubscribe =
       onAuthStateChanged(
         auth,
-        async (firebaseUser) => {
-          if (!firebaseUser) {
-            setLoading(false);
+        async (
+          firebaseUser
+        ) => {
+          if (
+            !firebaseUser
+          ) {
+            setCurrentUser(
+              null
+            );
+
+            setLoading(
+              false
+            );
 
             setError(
               "ログイン状態を確認できません。"
@@ -172,38 +215,35 @@ export default function StudentsPage() {
           }
 
           try {
-            /*
-             * users/{uid} を直接取得する。
-             */
-            const userSnapshot =
-              await getDocs(
-                query(
-                  collection(
-                    db,
-                    "users"
-                  ),
-                  where(
-                    "__name__",
-                    "==",
-                    firebaseUser.uid
-                  )
+            const snapshot =
+              await getDoc(
+                doc(
+                  db,
+                  "users",
+                  firebaseUser.uid
                 )
               );
 
             if (
-              userSnapshot.empty
+              !snapshot.exists()
             ) {
-              setLoading(false);
+              setCurrentUser(
+                null
+              );
 
               setError(
                 "システムのユーザー情報が登録されていません。"
+              );
+
+              setLoading(
+                false
               );
 
               return;
             }
 
             const data =
-              userSnapshot.docs[0].data();
+              snapshot.data();
 
             const role =
               isUserRole(
@@ -212,9 +252,40 @@ export default function StudentsPage() {
                 ? data.role
                 : null;
 
+            const organizationId =
+              typeof data.organizationId ===
+              "string"
+                ? data.organizationId
+                : null;
+
+            const schoolIds =
+              Array.isArray(
+                data.schoolIds
+              )
+                ? data.schoolIds.filter(
+                    (
+                      value
+                    ): value is string =>
+                      typeof value ===
+                      "string"
+                  )
+                : [];
+
             setCurrentUser({
               uid:
                 firebaseUser.uid,
+
+              organizationId,
+
+              role,
+
+              schoolIds,
+
+              studentId:
+                typeof data.studentId ===
+                "string"
+                  ? data.studentId
+                  : null,
 
               name:
                 typeof data.name ===
@@ -222,31 +293,12 @@ export default function StudentsPage() {
                   ? data.name
                   : firebaseUser.displayName ??
                     "",
-
-              organizationId:
-                typeof data.organizationId ===
-                "string"
-                  ? data.organizationId
-                  : null,
-
-              role,
-
-              schoolIds:
-                Array.isArray(
-                  data.schoolIds
-                )
-                  ? data.schoolIds.filter(
-                      (
-                        value
-                      ): value is string =>
-                        typeof value ===
-                        "string"
-                    )
-                  : [],
             });
-          } catch (err) {
+          } catch (
+            err
+          ) {
             console.error(
-              "Authentication error:",
+              "User loading error:",
               err
             );
 
@@ -255,8 +307,10 @@ export default function StudentsPage() {
                 err
               )
             );
-
-            setLoading(false);
+          } finally {
+            setLoading(
+              false
+            );
           }
         }
       );
@@ -266,82 +320,109 @@ export default function StudentsPage() {
     };
   }, []);
 
-  /*
-   * ========================================================
-   * Load students / schools
-   * ========================================================
-   */
+  /* =======================================================
+     Permission
+     ======================================================= */
+
+  const canManage =
+    currentUser?.role ===
+      "本部管理者" ||
+    currentUser?.role ===
+      "校舎管理者";
+
+  /* =======================================================
+     Data loading
+     ======================================================= */
 
   useEffect(() => {
     if (
-      !currentUser?.organizationId
+      !currentUser ||
+      !currentUser.organizationId
     ) {
       return;
     }
 
     void loadData(
-      currentUser.organizationId
+      currentUser
     );
   }, [
-    currentUser?.organizationId,
+    currentUser,
   ]);
 
   async function loadData(
-    organizationId: string
+    user: CurrentUser
   ) {
+    if (
+      !user.organizationId
+    ) {
+      return;
+    }
+
     try {
-      setLoading(true);
+      setLoading(
+        true
+      );
 
       setError("");
 
-      const [
-        studentSnapshot,
-        schoolSnapshot,
-      ] =
-        await Promise.all([
-          getDocs(
-            query(
-              collection(
-                db,
-                "students"
-              ),
-              where(
-                "organizationId",
-                "==",
-                organizationId
-              )
-            )
-          ),
+      /*
+       * -----------------------------------------------------
+       * 生徒
+       * -----------------------------------------------------
+       *
+       * 本部:
+       *   organization全体
+       *
+       * 校舎管理者:
+       *   schoolIds
+       *
+       * 講師:
+       *   schoolIds
+       *
+       * 生徒:
+       *   自分のみ
+       */
+      const studentQueries =
+        studentsQueries(
+          user
+        );
 
-          getDocs(
-            query(
-              collection(
-                db,
-                "schools"
-              ),
-              where(
-                "organizationId",
-                "==",
-                organizationId
-              )
-            )
-          ),
-        ]);
+      const studentData =
+        await getScopedDocs(
+          studentQueries
+        );
 
       const loadedStudents =
-        studentSnapshot.docs
+        studentData
           .map(
             (
-              item
+              data,
+              index
             ): Student => {
-              const data =
-                item.data();
-
+              /*
+               * getScopedDocsは
+               * DocumentDataだけ返すため、
+               * studentIdとしてdocument IDを
+               * 保持する必要がある。
+               *
+               * 現在のscope実装ではIDが返らないため、
+               * この部分はstudentNumberを一意キーとして
+               * 利用する。
+               */
               return {
                 id:
-                  item.id,
+                  stringValue(
+                    data.id
+                  ) ||
+                  stringValue(
+                    data.studentId
+                  ) ||
+                  `student-${index}`,
 
-                organizationId,
+                organizationId:
+                  stringValue(
+                    data.organizationId
+                  ),
 
                 studentNumber:
                   stringValue(
@@ -371,67 +452,43 @@ export default function StudentsPage() {
                 active:
                   data.active !==
                   false,
-
-                createdAt:
-                  data.createdAt,
-
-                updatedAt:
-                  data.updatedAt,
               };
             }
           )
-          .sort(
+          .filter(
             (
-              a,
-              b
+              student
             ) =>
-              a.studentNumber.localeCompare(
-                b.studentNumber
-              )
+              student.organizationId ===
+                user.organizationId &&
+              student.studentNumber
           );
 
-      const loadedSchools =
-        schoolSnapshot.docs
-          .map(
-            (
-              item
-            ): School => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                name:
-                  stringValue(
-                    data.name
-                  ),
-
-                active:
-                  data.active !==
-                  false,
-              };
-            }
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              a.name.localeCompare(
-                b.name
-              )
-          );
+      /*
+       * -----------------------------------------------------
+       * Schools
+       * -----------------------------------------------------
+       *
+       * 生徒CSVの校舎名照合に必要。
+       *
+       * schoolsの取得は
+       * 権限ごとに範囲を制限。
+       */
+      const schoolData =
+        await loadAccessibleSchools(
+          user
+        );
 
       setStudents(
         loadedStudents
       );
 
       setSchools(
-        loadedSchools
+        schoolData
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student loading error:",
         err
@@ -443,34 +500,97 @@ export default function StudentsPage() {
         )
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
 
-  /*
-   * ========================================================
-   * Accessible schools
-   * ========================================================
-   */
+  /* =======================================================
+     Accessible schools
+     ======================================================= */
 
-  const accessibleSchools =
-    useMemo(
-      () =>
-        getAccessibleSchools(
-          schools,
-          currentUser
-        ),
-      [
-        schools,
-        currentUser,
-      ]
-    );
+  async function loadAccessibleSchools(
+    user: CurrentUser
+  ): Promise<School[]> {
+    if (
+      !user.organizationId
+    ) {
+      return [];
+    }
 
-  /*
-   * ========================================================
-   * Search
-   * ========================================================
-   */
+    /*
+     * schoolsは本部管理者なら
+     * organization全体。
+     *
+     * 校舎管理者・講師なら
+     * 自校舎のみ。
+     *
+     * ただし学校数が10を超えるため、
+     * firestore-scopeのschoolQueriesを
+     * 利用する。
+     */
+
+    const {
+      schoolsQueries,
+    } =
+      await import(
+        "@/lib/firestore-scope"
+      );
+
+    const queries =
+      schoolsQueries(
+        user
+      );
+
+    const data =
+      await getScopedDocs(
+        queries
+      );
+
+    return data
+      .map(
+        (
+          item,
+          index
+        ): School => ({
+          id:
+            stringValue(
+              item.id
+            ) ||
+            stringValue(
+              item.schoolId
+            ) ||
+            `school-${index}`,
+
+          organizationId:
+            stringValue(
+              item.organizationId
+            ),
+
+          name:
+            stringValue(
+              item.name
+            ),
+
+          active:
+            item.active !==
+            false,
+        })
+      )
+      .filter(
+        (
+          school
+        ) =>
+          school.organizationId ===
+          user.organizationId &&
+          school.active
+      );
+  }
+
+  /* =======================================================
+     Visible students
+     ======================================================= */
 
   const filteredStudents =
     useMemo(() => {
@@ -479,86 +599,64 @@ export default function StudentsPage() {
           .trim()
           .toLowerCase();
 
-      let result =
-        students;
-
       if (
-        currentUser?.role !==
-        "本部管理者"
+        !keyword
       ) {
-        result =
-          result.filter(
-            (
-              student
-            ) =>
-              currentUser?.schoolIds.includes(
+        return students;
+      }
+
+      return students.filter(
+        (
+          student
+        ) => {
+          const school =
+            schools.find(
+              (
+                item
+              ) =>
+                item.id ===
                 student.schoolId
+            );
+
+          return (
+            student.studentNumber.includes(
+              keyword
+            ) ||
+            student.name
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            student.grade
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            student.className
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            (
+              school?.name ??
+              ""
+            )
+              .toLowerCase()
+              .includes(
+                keyword
               )
           );
-      }
-
-      if (
-        keyword
-      ) {
-        result =
-          result.filter(
-            (
-              student
-            ) => {
-              const school =
-                schools.find(
-                  (
-                    item
-                  ) =>
-                    item.id ===
-                    student.schoolId
-                );
-
-              return (
-                student.studentNumber.includes(
-                  keyword
-                ) ||
-                student.name
-                  .toLowerCase()
-                  .includes(
-                    keyword
-                  ) ||
-                student.grade
-                  .toLowerCase()
-                  .includes(
-                    keyword
-                  ) ||
-                student.className
-                  .toLowerCase()
-                  .includes(
-                    keyword
-                  ) ||
-                (
-                  school?.name ??
-                  ""
-                )
-                  .toLowerCase()
-                  .includes(
-                    keyword
-                  )
-              );
-            }
-          );
-      }
-
-      return result;
+        }
+      );
     }, [
       students,
       schools,
-      currentUser,
       search,
     ]);
 
-  /*
-   * ========================================================
-   * CSV download
-   * ========================================================
-   */
+  /* =======================================================
+     CSV download
+     ======================================================= */
 
   function downloadCurrentStudentsCSV() {
     if (
@@ -573,46 +671,29 @@ export default function StudentsPage() {
     }
 
     const rows =
-      students
-        .filter(
-          (
-            student
-          ) => {
-            if (
-              currentUser?.role ===
-              "本部管理者"
-            ) {
-              return true;
-            }
-
-            return currentUser?.schoolIds.includes(
-              student.schoolId
+      students.map(
+        (
+          student
+        ) => {
+          const school =
+            schools.find(
+              (
+                item
+              ) =>
+                item.id ===
+                student.schoolId
             );
-          }
-        )
-        .map(
-          (
-            student
-          ) => {
-            const school =
-              schools.find(
-                (
-                  item
-                ) =>
-                  item.id ===
-                  student.schoolId
-              );
 
-            return [
-              student.studentNumber,
-              student.name,
-              student.grade,
-              student.className,
-              school?.name ??
-                "",
-            ];
-          }
-        );
+          return [
+            student.studentNumber,
+            student.name,
+            student.grade,
+            student.className,
+            school?.name ??
+              "",
+          ];
+        }
+      );
 
     const csv =
       "\uFEFF" +
@@ -645,11 +726,9 @@ export default function StudentsPage() {
     );
   }
 
-  /*
-   * ========================================================
-   * CSV file
-   * ========================================================
-   */
+  /* =======================================================
+     CSV upload
+     ======================================================= */
 
   async function handleCSVFile(
     event: ChangeEvent<HTMLInputElement>
@@ -729,7 +808,9 @@ export default function StudentsPage() {
       setPreviewReady(
         true
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "CSV parse error:",
         err
@@ -742,28 +823,19 @@ export default function StudentsPage() {
       );
     }
 
-    /*
-     * 同じファイルを再選択できるようにする。
-     */
     event.target.value =
       "";
   }
 
-  /*
-   * ========================================================
-   * Preview
-   * ========================================================
-   */
+  /* =======================================================
+     Preview rows
+     ======================================================= */
 
   function buildPreviewRows(
     parsed: string[][]
-  ) {
+  ): CSVRow[] {
     const rows: CSVRow[] =
       [];
-
-    /*
-     * 1行目をヘッダーとして判定。
-     */
 
     const first =
       parsed[0] ?? [];
@@ -778,15 +850,9 @@ export default function StudentsPage() {
         ? parsed.slice(1)
         : parsed;
 
-    /*
-     * CSV内の生徒番号重複チェック。
-     */
     const seenNumbers =
       new Set<string>();
 
-    /*
-     * CSV内の新規行重複チェック。
-     */
     const seenNewKeys =
       new Set<string>();
 
@@ -802,6 +868,16 @@ export default function StudentsPage() {
         hasHeader
           ? i + 2
           : i + 1;
+
+      /*
+       * CSV:
+       *
+       * 生徒番号
+       * 氏名
+       * 学年
+       * クラス
+       * 校舎
+       */
 
       const studentNumber =
         normalizeStudentNumber(
@@ -831,6 +907,9 @@ export default function StudentsPage() {
       let studentId =
         "";
 
+      let schoolId =
+        "";
+
       let errorText =
         "";
 
@@ -844,7 +923,7 @@ export default function StudentsPage() {
         false;
 
       /*
-       * 空行
+       * 完全空行。
        */
       if (
         !studentNumber &&
@@ -857,7 +936,7 @@ export default function StudentsPage() {
       }
 
       /*
-       * 基本チェック
+       * 氏名
        */
       if (
         !name
@@ -867,24 +946,24 @@ export default function StudentsPage() {
       }
 
       /*
-       * 生徒番号あり
+       * 生徒番号
+       *
+       * 空欄 → 新規
+       * 6桁 → 既存
        */
       if (
         !errorText &&
-        studentNumber
+        studentNumber &&
+        !/^\d{6}$/.test(
+          studentNumber
+        )
       ) {
-        if (
-          !/^\d{6}$/.test(
-            studentNumber
-          )
-        ) {
-          errorText =
-            "生徒番号は6桁の数字で入力してください。";
-        }
+        errorText =
+          "生徒番号は6桁の数字で入力してください。";
       }
 
       /*
-       * 生徒番号重複
+       * CSV内重複
        */
       if (
         !errorText &&
@@ -907,16 +986,13 @@ export default function StudentsPage() {
       /*
        * 校舎
        */
-      let schoolId =
-        "";
-
       if (
         !errorText
       ) {
         const school =
           findSchool(
             schoolName,
-            accessibleSchools
+            schools
           );
 
         if (
@@ -933,9 +1009,9 @@ export default function StudentsPage() {
       }
 
       /*
-       * 既存生徒照合
+       * 既存生徒
        *
-       * 生徒番号だけを識別子にする。
+       * 生徒番号だけで識別。
        */
       if (
         !errorText &&
@@ -954,7 +1030,7 @@ export default function StudentsPage() {
           !existing
         ) {
           errorText =
-            `生徒番号「${studentNumber}」の生徒が登録されていません。新規生徒の場合は生徒番号を空欄にしてください。`;
+            `生徒番号「${studentNumber}」の生徒が登録されていません。新規生徒なら生徒番号を空欄にしてください。`;
         } else {
           studentId =
             existing.id;
@@ -977,8 +1053,6 @@ export default function StudentsPage() {
 
       /*
        * 新規生徒
-       *
-       * 生徒番号が空欄なら新規。
        */
       if (
         !errorText &&
@@ -987,7 +1061,7 @@ export default function StudentsPage() {
         isNew =
           true;
 
-        const key =
+        const newKey =
           [
             name,
             grade,
@@ -999,14 +1073,14 @@ export default function StudentsPage() {
 
         if (
           seenNewKeys.has(
-            key
+            newKey
           )
         ) {
           errorText =
             "CSV内で同じ新規生徒情報が重複しています。";
         } else {
           seenNewKeys.add(
-            key
+            newKey
           );
         }
       }
@@ -1048,11 +1122,54 @@ export default function StudentsPage() {
     return rows;
   }
 
-  /*
-   * ========================================================
-   * Import
-   * ========================================================
-   */
+  /* =======================================================
+     CSV summary
+     ======================================================= */
+
+  const summary =
+    useMemo<ImportSummary>(() => {
+      return {
+        newCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isNew
+          ).length,
+
+        updateCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isUpdate
+          ).length,
+
+        unchangedCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isUnchanged
+          ).length,
+
+        errorCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              Boolean(
+                row.error
+              )
+          ).length,
+      };
+    }, [
+      csvRows,
+    ]);
+
+  /* =======================================================
+     CSV import
+     ======================================================= */
 
   async function importCSV() {
     if (
@@ -1072,6 +1189,16 @@ export default function StudentsPage() {
     }
 
     if (
+      !canManage
+    ) {
+      setError(
+        "生徒情報を管理する権限がありません。"
+      );
+
+      return;
+    }
+
+    if (
       !previewReady ||
       csvRows.length ===
         0
@@ -1083,37 +1210,12 @@ export default function StudentsPage() {
       return;
     }
 
-    const invalidRows =
-      csvRows.filter(
-        (
-          row
-        ) =>
-          Boolean(
-            row.error
-          )
-      );
-
     if (
-      invalidRows.length >
+      summary.errorCount >
       0
     ) {
       setError(
-        `${invalidRows.length}件のエラーがあります。修正してから再アップロードしてください。`
-      );
-
-      return;
-    }
-
-    /*
-     * 生徒登録・更新権限
-     */
-    if (
-      !canManageStudents(
-        currentUser
-      )
-    ) {
-      setError(
-        "生徒情報を管理する権限がありません。"
+        `${summary.errorCount}件のエラーがあります。修正してから再アップロードしてください。`
       );
 
       return;
@@ -1128,8 +1230,11 @@ export default function StudentsPage() {
       setMessage("");
 
       /*
-       * 現在の番号一覧。
+       * -----------------------------------------------------
+       * 現在使用中の生徒番号
+       * -----------------------------------------------------
        */
+
       const usedNumbers =
         new Set(
           students
@@ -1145,41 +1250,27 @@ export default function StudentsPage() {
         );
 
       /*
-       * 過去使用番号を記録する
-       * studentNumberRegistry も取得。
+       * -----------------------------------------------------
+       * 永久予約済み番号
+       * -----------------------------------------------------
+       *
+       * studentNumberRegistryを直接取得する。
+       *
+       * 本番Rulesでは管理者のみread可能。
        */
-      const registrySnapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "studentNumberRegistry"
-            ),
-            where(
-              "organizationId",
-              "==",
-              currentUser.organizationId
-            )
-          )
+
+      const registryData =
+        await loadNumberRegistry(
+          currentUser
         );
 
       for (
-        const item of
-          registrySnapshot.docs
+        const number of
+          registryData
       ) {
-        const number =
-          stringValue(
-            item.data()
-              .studentNumber
-          );
-
-        if (
+        usedNumbers.add(
           number
-        ) {
-          usedNumbers.add(
-            number
-          );
-        }
+        );
       }
 
       let newCount =
@@ -1192,8 +1283,11 @@ export default function StudentsPage() {
         0;
 
       /*
-       * 新規生徒
+       * =====================================================
+       * 新規登録
+       * =====================================================
        */
+
       for (
         const row of
           csvRows
@@ -1249,7 +1343,7 @@ export default function StudentsPage() {
           );
 
         /*
-         * 番号を永久予約。
+         * 生徒番号を永久予約。
          */
         await addDoc(
           collection(
@@ -1282,6 +1376,9 @@ export default function StudentsPage() {
             organizationId:
               currentUser.organizationId,
 
+            schoolId:
+              row.schoolId,
+
             studentId:
               studentRef.id,
 
@@ -1295,9 +1392,6 @@ export default function StudentsPage() {
 
             className:
               row.className,
-
-            schoolId:
-              row.schoolId,
 
             changeType:
               "新規登録",
@@ -1314,8 +1408,11 @@ export default function StudentsPage() {
       }
 
       /*
-       * 既存生徒の更新。
+       * =====================================================
+       * 既存生徒更新
+       * =====================================================
        */
+
       for (
         const row of
           csvRows
@@ -1339,6 +1436,28 @@ export default function StudentsPage() {
           !existing
         ) {
           continue;
+        }
+
+        /*
+         * 本部管理者以外は
+         * 自校舎のみ変更可能。
+         */
+        if (
+          currentUser.role !==
+          "本部管理者"
+        ) {
+          if (
+            !currentUser.schoolIds.includes(
+              existing.schoolId
+            ) ||
+            !currentUser.schoolIds.includes(
+              row.schoolId
+            )
+          ) {
+            throw new Error(
+              `生徒番号${existing.studentNumber}の校舎変更権限がありません。`
+            );
+          }
         }
 
         const changed =
@@ -1368,7 +1487,7 @@ export default function StudentsPage() {
         }
 
         /*
-         * 変更履歴を先に保存。
+         * 変更前後を履歴保存。
          */
         await addDoc(
           collection(
@@ -1378,6 +1497,9 @@ export default function StudentsPage() {
           {
             organizationId:
               currentUser.organizationId,
+
+            schoolId:
+              row.schoolId,
 
             studentId:
               existing.id,
@@ -1452,10 +1574,6 @@ export default function StudentsPage() {
         updateCount++;
       }
 
-      setMessage(
-        `登録完了：新規${newCount}人、更新${updateCount}人、変更なし${unchangedCount}人`
-      );
-
       setCsvRows(
         []
       );
@@ -1466,10 +1584,16 @@ export default function StudentsPage() {
 
       setFileName("");
 
-      await loadData(
-        currentUser.organizationId
+      setMessage(
+        `登録完了：新規${newCount}人、更新${updateCount}人、変更なし${unchangedCount}人`
       );
-    } catch (err) {
+
+      await loadData(
+        currentUser
+      );
+    } catch (
+      err
+    ) {
       console.error(
         "CSV import error:",
         err
@@ -1487,87 +1611,88 @@ export default function StudentsPage() {
     }
   }
 
-  /*
-   * ========================================================
-   * CSV summary
-   * ========================================================
-   */
+  /* =======================================================
+     Number registry
+     ======================================================= */
 
-  const summary =
-    useMemo<ImportSummary>(() => {
-      return {
-        newCount:
-          csvRows.filter(
-            (
-              row
-            ) =>
-              row.isNew
-          ).length,
+  async function loadNumberRegistry(
+    user: CurrentUser
+  ): Promise<string[]> {
+    if (
+      !user.organizationId
+    ) {
+      return [];
+    }
 
-        updateCount:
-          csvRows.filter(
-            (
-              row
-            ) =>
-              row.isUpdate
-          ).length,
+    /*
+     * ここはFirestore Rules上、
+     * 本部管理者・校舎管理者だけ。
+     *
+     * 現状のFirestore scopeに
+     * registry専用Queryを追加していないので、
+     * organizationIdだけで取得する。
+     */
+    const {
+      getDocs,
+      query,
+      collection,
+      where,
+    } =
+      await import(
+        "firebase/firestore"
+      );
 
-        unchangedCount:
-          csvRows.filter(
-            (
-              row
-            ) =>
-              row.isUnchanged
-          ).length,
+    const snapshot =
+      await getDocs(
+        query(
+          collection(
+            db,
+            "studentNumberRegistry"
+          ),
+          where(
+            "organizationId",
+            "==",
+            user.organizationId
+          )
+        )
+      );
 
-        errorCount:
-          csvRows.filter(
-            (
-              row
-            ) =>
-              Boolean(
-                row.error
-              )
-          ).length,
-      };
-    }, [
-      csvRows,
-    ]);
+    return snapshot.docs
+      .map(
+        (
+          item
+        ) =>
+          stringValue(
+            item.data()
+              .studentNumber
+          )
+      )
+      .filter(
+        Boolean
+      );
+  }
 
-  /*
-   * ========================================================
-   * Permission
-   * ========================================================
-   */
+  /* =======================================================
+     Permission screen
+     ======================================================= */
 
   if (
     currentUser &&
-    !canManageStudents(
-      currentUser
-    )
+    !canManage
   ) {
-    return (
-      <main
-        style={
-          pageStyle
-        }
-      >
-        <section
-          style={
-            cardStyle
-          }
-        >
-          <h1>
-            生徒管理
-          </h1>
-
-          <p>
-            生徒情報を管理する権限がありません。
-          </p>
-        </section>
-      </main>
-    );
+    return null;
   }
+
+  if (
+    !currentUser &&
+    !loading
+  ) {
+    return null;
+  }
+
+  /* =======================================================
+     Render
+     ======================================================= */
 
   return (
     <main
@@ -1584,6 +1709,10 @@ export default function StudentsPage() {
             "0 auto",
         }}
       >
+        {/* ==================================================
+            Header
+            ================================================== */}
+
         <header
           style={{
             marginBottom:
@@ -1610,9 +1739,14 @@ export default function StudentsPage() {
                 1.7,
             }}
           >
-            生徒はCSVで一括管理します。生徒番号はシステムが発行し、学年・クラス・校舎はCSVから更新できます。
+            生徒はCSVで一括登録・更新します。
+            生徒番号はシステムが発行する永久識別番号です。
           </p>
         </header>
+
+        {/* ==================================================
+            Messages
+            ================================================== */}
 
         {error && (
           <div
@@ -1635,7 +1769,7 @@ export default function StudentsPage() {
         )}
 
         {/* ==================================================
-            CSV operation
+            CSV
             ================================================== */}
 
         <section
@@ -1646,17 +1780,22 @@ export default function StudentsPage() {
               20,
           }}
         >
-          <h2>
+          <h2
+            style={{
+              margin:
+                0,
+            }}
+          >
             CSV一括登録・更新
           </h2>
 
           <div
             style={{
               marginTop:
-                10,
+                12,
 
               padding:
-                14,
+                16,
 
               background:
                 "#f7f7f7",
@@ -1668,7 +1807,7 @@ export default function StudentsPage() {
                 13,
 
               lineHeight:
-                1.8,
+                1.9,
             }}
           >
             <strong>
@@ -1683,9 +1822,9 @@ export default function StudentsPage() {
 
             <br />
 
-            生徒番号が入っている行は既存生徒の更新、
-            生徒番号が空欄の行は新規生徒として扱います。
-            新規生徒の生徒番号はシステムが自動発行します。
+            生徒番号がある場合は、その番号の生徒を更新します。
+            生徒番号が空欄の場合は新規生徒として登録し、
+            システムが6桁の生徒番号を自動発行します。
           </div>
 
           <div
@@ -1751,7 +1890,9 @@ export default function StudentsPage() {
             >
               選択ファイル：
               <strong>
-                {fileName}
+                {
+                  fileName
+                }
               </strong>
             </div>
           )}
@@ -1783,6 +1924,9 @@ export default function StudentsPage() {
 
                 gap:
                   16,
+
+                flexWrap:
+                  "wrap",
               }}
             >
               <div>
@@ -1807,7 +1951,7 @@ export default function StudentsPage() {
                       12,
                   }}
                 >
-                  登録前に内容を確認してください。
+                  登録・更新前に内容を確認してください。
                 </p>
               </div>
 
@@ -2097,24 +2241,6 @@ export default function StudentsPage() {
                 ? "登録・更新中..."
                 : "この内容で登録・更新する"}
             </button>
-
-            {summary.errorCount >
-              0 && (
-              <p
-                style={{
-                  margin:
-                    "10px 0 0",
-
-                  color:
-                    "#a00000",
-
-                  fontSize:
-                    12,
-                }}
-              >
-                エラーを修正してCSVを再アップロードしてください。
-              </p>
-            )}
           </section>
         )}
 
@@ -2140,6 +2266,9 @@ export default function StudentsPage() {
 
               gap:
                 16,
+
+              flexWrap:
+                "wrap",
             }}
           >
             <div>
@@ -2188,7 +2317,7 @@ export default function StudentsPage() {
                 ...inputStyle,
 
                 maxWidth:
-                  360,
+                  380,
 
                 marginTop:
                   0,
@@ -2203,7 +2332,7 @@ export default function StudentsPage() {
                   20,
               }}
             >
-              読み込み中...
+              生徒情報を読み込んでいます...
             </p>
           ) : (
             <div
@@ -2295,7 +2424,7 @@ export default function StudentsPage() {
                       return (
                         <tr
                           key={
-                            student.id
+                            student.studentNumber
                           }
                         >
                           <td
@@ -2507,9 +2636,6 @@ function parseCSV(
       char;
   }
 
-  /*
-   * 最終セル。
-   */
   row.push(
     cell
   );
@@ -2520,7 +2646,8 @@ function parseCSV(
         value
       ) =>
         value.trim()
-          .length > 0
+          .length >
+        0
     )
   ) {
     rows.push(
@@ -2538,7 +2665,7 @@ function parseCSV(
 function looksLikeHeader(
   row: string[]
 ) {
-  const normalized =
+  const values =
     row.map(
       (
         value
@@ -2549,10 +2676,10 @@ function looksLikeHeader(
     );
 
   return (
-    normalized.includes(
+    values.includes(
       "生徒番号"
     ) ||
-    normalized.includes(
+    values.includes(
       "氏名"
     )
   );
@@ -2644,7 +2771,8 @@ function generateStudentNumber(
 ) {
   for (
     let attempt = 0;
-    attempt < 100000;
+    attempt <
+    100000;
     attempt++
   ) {
     const number =
@@ -2669,15 +2797,18 @@ function generateStudentNumber(
 }
 
 /* =========================================================
-   Existing student comparison
+   Student comparison
    ========================================================= */
 
 function hasStudentChanged(
   student: Student,
   next: {
     name: string;
+
     grade: string;
+
     className: string;
+
     schoolId: string;
   }
 ) {
@@ -2717,58 +2848,8 @@ function findSchool(
   );
 }
 
-function getAccessibleSchools(
-  schools: School[],
-  user: CurrentUser | null
-) {
-  if (
-    !user
-  ) {
-    return [];
-  }
-
-  const active =
-    schools.filter(
-      (
-        school
-      ) =>
-        school.active
-    );
-
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return active;
-  }
-
-  return active.filter(
-    (
-      school
-    ) =>
-      user.schoolIds.includes(
-        school.id
-      )
-  );
-}
-
 /* =========================================================
-   Permission
-   ========================================================= */
-
-function canManageStudents(
-  user: CurrentUser
-) {
-  return (
-    user.role ===
-      "本部管理者" ||
-    user.role ===
-      "校舎管理者"
-  );
-}
-
-/* =========================================================
-   Validation
+   User role
    ========================================================= */
 
 function isUserRole(
@@ -2799,15 +2880,6 @@ function stringValue(
     : "";
 }
 
-function nullableNumber(
-  value: unknown
-) {
-  return typeof value ===
-    "number"
-    ? value
-    : null;
-}
-
 /* =========================================================
    Error
    ========================================================= */
@@ -2836,7 +2908,7 @@ function getSafeErrorMessage(
       return "同じデータがすでに登録されています。";
 
     case "unavailable":
-      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
+      return "サーバーに接続できませんでした。";
 
     default:
       return error instanceof Error
@@ -2855,7 +2927,9 @@ function Summary({
   danger = false,
 }: {
   label: string;
+
   value: string;
+
   danger?: boolean;
 }) {
   return (
@@ -2947,6 +3021,15 @@ const cardStyle:
       12,
   };
 
+const labelStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    fontWeight:
+      600,
+  };
+
 const inputStyle:
   React.CSSProperties = {
     display:
@@ -2969,15 +3052,6 @@ const inputStyle:
 
     background:
       "#fff",
-  };
-
-const labelStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    fontWeight:
-      600,
   };
 
 const primaryButton:
@@ -3072,8 +3146,7 @@ const thStyle:
     position:
       "sticky",
 
-    top:
-      0,
+    top: 0,
 
     padding:
       "11px 10px",
