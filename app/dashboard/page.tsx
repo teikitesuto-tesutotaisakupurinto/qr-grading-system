@@ -13,30 +13,38 @@ import {
 
 import {
   auth,
+  db,
 } from "@/lib/firebase";
 
 import {
-  getAppUser,
-  type AppUser,
-} from "@/lib/auth";
+  doc,
+  getDoc,
+} from "firebase/firestore";
+
+type AppUser = {
+  uid: string;
+  email: string | null;
+  name: string;
+  role:
+    | "本部管理者"
+    | "校舎管理者"
+    | "講師"
+    | "生徒";
+  schoolIds: string[];
+  active: boolean;
+};
 
 export default function DashboardPage() {
-  const [
-    user,
-    setUser,
-  ] = useState<AppUser | null>(
-    null
-  );
+  const [user, setUser] =
+    useState<AppUser | null>(
+      null
+    );
 
-  const [
-    checking,
-    setChecking,
-  ] = useState(true);
+  const [checking, setChecking] =
+    useState(true);
 
-  const [
-    error,
-    setError,
-  ] = useState("");
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -52,54 +60,140 @@ export default function DashboardPage() {
           }
 
           /*
-           * Firebase Authentication上で
-           * ログイン状態が確認できない
+           * Firebaseが完全に認証状態を
+           * 確定した後にだけ判断する。
            */
           if (!firebaseUser) {
-            setUser(null);
             setChecking(false);
-
-            window.location.replace(
-              "/login"
+            setError(
+              "Googleログイン状態を確認できませんでした。"
             );
-
             return;
           }
 
-          /*
-           * Firebase Authenticationでは
-           * ログイン済み
-           */
           try {
-            const appUser =
-              await getAppUser(
-                firebaseUser
+            const userRef =
+              doc(
+                db,
+                "users",
+                firebaseUser.uid
               );
 
-            if (cancelled) {
+            const snapshot =
+              await getDoc(
+                userRef
+              );
+
+            if (
+              !snapshot.exists()
+            ) {
+              setChecking(false);
+
+              setError(
+                "このGoogleアカウントは答案採点システムに登録されていません。"
+              );
+
               return;
             }
 
-            setUser(
-              appUser
-            );
+            const data =
+              snapshot.data();
+
+            if (
+              data.active ===
+              false
+            ) {
+              setChecking(false);
+
+              setError(
+                "このアカウントは停止されています。"
+              );
+
+              return;
+            }
+
+            const role =
+              data.role;
+
+            if (
+              role !==
+                "本部管理者" &&
+              role !==
+                "校舎管理者" &&
+              role !==
+                "講師" &&
+              role !==
+                "生徒"
+            ) {
+              setChecking(false);
+
+              setError(
+                "ユーザー権限が設定されていません。"
+              );
+
+              return;
+            }
+
+            const schoolIds =
+              Array.isArray(
+                data.schoolIds
+              )
+                ? data.schoolIds.filter(
+                    (
+                      value
+                    ): value is string =>
+                      typeof value ===
+                      "string"
+                  )
+                : [];
+
+            if (
+              cancelled
+            ) {
+              return;
+            }
+
+            setUser({
+              uid:
+                firebaseUser.uid,
+
+              email:
+                firebaseUser.email,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
+
+              role,
+
+              schoolIds,
+
+              active:
+                data.active !==
+                false,
+            });
 
             setError("");
             setChecking(false);
           } catch (
             error
           ) {
-            if (cancelled) {
+            if (
+              cancelled
+            ) {
               return;
             }
+
+            setChecking(false);
 
             setError(
               error instanceof Error
                 ? error.message
                 : "ユーザー情報を取得できませんでした。"
             );
-
-            setChecking(false);
           }
         }
       );
@@ -111,20 +205,16 @@ export default function DashboardPage() {
   }, []);
 
   /*
-   * Firebaseの認証状態確認中
-   *
-   * ここでは何も表示しない。
+   * 認証状態確認中
    */
   if (checking) {
     return null;
   }
 
   /*
-   * Firebase Authenticationには
-   * ログインしているが、
-   * Firestoreのusers/{uid}がないなど。
+   * エラー
    */
-  if (!user) {
+  if (error) {
     return (
       <main
         style={{
@@ -153,10 +243,10 @@ export default function DashboardPage() {
               "100%",
 
             maxWidth:
-              520,
+              560,
 
             padding:
-              32,
+              36,
 
             background:
               "#fff",
@@ -177,15 +267,31 @@ export default function DashboardPage() {
               marginTop:
                 16,
 
-              color:
-                "#a00000",
-
               lineHeight:
                 1.8,
+
+              color:
+                "#a00000",
             }}
           >
-            {error ||
-              "ユーザー情報を取得できませんでした。"}
+            {error}
+          </p>
+
+          <p
+            style={{
+              marginTop:
+                16,
+
+              color:
+                "#666",
+
+              fontSize:
+                14,
+            }}
+          >
+            Googleログイン自体は成功していても、
+            Firestoreのユーザー登録がない場合は
+            システムを利用できません。
           </p>
 
           <Link
@@ -195,10 +301,10 @@ export default function DashboardPage() {
                 "inline-block",
 
               marginTop:
-                16,
+                20,
 
               padding:
-                "10px 18px",
+                "10px 20px",
 
               borderRadius:
                 7,
@@ -213,11 +319,18 @@ export default function DashboardPage() {
                 "none",
             }}
           >
-            ログイン画面へ
+            ログイン画面
           </Link>
         </section>
       </main>
     );
+  }
+
+  /*
+   * ユーザーが取得できない場合
+   */
+  if (!user) {
+    return null;
   }
 
   return (
@@ -310,35 +423,18 @@ export default function DashboardPage() {
             32,
         }}
       >
-        <div
+        <h1>
+          ダッシュボード
+        </h1>
+
+        <p
           style={{
-            marginBottom:
-              28,
+            color:
+              "#666",
           }}
         >
-          <h1
-            style={{
-              margin:
-                "0 0 8px",
-
-              fontSize:
-                28,
-            }}
-          >
-            ダッシュボード
-          </h1>
-
-          <p
-            style={{
-              margin: 0,
-
-              color:
-                "#666",
-            }}
-          >
-            答案採点システムへようこそ。
-          </p>
-        </div>
+          {user.name}さん、ようこそ。
+        </p>
 
         <div
           style={{
@@ -350,83 +446,55 @@ export default function DashboardPage() {
 
             gap:
               16,
+
+            marginTop:
+              28,
           }}
         >
           <DashboardCard
             href="/students"
             title="生徒管理"
-            description="生徒・学年・クラス・生徒番号を管理します。"
           />
 
           <DashboardCard
             href="/qr-stickers"
             title="QRシール"
-            description="生徒QRシールを発行します。"
           />
 
           <DashboardCard
             href="/tests"
             title="テスト管理"
-            description="テスト・教科・問題・配点を管理します。"
           />
 
           <DashboardCard
             href="/answers"
             title="答案管理"
-            description="既存答案を管理します。"
           />
 
           <DashboardCard
             href="/grading"
             title="採点"
-            description="答案の自動採点・確認を行います。"
           />
 
           <DashboardCard
             href="/results"
             title="成績"
-            description="得点・偏差値・順位を確認します。"
           />
 
           <DashboardCard
             href="/reports"
             title="成績表"
-            description="成績表を作成・確認します。"
           />
 
           <DashboardCard
             href="/retests"
             title="追試"
-            description="追試対象者と結果を管理します。"
           />
 
-          {(user.role ===
-            "本部管理者" ||
-            user.role ===
-              "校舎管理者") && (
-            <>
-              <DashboardCard
-                href="/users"
-                title="ユーザー管理"
-                description="ユーザーと権限を管理します。"
-              />
-
-              <DashboardCard
-                href="/settings"
-                title="設定"
-                description="塾・校舎・システム設定を管理します。"
-              />
-            </>
-          )}
-
-          {user.role ===
-            "本部管理者" && (
-            <DashboardCard
-              href="/schools"
-              title="学校・校舎"
-              description="学校・校舎を管理します。"
-            />
-          )}
+          <DashboardCard
+            href="/settings"
+            title="設定"
+          />
         </div>
       </section>
     </main>
@@ -436,13 +504,9 @@ export default function DashboardPage() {
 function DashboardCard({
   href,
   title,
-  description,
 }: {
   href: string;
-
   title: string;
-
-  description: string;
 }) {
   return (
     <Link
@@ -450,9 +514,6 @@ function DashboardCard({
       style={{
         display:
           "block",
-
-        minHeight:
-          150,
 
         padding:
           24,
@@ -472,39 +533,11 @@ function DashboardCard({
         textDecoration:
           "none",
 
-        boxShadow:
-          "0 2px 8px rgba(0,0,0,.03)",
+        fontWeight:
+          600,
       }}
     >
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginBottom:
-            10,
-
-          fontSize:
-            17,
-        }}
-      >
-        {title}
-      </strong>
-
-      <span
-        style={{
-          color:
-            "#666",
-
-          fontSize:
-            13,
-
-          lineHeight:
-            1.7,
-        }}
-      >
-        {description}
-      </span>
+      {title}
     </Link>
   );
 }
