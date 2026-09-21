@@ -23,8 +23,7 @@ type AuthGuardProps = {
 export default function AuthGuard({
   children,
 }: AuthGuardProps) {
-  const router =
-    useRouter();
+  const router = useRouter();
 
   const pathname =
     usePathname();
@@ -37,22 +36,28 @@ export default function AuthGuard({
   const [checking, setChecking] =
     useState(true);
 
-  const [error, setError] =
-    useState("");
-
   useEffect(() => {
+    /*
+     * ログインページは
+     * 認証ガードの対象外。
+     */
     if (
       pathname === "/login"
     ) {
       setChecking(false);
+
       return;
     }
 
     const unsubscribe =
       observeAuth(
         (appUser) => {
+          /*
+           * 未ログイン
+           */
           if (!appUser) {
             setUser(null);
+
             setChecking(false);
 
             router.replace(
@@ -64,16 +69,22 @@ export default function AuthGuard({
             return;
           }
 
-          setUser(appUser);
-          setError("");
+          /*
+           * ログイン済み
+           */
+          setUser(
+            appUser
+          );
+
           setChecking(false);
         },
-        (authError) => {
+        () => {
+          /*
+           * 認証エラー
+           */
           setUser(null);
+
           setChecking(false);
-          setError(
-            authError.message
-          );
 
           router.replace(
             "/login"
@@ -89,64 +100,34 @@ export default function AuthGuard({
     router,
   ]);
 
+  /*
+   * ログインページ
+   */
   if (
     pathname === "/login"
   ) {
     return <>{children}</>;
   }
 
+  /*
+   * 認証確認中は何も表示しない。
+   */
   if (checking) {
-    return (
-      <main
-        style={{
-          minHeight:
-            "100vh",
-          display:
-            "grid",
-          placeItems:
-            "center",
-          background:
-            "#f6f7f9",
-        }}
-      >
-        <div
-          style={{
-            textAlign:
-              "center",
-          }}
-        >
-          <p>
-            認証情報を確認しています...
-          </p>
-        </div>
-      </main>
-    );
+    return null;
   }
 
+  /*
+   * 未ログイン時は何も表示しない。
+   *
+   * router.replace("/login")
+   * がログイン画面へ移動させる。
+   */
   if (!user) {
-    return (
-      <main
-        style={{
-          minHeight:
-            "100vh",
-          display:
-            "grid",
-          placeItems:
-            "center",
-        }}
-      >
-        {error ? (
-          <p>
-            {error}
-          </p>
-        ) : (
-          <p>
-            ログイン画面へ移動しています...
-          </p>
-        )}
-      </main>
-    );
+    return null;
   }
 
+  /*
+   * 認証済み
+   */
   return <>{children}</>;
 }
