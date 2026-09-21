@@ -3,6 +3,7 @@
 import {
   ReactNode,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -41,9 +42,9 @@ import type {
   UserRole,
 } from "@/lib/types";
 
-/* =========================================================
-   Types
-   ========================================================= */
+type AppShellProps = {
+  children: ReactNode;
+};
 
 type UserProfile = {
   uid: string;
@@ -65,10 +66,6 @@ type UserProfile = {
     | null;
 };
 
-type AppShellProps = {
-  children: ReactNode;
-};
-
 type MenuItem = {
   label: string;
 
@@ -84,147 +81,236 @@ type MenuSection = {
 };
 
 /* =========================================================
-   Menu definition
+   メニュー定義
    ========================================================= */
 
-const MENU_SECTIONS: MenuSection[] = [
-  {
-    label: "メイン",
+const MENU_SECTIONS: MenuSection[] =
+  [
+    {
+      label: "メイン",
 
-    items: [
-      {
-        label: "ダッシュボード",
-        href: "/dashboard",
-        permission: "dashboard.view",
-      },
-    ],
-  },
+      items: [
+        {
+          label:
+            "ダッシュボード",
 
-  {
-    label: "生徒・テスト",
+          href: "/dashboard",
 
-    items: [
-      {
-        label: "生徒管理",
-        href: "/students",
-        permission: "students.view",
-      },
+          permission:
+            "dashboard.view",
+        },
+      ],
+    },
 
-      {
-        label: "テスト管理",
-        href: "/tests",
-        permission: "tests.view",
-      },
-    ],
-  },
+    {
+      label:
+        "生徒・テスト",
 
-  {
-    label: "答案・採点",
+      items: [
+        {
+          label:
+            "生徒管理",
 
-    items: [
-      {
-        label: "答案管理",
-        href: "/answers",
-        permission: "answers.view",
-      },
+          href: "/students",
 
-      {
-        label: "一次確認",
-        href: "/grading/review",
-        permission:
-          "grading.firstReview",
-      },
+          permission:
+            "students.view",
+        },
 
-      {
-        label: "二次確認",
-        href: "/grading/second-review",
-        permission:
-          "grading.secondReview",
-      },
-    ],
-  },
+        {
+          label:
+            "テスト管理",
 
-  {
-    label: "成績",
+          href: "/tests",
 
-    items: [
-      {
-        label: "成績管理",
-        href: "/results",
-        permission: "results.view",
-      },
+          permission:
+            "tests.view",
+        },
+      ],
+    },
 
-      {
-        label: "成績表",
-        href: "/report-cards",
-        permission:
-          "reportCards.view",
-      },
+    {
+      label:
+        "答案・採点",
 
-      {
-        label: "追試管理",
-        href: "/retests",
-        permission: "retests.view",
-      },
-    ],
-  },
+      items: [
+        {
+          label:
+            "答案管理",
 
-  {
-    label: "QR",
+          href: "/answers",
 
-    items: [
-      {
-        label: "QRシール発行",
-        href: "/qr-stickers",
-        permission: "qr.view",
-      },
-    ],
-  },
+          permission:
+            "answers.view",
+        },
 
-  {
-    label: "管理",
+        {
+          label:
+            "一次確認",
 
-    items: [
-      {
-        label: "校舎管理",
-        href: "/schools",
-        permission: "schools.view",
-      },
+          href:
+            "/grading/review",
 
-      {
-        label: "講師管理",
-        href: "/teachers",
-        permission:
-          "teachers.view",
-      },
+          permission:
+            "grading.firstReview",
+        },
 
-      {
-        label: "権限管理",
-        href: "/roles",
-        permission: "roles.view",
-      },
+        {
+          label:
+            "二次確認",
 
-      {
-        label: "利用状況",
-        href: "/usage",
-        permission: "usage.view",
-      },
+          href:
+            "/grading/second-review",
 
-      {
-        label: "システムログ",
-        href: "/logs",
-        permission: "logs.view",
-      },
+          permission:
+            "grading.secondReview",
+        },
+      ],
+    },
 
-      {
-        label: "システム設定",
-        href: "/settings",
-        permission:
-          "settings.view",
-      },
-    ],
-  },
-];
+    {
+      label: "成績",
+
+      items: [
+        {
+          label:
+            "成績",
+
+          href: "/results",
+
+          permission:
+            "results.view",
+        },
+
+        {
+          label:
+            "成績表",
+
+          href:
+            "/report-cards",
+
+          permission:
+            "reportCards.view",
+        },
+
+        {
+          label:
+            "追試",
+
+          href: "/retests",
+
+          permission:
+            "retests.view",
+        },
+      ],
+    },
+
+    {
+      label: "学習",
+
+      items: [
+        {
+          label:
+            "学習履歴",
+
+          href:
+            "/learning",
+
+          permission:
+            "learning.view",
+        },
+      ],
+    },
+
+    {
+      label: "QR",
+
+      items: [
+        {
+          label:
+            "QRシール発行",
+
+          href:
+            "/qr-stickers",
+
+          permission:
+            "qr.view",
+        },
+      ],
+    },
+
+    {
+      label: "管理",
+
+      items: [
+        {
+          label:
+            "校舎管理",
+
+          href:
+            "/schools",
+
+          permission:
+            "schools.view",
+        },
+
+        {
+          label:
+            "講師管理",
+
+          href:
+            "/teachers",
+
+          permission:
+            "teachers.view",
+        },
+
+        {
+          label:
+            "権限管理",
+
+          href:
+            "/roles",
+
+          permission:
+            "roles.view",
+        },
+
+        {
+          label:
+            "利用状況",
+
+          href:
+            "/usage",
+
+          permission:
+            "usage.view",
+        },
+
+        {
+          label:
+            "システムログ",
+
+          href:
+            "/logs",
+
+          permission:
+            "logs.view",
+        },
+
+        {
+          label:
+            "システム設定",
+
+          href:
+            "/settings",
+
+          permission:
+            "settings.view",
+        },
+      ],
+    },
+  ];
 
 /* =========================================================
    AppShell
@@ -233,7 +319,8 @@ const MENU_SECTIONS: MenuSection[] = [
 export default function AppShell({
   children,
 }: AppShellProps) {
-  const router = useRouter();
+  const router =
+    useRouter();
 
   const pathname =
     usePathname();
@@ -261,7 +348,7 @@ export default function AppShell({
   ] = useState(false);
 
   /* =======================================================
-     Authentication
+     Firebase Authentication
      ======================================================= */
 
   useEffect(() => {
@@ -277,12 +364,6 @@ export default function AppShell({
             return;
           }
 
-          /*
-           * ログアウト状態。
-           *
-           * 勝手にログイン画面へ
-           * リダイレクトしない。
-           */
           if (!firebaseUser) {
             setUser(null);
 
@@ -292,7 +373,7 @@ export default function AppShell({
           }
 
           try {
-            const userSnapshot =
+            const snapshot =
               await getDoc(
                 doc(
                   db,
@@ -306,12 +387,12 @@ export default function AppShell({
             }
 
             if (
-              !userSnapshot.exists()
+              !snapshot.exists()
             ) {
               setUser(null);
 
               setAuthError(
-                "システムのユーザー情報が登録されていません。"
+                "ユーザー情報が登録されていません。"
               );
 
               setLoading(false);
@@ -320,7 +401,7 @@ export default function AppShell({
             }
 
             const data =
-              userSnapshot.data();
+              snapshot.data();
 
             const role =
               isUserRole(
@@ -329,56 +410,50 @@ export default function AppShell({
                 ? data.role
                 : null;
 
-            const profile: UserProfile =
-              {
-                uid:
-                  firebaseUser.uid,
+            setUser({
+              uid:
+                firebaseUser.uid,
 
-                organizationId:
-                  typeof data.organizationId ===
-                  "string"
-                    ? data.organizationId
-                    : null,
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
 
-                role,
+              role,
 
-                schoolIds:
-                  Array.isArray(
-                    data.schoolIds
-                  )
-                    ? data.schoolIds.filter(
-                        (
-                          value
-                        ): value is string =>
-                          typeof value ===
-                          "string"
-                      )
-                    : [],
+              schoolIds:
+                Array.isArray(
+                  data.schoolIds
+                )
+                  ? data.schoolIds.filter(
+                      (
+                        value
+                      ): value is string =>
+                        typeof value ===
+                        "string"
+                    )
+                  : [],
 
-                name:
-                  typeof data.name ===
-                  "string"
-                    ? data.name
-                    : firebaseUser.displayName ??
-                      "",
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
 
-                studentId:
-                  typeof data.studentId ===
-                  "string"
-                    ? data.studentId
-                    : null,
-              };
-
-            setUser(
-              profile
-            );
+              studentId:
+                typeof data.studentId ===
+                "string"
+                  ? data.studentId
+                  : null,
+            });
 
             setAuthError("");
           } catch (
             error
           ) {
             console.error(
-              "AppShell authentication error:",
               error
             );
 
@@ -389,7 +464,7 @@ export default function AppShell({
             setUser(null);
 
             setAuthError(
-              getSafeErrorMessage(
+              getErrorMessage(
                 error
               )
             );
@@ -409,7 +484,7 @@ export default function AppShell({
   }, []);
 
   /* =======================================================
-     Special pages
+     Login / 403
      ======================================================= */
 
   const isLoginPage =
@@ -418,12 +493,9 @@ export default function AppShell({
       "/login/"
     );
 
-  const isForbiddenPage =
+  const is403Page =
     pathname === "/403";
 
-  /*
-   * Login pageはShellなし。
-   */
   if (isLoginPage) {
     return (
       <>
@@ -432,10 +504,7 @@ export default function AppShell({
     );
   }
 
-  /*
-   * 403ページはShellなし。
-   */
-  if (isForbiddenPage) {
+  if (is403Page) {
     return (
       <>
         {children}
@@ -449,7 +518,38 @@ export default function AppShell({
 
   if (loading) {
     return (
-      <LoadingScreen />
+      <div
+        style={
+          loadingStyle
+        }
+      >
+        <div
+          style={
+            loadingCardStyle
+          }
+        >
+          <strong
+            style={{
+              fontSize:
+                24,
+            }}
+          >
+            EduSystem
+          </strong>
+
+          <p
+            style={{
+              margin:
+                "10px 0 0",
+
+              color:
+                "#777",
+            }}
+          >
+            認証情報を確認しています...
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -459,17 +559,57 @@ export default function AppShell({
 
   if (!user) {
     return (
-      <UnauthorizedScreen
-        message={
-          authError ||
-          "この画面を利用するにはログインしてください。"
+      <div
+        style={
+          unauthorizedStyle
         }
-        onLogin={() =>
-          router.push(
-            "/login"
-          )
-        }
-      />
+      >
+        <div
+          style={
+            unauthorizedCardStyle
+          }
+        >
+          <strong
+            style={{
+              fontSize:
+                28,
+            }}
+          >
+            EduSystem
+          </strong>
+
+          <h1>
+            ログインが必要です
+          </h1>
+
+          <p
+            style={{
+              color:
+                "#666",
+
+              lineHeight:
+                1.8,
+            }}
+          >
+            {authError ||
+              "この画面を利用するにはログインしてください。"}
+          </p>
+
+          <button
+            type="button"
+            onClick={() =>
+              router.push(
+                "/login"
+              )
+            }
+            style={
+              primaryButton
+            }
+          >
+            ログイン画面へ
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -480,7 +620,7 @@ export default function AppShell({
   if (!user.role) {
     return (
       <ForbiddenScreen
-        message="このアカウントには権限が設定されていません。管理者に確認してください。"
+        message="アカウントの権限が設定されていません。"
       />
     );
   }
@@ -489,13 +629,12 @@ export default function AppShell({
      Route permission
      ======================================================= */
 
-  const routeAllowed =
-    canAccessRoute(
+  if (
+    !canAccessRoute(
       user.role,
       pathname
-    );
-
-  if (!routeAllowed) {
+    )
+  ) {
     return (
       <ForbiddenScreen
         message="このページを利用する権限がありません。"
@@ -504,12 +643,18 @@ export default function AppShell({
   }
 
   /* =======================================================
-     Visible menu
+     Menu
      ======================================================= */
 
   const visibleSections =
-    getVisibleSections(
-      user.role
+    useMemo(
+      () =>
+        getVisibleSections(
+          user.role
+        ),
+      [
+        user.role,
+      ]
     );
 
   /* =======================================================
@@ -526,16 +671,10 @@ export default function AppShell({
         true
       );
 
-      setAuthError("");
-
       await signOut(
         auth
       );
 
-      /*
-       * 明示的なログアウト時だけ
-       * loginへ移動。
-       */
       router.replace(
         "/login"
       );
@@ -543,7 +682,6 @@ export default function AppShell({
       error
     ) {
       console.error(
-        "Logout error:",
         error
       );
 
@@ -567,10 +705,6 @@ export default function AppShell({
         shellStyle
       }
     >
-      {/* ==================================================
-          Sidebar
-          ================================================== */}
-
       <aside
         style={
           sidebarStyle
@@ -586,10 +720,10 @@ export default function AppShell({
           <Link
             href="/dashboard"
             style={
-              logoLinkStyle
+              logoStyle
             }
           >
-            QR採点システム
+            EduSystem
           </Link>
         </div>
 
@@ -605,11 +739,13 @@ export default function AppShell({
               userNameStyle
             }
           >
-            {user.name ||
-              "ユーザー"}
+            {
+              user.name ||
+              "ユーザー"
+            }
           </div>
 
-          <div
+          <span
             style={
               roleBadgeStyle
             }
@@ -619,10 +755,10 @@ export default function AppShell({
                 user.role
               )
             }
-          </div>
+          </span>
         </div>
 
-        {/* Navigation */}
+        {/* Menu */}
 
         <nav
           style={
@@ -655,13 +791,6 @@ export default function AppShell({
                   (
                     item
                   ) => {
-                    /*
-                     * 念のため描画直前にも
-                     * 権限チェック。
-                     *
-                     * 権限がなければ
-                     * DOMにも出さない。
-                     */
                     if (
                       !hasPermission(
                         user.role,
@@ -675,17 +804,6 @@ export default function AppShell({
                       isActivePath(
                         pathname,
                         item.href
-                      );
-
-                    /*
-                     * 生徒の場合、
-                     * 成績管理という名前より
-                     * 「成績」の方が自然。
-                     */
-                    const label =
-                      getMenuLabel(
-                        user.role,
-                        item
                       );
 
                     return (
@@ -705,7 +823,7 @@ export default function AppShell({
                         }}
                       >
                         {
-                          label
+                          item.label
                         }
                       </Link>
                     );
@@ -716,11 +834,11 @@ export default function AppShell({
           )}
         </nav>
 
-        {/* Footer */}
+        {/* Logout */}
 
         <div
           style={
-            sidebarFooterStyle
+            footerStyle
           }
         >
           {authError && (
@@ -759,10 +877,6 @@ export default function AppShell({
         </div>
       </aside>
 
-      {/* ==================================================
-          Main content
-          ================================================== */}
-
       <div
         style={
           contentStyle
@@ -773,33 +887,27 @@ export default function AppShell({
             topbarStyle
           }
         >
-          <div
+          <span
             style={
-              topbarRoleContainerStyle
+              topbarRoleStyle
             }
           >
-            <span
-              style={
-                topbarRoleStyle
-              }
-            >
-              {
-                getRoleLabel(
-                  user.role
-                )
-              }
-            </span>
-          </div>
+            {
+              getRoleLabel(
+                user.role
+              )
+            }
+          </span>
 
-          <div
+          <span
             style={
-              topbarUserStyle
+              topbarNameStyle
             }
           >
             {
               user.name
             }
-          </div>
+          </span>
         </header>
 
         <main
@@ -815,7 +923,7 @@ export default function AppShell({
 }
 
 /* =========================================================
-   Menu filtering
+   Menu
    ========================================================= */
 
 function getVisibleSections(
@@ -823,7 +931,7 @@ function getVisibleSections(
     | UserRole
     | null
     | undefined
-): MenuSection[] {
+) {
   if (!role) {
     return [];
   }
@@ -832,8 +940,10 @@ function getVisibleSections(
     .map(
       (
         section
-      ) => {
-        const items =
+      ) => ({
+        ...section,
+
+        items:
           section.items.filter(
             (
               item
@@ -842,13 +952,8 @@ function getVisibleSections(
                 role,
                 item.permission
               )
-          );
-
-        return {
-          ...section,
-          items,
-        };
-      }
+          ),
+      })
     )
     .filter(
       (
@@ -860,29 +965,7 @@ function getVisibleSections(
 }
 
 /* =========================================================
-   Menu labels
-   ========================================================= */
-
-function getMenuLabel(
-  role: UserRole,
-  item: MenuItem
-) {
-  /*
-   * 生徒には「成績管理」ではなく
-   * 「成績」と表示。
-   */
-  if (
-    role === "生徒" &&
-    item.href === "/results"
-  ) {
-    return "成績";
-  }
-
-  return item.label;
-}
-
-/* =========================================================
-   Active path
+   Active
    ========================================================= */
 
 function isActivePath(
@@ -933,140 +1016,9 @@ function getRoleLabel(
     | null
     | undefined
 ) {
-  switch (
-    role
-  ) {
-    case "本部管理者":
-      return "本部管理者";
-
-    case "校舎管理者":
-      return "校舎管理者";
-
-    case "講師":
-      return "講師";
-
-    case "生徒":
-      return "生徒";
-
-    default:
-      return "権限未設定";
-  }
-}
-
-/* =========================================================
-   Loading
-   ========================================================= */
-
-function LoadingScreen() {
   return (
-    <div
-      style={
-        loadingStyle
-      }
-    >
-      <div
-        style={
-          loadingCardStyle
-        }
-      >
-        <div
-          style={
-            loadingTitleStyle
-          }
-        >
-          QR採点システム
-        </div>
-
-        <div
-          style={
-            loadingTextStyle
-          }
-        >
-          認証情報を確認しています...
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   Unauthorized
-   ========================================================= */
-
-function UnauthorizedScreen({
-  message,
-  onLogin,
-}: {
-  message: string;
-
-  onLogin: () => void;
-}) {
-  return (
-    <div
-      style={
-        unauthorizedStyle
-      }
-    >
-      <div
-        style={
-          unauthorizedCardStyle
-        }
-      >
-        <div
-          style={{
-            fontSize:
-              28,
-
-            fontWeight:
-              800,
-
-            marginBottom:
-              16,
-          }}
-        >
-          QR採点システム
-        </div>
-
-        <h1
-          style={{
-            margin:
-              "0 0 10px",
-
-            fontSize:
-              22,
-          }}
-        >
-          ログインが必要です
-        </h1>
-
-        <p
-          style={{
-            margin:
-              "0 0 20px",
-
-            color:
-              "#666",
-
-            lineHeight:
-              1.8,
-          }}
-        >
-          {message}
-        </p>
-
-        <button
-          type="button"
-          onClick={
-            onLogin
-          }
-          style={
-            primaryButton
-          }
-        >
-          ログイン画面へ
-        </button>
-      </div>
-    </div>
+    role ??
+    "権限未設定"
   );
 }
 
@@ -1101,20 +1053,21 @@ function ForbiddenScreen({
           403
         </div>
 
-        <h1
+        <strong
           style={{
-            margin:
-              "0 0 10px",
+            fontSize:
+              20,
           }}
         >
+          EduSystem
+        </strong>
+
+        <h1>
           権限がありません
         </h1>
 
         <p
           style={{
-            margin:
-              "0 0 24px",
-
             color:
               "#666",
 
@@ -1122,7 +1075,9 @@ function ForbiddenScreen({
               1.8,
           }}
         >
-          {message}
+          {
+            message
+          }
         </p>
 
         <button
@@ -1147,7 +1102,7 @@ function ForbiddenScreen({
    Error
    ========================================================= */
 
-function getSafeErrorMessage(
+function getErrorMessage(
   error: unknown
 ) {
   const value =
@@ -1230,7 +1185,7 @@ const logoAreaStyle:
       "1px solid #eee",
   };
 
-const logoLinkStyle:
+const logoStyle:
   React.CSSProperties = {
     color:
       "#111",
@@ -1239,7 +1194,7 @@ const logoLinkStyle:
       "none",
 
     fontSize:
-      18,
+      20,
 
     fontWeight:
       800,
@@ -1256,11 +1211,11 @@ const userAreaStyle:
 
 const userNameStyle:
   React.CSSProperties = {
-    fontWeight:
-      700,
-
     fontSize:
       14,
+
+    fontWeight:
+      700,
   };
 
 const roleBadgeStyle:
@@ -1321,9 +1276,6 @@ const sectionTitleStyle:
 
     fontWeight:
       700,
-
-    letterSpacing:
-      "0.05em",
   };
 
 const menuItemStyle:
@@ -1345,9 +1297,6 @@ const menuItemStyle:
 
     fontSize:
       13,
-
-    fontWeight:
-      500,
   };
 
 const activeMenuItemStyle:
@@ -1362,7 +1311,7 @@ const activeMenuItemStyle:
       700,
   };
 
-const sidebarFooterStyle:
+const footerStyle:
   React.CSSProperties = {
     padding:
       14,
@@ -1390,9 +1339,6 @@ const sidebarErrorStyle:
 
     fontSize:
       11,
-
-    lineHeight:
-      1.5,
   };
 
 const logoutButtonStyle:
@@ -1401,7 +1347,7 @@ const logoutButtonStyle:
       "100%",
 
     padding:
-      "10px",
+      10,
 
     border:
       "1px solid #ddd",
@@ -1414,9 +1360,6 @@ const logoutButtonStyle:
 
     cursor:
       "pointer",
-
-    fontSize:
-      13,
   };
 
 const contentStyle:
@@ -1452,15 +1395,6 @@ const topbarStyle:
       "1px solid #e1e4e8",
   };
 
-const topbarRoleContainerStyle:
-  React.CSSProperties = {
-    display:
-      "flex",
-
-    alignItems:
-      "center",
-  };
-
 const topbarRoleStyle:
   React.CSSProperties = {
     fontSize:
@@ -1473,7 +1407,7 @@ const topbarRoleStyle:
       "#666",
   };
 
-const topbarUserStyle:
+const topbarNameStyle:
   React.CSSProperties = {
     fontSize:
       13,
@@ -1522,27 +1456,6 @@ const loadingCardStyle:
 
     textAlign:
       "center",
-  };
-
-const loadingTitleStyle:
-  React.CSSProperties = {
-    fontSize:
-      20,
-
-    fontWeight:
-      800,
-  };
-
-const loadingTextStyle:
-  React.CSSProperties = {
-    marginTop:
-      10,
-
-    color:
-      "#777",
-
-    fontSize:
-      13,
   };
 
 const unauthorizedStyle:
@@ -1637,20 +1550,23 @@ const forbiddenCardStyle:
 
 const forbiddenCodeStyle:
   React.CSSProperties = {
-    marginBottom:
-      8,
-
     fontSize:
       48,
 
     fontWeight:
       800,
+
+    marginBottom:
+      8,
   };
 
 const primaryButton:
   React.CSSProperties = {
     width:
       "100%",
+
+    marginTop:
+      16,
 
     padding:
       "12px 20px",
