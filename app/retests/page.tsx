@@ -13,11 +13,11 @@ import {
 import {
   addDoc,
   collection,
+  doc,
   getDocs,
   query,
   serverTimestamp,
   updateDoc,
-  doc,
   where,
 } from "firebase/firestore";
 
@@ -31,6 +31,12 @@ type UserRole =
   | "校舎管理者"
   | "講師"
   | "生徒";
+
+type RetestStatus =
+  | "未受験"
+  | "採点待ち"
+  | "採点済み"
+  | "確定";
 
 type CurrentUser = {
   uid: string;
@@ -74,22 +80,44 @@ type Answer = {
 
 type Retest = {
   id: string;
+
   organizationId: string;
+
   originalTestId: string;
+
   originalTestCode: string;
+
   studentId: string;
+
   studentNumber: string;
+
   thresholdScore: number;
+
   originalScore: number;
+
   retestTestId: string;
+
   retestTestCode: string;
+
   scheduledDate: string;
-  status:
-    | "未受験"
-    | "受験済み"
-    | "合格"
-    | "不合格"
-    | "免除";
+
+  status: RetestStatus;
+
+  /*
+   * 追試の手採点結果
+   */
+  manualScore: number | null;
+
+  manualMaxScore: number;
+
+  manualPercentage: number | null;
+
+  manualRank: number | null;
+
+  manualDeviationScore:
+    | number
+    | null;
+
   createdAt: unknown;
 };
 
@@ -151,6 +179,13 @@ export default function RetestsPage() {
   ] = useState<string[]>(
     []
   );
+
+  const [
+    manualScores,
+    setManualScores,
+  ] = useState<
+    Record<string, string>
+  >({});
 
   const [
     loading,
@@ -313,80 +348,88 @@ export default function RetestsPage() {
         studentSnapshot,
         answerSnapshot,
         retestSnapshot,
-      ] = await Promise.all([
-        getDocs(
-          query(
-            collection(
-              db,
-              "tests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "active",
-              "==",
-              true
+      ] =
+        await Promise.all([
+          getDocs(
+            query(
+              collection(
+                db,
+                "tests"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "active",
+                "==",
+                true
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "students"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "active",
-              "==",
-              true
+          getDocs(
+            query(
+              collection(
+                db,
+                "students"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "active",
+                "==",
+                true
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "answers"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "finalized",
-              "==",
-              true
+          /*
+           * 通常テストの確定答案。
+           * 追試の候補抽出にのみ使用。
+           */
+          getDocs(
+            query(
+              collection(
+                db,
+                "answers"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "finalized",
+                "==",
+                true
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "retests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
+          /*
+           * 追試データ。
+           */
+          getDocs(
+            query(
+              collection(
+                db,
+                "retests"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
             )
-          )
-        ),
-      ]);
+          ),
+        ]);
 
-      setTests(
+      const loadedTests =
         testSnapshot.docs.map(
           (
             item
@@ -443,10 +486,9 @@ export default function RetestsPage() {
                 false,
             };
           }
-        )
-      );
+        );
 
-      setStudents(
+      const loadedStudents =
         studentSnapshot.docs.map(
           (
             item
@@ -488,10 +530,9 @@ export default function RetestsPage() {
                 false,
             };
           }
-        )
-      );
+        );
 
-      setAnswers(
+      const loadedAnswers =
         answerSnapshot.docs.map(
           (
             item
@@ -533,10 +574,9 @@ export default function RetestsPage() {
                 true,
             };
           }
-        )
-      );
+        );
 
-      setRetests(
+      const loadedRetests =
         retestSnapshot.docs.map(
           (
             item
@@ -602,15 +642,84 @@ export default function RetestsPage() {
                   ? data.status
                   : "未受験",
 
+              manualScore:
+                nullableNumber(
+                  data.manualScore
+                ),
+
+              manualMaxScore:
+                numberValue(
+                  data.manualMaxScore
+                ),
+
+              manualPercentage:
+                nullableNumber(
+                  data.manualPercentage
+                ),
+
+              manualRank:
+                nullableNumber(
+                  data.manualRank
+                ),
+
+              manualDeviationScore:
+                nullableNumber(
+                  data.manualDeviationScore
+                ),
+
               createdAt:
                 data.createdAt,
             };
           }
-        )
+        );
+
+      setTests(
+        loadedTests
+      );
+
+      setStudents(
+        loadedStudents
+      );
+
+      setAnswers(
+        loadedAnswers
+      );
+
+      setRetests(
+        loadedRetests
       );
 
       /*
-       * 初期テスト
+       * 手入力欄を復元。
+       */
+
+      const scoreValues:
+        Record<string, string> =
+        {};
+
+      for (
+        const retest of
+          loadedRetests
+      ) {
+        if (
+          retest.manualScore !==
+          null
+        ) {
+          scoreValues[
+            retest.id
+          ] =
+            String(
+              retest.manualScore
+            );
+        }
+      }
+
+      setManualScores(
+        scoreValues
+      );
+
+      /*
+       * 初期テスト。
        */
 
       if (
@@ -618,63 +727,7 @@ export default function RetestsPage() {
       ) {
         const available =
           getAvailableTests(
-            testSnapshot.docs.map(
-              (
-                item
-              ) => {
-                const data =
-                  item.data();
-
-                return {
-                  id:
-                    item.id,
-
-                  testId:
-                    stringValue(
-                      data.testId
-                    ),
-
-                  name:
-                    stringValue(
-                      data.name
-                    ),
-
-                  subject:
-                    stringValue(
-                      data.subject
-                    ),
-
-                  grade:
-                    stringValue(
-                      data.grade
-                    ),
-
-                  className:
-                    stringValue(
-                      data.className
-                    ),
-
-                  schoolId:
-                    stringValue(
-                      data.schoolId
-                    ),
-
-                  examDate:
-                    stringValue(
-                      data.examDate
-                    ),
-
-                  totalScore:
-                    numberValue(
-                      data.totalScore
-                    ),
-
-                  active:
-                    data.active !==
-                    false,
-                } satisfies Test;
-              }
-            ),
+            loadedTests,
             currentUser
           );
 
@@ -763,6 +816,9 @@ export default function RetestsPage() {
         return [];
       }
 
+      /*
+       * 既に追試登録済みの生徒を除外。
+       */
       const existingStudentIds =
         new Set(
           retests
@@ -771,9 +827,7 @@ export default function RetestsPage() {
                 retest
               ) =>
                 retest.originalTestId ===
-                  selectedTest.id &&
-                retest.status !==
-                  "免除"
+                  selectedTest.id
             )
             .map(
               (
@@ -783,7 +837,8 @@ export default function RetestsPage() {
             )
         );
 
-      const result: Candidate[] =
+      const result:
+        Candidate[] =
         [];
 
       for (
@@ -804,8 +859,7 @@ export default function RetestsPage() {
         }
 
         if (
-          answer.studentId ===
-          null
+          !answer.studentId
         ) {
           continue;
         }
@@ -860,9 +914,9 @@ export default function RetestsPage() {
     }, [
       selectedTest,
       threshold,
+      retests,
       answers,
       students,
-      retests,
       currentUser,
     ]);
 
@@ -910,7 +964,31 @@ export default function RetestsPage() {
 
   /*
    * ========================================================
-   * 選択
+   * 追試テストID
+   * ========================================================
+   */
+
+  function generateRetestCode(
+    test: Test
+  ) {
+    const date =
+      new Date()
+        .toISOString()
+        .slice(
+          0,
+          10
+        )
+        .replace(
+          /-/g,
+          ""
+        );
+
+    return `${test.testId}-R${date}`;
+  }
+
+  /*
+   * ========================================================
+   * 追試対象選択
    * ========================================================
    */
 
@@ -953,30 +1031,6 @@ export default function RetestsPage() {
     setSelectedCandidateIds(
       []
     );
-  }
-
-  /*
-   * ========================================================
-   * 追試テストID
-   * ========================================================
-   */
-
-  function generateRetestCode(
-    originalTest: Test
-  ) {
-    const date =
-      new Date()
-        .toISOString()
-        .slice(
-          0,
-          10
-        )
-        .replace(
-          /-/g,
-          ""
-        );
-
-    return `${originalTest.testId}-R${date}`;
   }
 
   /*
@@ -1059,20 +1113,16 @@ export default function RetestsPage() {
       setSaving(true);
 
       /*
-       * 追試テストID
+       * 追試専用テストを作成する。
        *
-       * 同一の追試テストを
-       * 対象者全員で共有する。
+       * ただしこれは通常採点には流さない。
+       * isRetest=true を明示。
        */
 
       const retestCode =
         generateRetestCode(
           selectedTest
         );
-
-      /*
-       * 既に同じ追試コードがあるか確認。
-       */
 
       const duplicate =
         await getDocs(
@@ -1098,10 +1148,6 @@ export default function RetestsPage() {
         duplicate.empty
           ? ""
           : duplicate.docs[0].id;
-
-      /*
-       * 追試テストを作成。
-       */
 
       if (
         !retestTestDocId
@@ -1143,34 +1189,26 @@ export default function RetestsPage() {
               active:
                 true,
 
+              /*
+               * 重要
+               */
               isRetest:
                 true,
+
+              retestManualGrading:
+                true,
+
+              automaticGrading:
+                false,
+
+              aiGrading:
+                false,
 
               originalTestId:
                 selectedTest.id,
 
               originalTestCode:
                 selectedTest.testId,
-
-              gradingMethod:
-                "手動",
-
-              gradingSettings: {
-                automaticGrading:
-                  false,
-
-                aiGrading:
-                  false,
-
-                firstReviewRequired:
-                  true,
-
-                secondReviewRequired:
-                  true,
-
-                allowManualCorrection:
-                  true,
-              },
 
               createdAt:
                 serverTimestamp(),
@@ -1244,8 +1282,26 @@ export default function RetestsPage() {
 
             scheduledDate,
 
+            /*
+             * 手採点専用
+             */
             status:
               "未受験",
+
+            manualScore:
+              null,
+
+            manualMaxScore:
+              selectedTest.totalScore,
+
+            manualPercentage:
+              null,
+
+            manualRank:
+              null,
+
+            manualDeviationScore:
+              null,
 
             createdBy:
               currentUser.uid,
@@ -1260,23 +1316,18 @@ export default function RetestsPage() {
       }
 
       setMessage(
-        `${selectedCandidateIds.length}人を追試対象として登録しました。`
+        `${selectedCandidateIds.length}人を追試対象として登録しました。追試は手採点専用です。`
       );
 
       setSelectedCandidateIds(
         []
       );
 
-      if (
+      await loadData(
         currentUser.organizationId
-      ) {
-        await loadData(
-          currentUser.organizationId
-        );
-      }
+      );
     } catch (err) {
       console.error(
-        "Retest registration error:",
         err
       );
 
@@ -1292,17 +1343,133 @@ export default function RetestsPage() {
 
   /*
    * ========================================================
-   * ステータス変更
+   * 点数入力
    * ========================================================
    */
 
-  async function updateRetestStatus(
-    retest: Retest,
-    status: Retest["status"]
+  function changeManualScore(
+    retestId: string,
+    value: string
   ) {
+    setManualScores(
+      (
+        current
+      ) => ({
+        ...current,
+
+        [retestId]:
+          value,
+      })
+    );
+  }
+
+  /*
+   * ========================================================
+   * 手採点結果保存
+   * ========================================================
+   */
+
+  async function saveManualScore(
+    retest: Retest
+  ) {
+    if (
+      saving
+    ) {
+      return;
+    }
+
+    if (
+      !currentUser
+    ) {
+      return;
+    }
+
+    const raw =
+      manualScores[
+        retest.id
+      ] ??
+      "";
+
+    if (
+      raw.trim() ===
+      ""
+    ) {
+      setError(
+        "追試の点数を入力してください。"
+      );
+
+      return;
+    }
+
+    const score =
+      Number(
+        raw
+      );
+
+    if (
+      !Number.isFinite(
+        score
+      )
+    ) {
+      setError(
+        "点数を正しく入力してください。"
+      );
+
+      return;
+    }
+
+    if (
+      score <
+        0 ||
+      score >
+        retest.manualMaxScore
+    ) {
+      setError(
+        `点数は0点から${retest.manualMaxScore}点の範囲で入力してください。`
+      );
+
+      return;
+    }
+
+    /*
+     * 権限
+     */
+
+    if (
+      currentUser.role !==
+      "本部管理者" &&
+      !currentUser.schoolIds.includes(
+        getStudentSchoolId(
+          retest.studentId
+        )
+      )
+    ) {
+      setError(
+        "この追試結果を変更する権限がありません。"
+      );
+
+      return;
+    }
+
     try {
+      setSaving(true);
+
       setError("");
       setMessage("");
+
+      const percentage =
+        retest.manualMaxScore >
+        0
+          ? (
+              score /
+              retest.manualMaxScore
+            ) *
+            100
+          : 0;
+
+      /*
+       * まず本人の点数を保存。
+       */
 
       await updateDoc(
         doc(
@@ -1311,19 +1478,50 @@ export default function RetestsPage() {
           retest.id
         ),
         {
-          status,
+          manualScore:
+            score,
+
+          manualMaxScore:
+            retest.manualMaxScore,
+
+          manualPercentage:
+            percentage,
+
+          status:
+            "採点済み",
+
+          scoredBy:
+            currentUser.uid,
+
+          scoredByName:
+            getUserName(
+              currentUser
+            ),
+
+          scoredAt:
+            serverTimestamp(),
 
           updatedAt:
             serverTimestamp(),
         }
       );
 
+      /*
+       * 同じ追試テストの
+       * 採点済み受験者から
+       * 順位・偏差値を再計算。
+       */
+
+      await recalculateRetestStatistics(
+        retest.retestTestId
+      );
+
       setMessage(
-        "追試ステータスを更新しました。"
+        "追試の採点結果を保存しました。順位・偏差値も更新しました。"
       );
 
       if (
-        currentUser?.organizationId
+        currentUser.organizationId
       ) {
         await loadData(
           currentUser.organizationId
@@ -1339,70 +1537,395 @@ export default function RetestsPage() {
           err
         )
       );
+    } finally {
+      setSaving(false);
     }
   }
 
   /*
    * ========================================================
-   * 既存追試
+   * 追試統計再計算
    * ========================================================
    */
 
-  const filteredRetests =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
+  async function recalculateRetestStatistics(
+    retestTestId: string
+  ) {
+    if (
+      !currentUser?.organizationId
+    ) {
+      return;
+    }
 
-      return retests.filter(
+    const snapshot =
+      await getDocs(
+        query(
+          collection(
+            db,
+            "retests"
+          ),
+          where(
+            "organizationId",
+            "==",
+            currentUser.organizationId
+          ),
+          where(
+            "retestTestId",
+            "==",
+            retestTestId
+          ),
+          where(
+            "status",
+            "==",
+            "採点済み"
+          )
+        )
+      );
+
+    const rows =
+      snapshot.docs
+        .map(
+          (
+            item
+          ) => {
+            const data =
+              item.data();
+
+            const score =
+              nullableNumber(
+                data.manualScore
+              );
+
+            if (
+              score ===
+              null
+            ) {
+              return null;
+            }
+
+            return {
+              id:
+                item.id,
+
+              score,
+
+              maxScore:
+                numberValue(
+                  data.manualMaxScore
+                ),
+            };
+          }
+        )
+        .filter(
+          (
+            row
+          ): row is {
+            id: string;
+            score: number;
+            maxScore: number;
+          } =>
+            row !==
+            null
+        );
+
+    if (
+      rows.length ===
+      0
+    ) {
+      return;
+    }
+
+    /*
+     * 平均
+     */
+
+    const mean =
+      rows.reduce(
         (
-          retest
+          sum,
+          row
+        ) =>
+          sum +
+          row.score,
+        0
+      ) /
+      rows.length;
+
+    /*
+     * 標準偏差
+     */
+
+    const variance =
+      rows.reduce(
+        (
+          sum,
+          row
+        ) =>
+          sum +
+          Math.pow(
+            row.score -
+              mean,
+            2
+          ),
+        0
+      ) /
+      rows.length;
+
+    const standardDeviation =
+      Math.sqrt(
+        variance
+      );
+
+    /*
+     * 順位
+     */
+
+    const sorted =
+      [...rows].sort(
+        (
+          a,
+          b
+        ) =>
+          b.score -
+          a.score
+      );
+
+    const rankMap =
+      new Map<
+        string,
+        number
+      >();
+
+    let previousScore:
+      number | null =
+      null;
+
+    let previousRank =
+      0;
+
+    sorted.forEach(
+      (
+        row,
+        index
+      ) => {
+        if (
+          previousScore ===
+          row.score
+        ) {
+          rankMap.set(
+            row.id,
+            previousRank
+          );
+        } else {
+          const rank =
+            index + 1;
+
+          rankMap.set(
+            row.id,
+            rank
+          );
+
+          previousRank =
+            rank;
+
+          previousScore =
+            row.score;
+        }
+      }
+    );
+
+    /*
+     * 各受験者を更新
+     */
+
+    await Promise.all(
+      rows.map(
+        async (
+          row
         ) => {
-          if (
-            selectedTestId &&
-            retest.originalTestId !==
-              selectedTestId
-          ) {
-            return false;
-          }
+          const deviation =
+            standardDeviation >
+            0
+              ? 50 +
+                10 *
+                  (
+                    row.score -
+                    mean
+                  ) /
+                    standardDeviation
+              : 50;
 
-          if (
-            !keyword
-          ) {
-            return true;
-          }
+          await updateDoc(
+            doc(
+              db,
+              "retests",
+              row.id
+            ),
+            {
+              manualRank:
+                rankMap.get(
+                  row.id
+                ) ??
+                null,
 
-          const student =
-            students.find(
-              (
-                item
-              ) =>
-                item.id ===
-                retest.studentId
-            );
+              manualDeviationScore:
+                deviation,
 
-          return (
-            retest.studentNumber.includes(
-              keyword
-            ) ||
-            (
-              student?.name ??
-              ""
-            )
-              .toLowerCase()
-              .includes(
-                keyword
-              )
+              updatedAt:
+                serverTimestamp(),
+            }
           );
         }
+      )
+    );
+  }
+
+  /*
+   * ========================================================
+   * 最終確定
+   * ========================================================
+   */
+
+  async function finalizeRetest(
+    retest: Retest
+  ) {
+    if (
+      saving
+    ) {
+      return;
+    }
+
+    if (
+      retest.manualScore ===
+      null
+    ) {
+      setError(
+        "先に追試の点数を入力して保存してください。"
       );
-    }, [
-      retests,
-      selectedTestId,
-      search,
-      students,
-    ]);
+
+      return;
+    }
+
+    if (
+      retest.status !==
+      "採点済み"
+    ) {
+      setError(
+        "採点済みの追試だけ確定できます。"
+      );
+
+      return;
+    }
+
+    if (
+      !currentUser
+    ) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      setError("");
+      setMessage("");
+
+      await updateDoc(
+        doc(
+          db,
+          "retests",
+          retest.id
+        ),
+        {
+          status:
+            "確定",
+
+          finalized:
+            true,
+
+          finalizedBy:
+            currentUser.uid,
+
+          finalizedByName:
+            getUserName(
+              currentUser
+            ),
+
+          finalizedAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        "追試結果を確定しました。"
+      );
+
+      if (
+        currentUser.organizationId
+      ) {
+        await loadData(
+          currentUser.organizationId
+        );
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * 合格判定
+   * ========================================================
+   */
+
+  function isPassed(
+    retest: Retest
+  ) {
+    if (
+      retest.manualScore ===
+      null
+    ) {
+      return false;
+    }
+
+    return (
+      retest.manualScore >=
+      retest.thresholdScore
+    );
+  }
+
+  /*
+   * ========================================================
+   * 学生校舎
+   * ========================================================
+   */
+
+  function getStudentSchoolId(
+    studentId: string
+  ) {
+    return (
+      students.find(
+        (
+          student
+        ) =>
+          student.id ===
+          studentId
+      )?.schoolId ??
+      ""
+    );
+  }
 
   /*
    * ========================================================
@@ -1442,6 +1965,61 @@ export default function RetestsPage() {
     );
   }
 
+  /*
+   * ========================================================
+   * 表示用追試
+   * ========================================================
+   */
+
+  const displayedRetests =
+    retests.filter(
+      (
+        retest
+      ) => {
+        if (
+          selectedTestId &&
+          retest.originalTestId !==
+            selectedTestId
+        ) {
+          return false;
+        }
+
+        const keyword =
+          search
+            .trim()
+            .toLowerCase();
+
+        if (
+          !keyword
+        ) {
+          return true;
+        }
+
+        const student =
+          students.find(
+            (
+              item
+            ) =>
+              item.id ===
+              retest.studentId
+          );
+
+        return (
+          retest.studentNumber.includes(
+            keyword
+          ) ||
+          (
+            student?.name ??
+            ""
+          )
+            .toLowerCase()
+            .includes(
+              keyword
+            )
+        );
+      }
+    );
+
   return (
     <main
       style={
@@ -1451,7 +2029,7 @@ export default function RetestsPage() {
       <div
         style={{
           maxWidth:
-            1400,
+            1450,
 
           margin:
             "0 auto",
@@ -1483,7 +2061,7 @@ export default function RetestsPage() {
                 1.7,
             }}
           >
-            確定した成績から追試対象者を登録・管理します。
+            追試はシステム自動採点を行わず、講師が手採点して点数を入力します。
           </p>
         </header>
 
@@ -1508,7 +2086,7 @@ export default function RetestsPage() {
         )}
 
         {/* ==================================================
-            基準設定
+            追試対象抽出
             ================================================== */}
 
         <section
@@ -1520,7 +2098,7 @@ export default function RetestsPage() {
           }}
         >
           <h2>
-            追試対象者を抽出
+            追試対象者を登録
           </h2>
 
           <div
@@ -1535,7 +2113,7 @@ export default function RetestsPage() {
                 16,
 
               marginTop:
-                16,
+                18,
             }}
           >
             <label
@@ -1543,7 +2121,7 @@ export default function RetestsPage() {
                 labelStyle
               }
             >
-              対象テスト
+              元テスト
 
               <select
                 value={
@@ -1698,8 +2276,7 @@ export default function RetestsPage() {
               {
                 selectedTest.totalScore
               }
-
-              {"点"}
+              点
             </div>
           )}
         </section>
@@ -1866,7 +2443,7 @@ export default function RetestsPage() {
                       thStyle
                     }
                   >
-                    元の得点
+                    元得点
                   </th>
 
                   <th
@@ -1962,11 +2539,11 @@ export default function RetestsPage() {
                           style={{
                             ...tdStyle,
 
-                            fontWeight:
-                              700,
-
                             color:
                               "#a00000",
+
+                            fontWeight:
+                              700,
                           }}
                         >
                           {
@@ -2064,54 +2641,45 @@ export default function RetestsPage() {
         </section>
 
         {/* ==================================================
-            追試一覧
+            手採点
             ================================================== */}
 
         <section
-          style={
-            cardStyle
-          }
+          style={{
+            ...cardStyle,
+
+            marginBottom:
+              20,
+          }}
         >
-          <div
-            style={{
-              display:
-                "flex",
+          <div>
+            <h2
+              style={{
+                margin:
+                  0,
+              }}
+            >
+              追試手採点
+            </h2>
 
-              justifyContent:
-                "space-between",
+            <p
+              style={{
+                margin:
+                  "6px 0 0",
 
-              alignItems:
-                "center",
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                追試一覧
-              </h2>
+                color:
+                  "#777",
 
-              <p
-                style={{
-                  margin:
-                    "5px 0 0",
+                fontSize:
+                  12,
 
-                  color:
-                    "#777",
-
-                  fontSize:
-                    12,
-                }}
-              >
-                {
-                  filteredRetests.length
-                }
-                件
-              </p>
-            </div>
+                lineHeight:
+                  1.7,
+              }}
+            >
+              追試はOCR・QR自動採点・AI採点を使用しません。
+              答案を確認して、講師が点数を直接入力します。
+            </p>
           </div>
 
           <div
@@ -2135,7 +2703,7 @@ export default function RetestsPage() {
                       thStyle
                     }
                   >
-                    追試テストID
+                    追試ID
                   </th>
 
                   <th
@@ -2159,14 +2727,6 @@ export default function RetestsPage() {
                       thStyle
                     }
                   >
-                    元テスト
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
                     元得点
                   </th>
 
@@ -2175,7 +2735,7 @@ export default function RetestsPage() {
                       thStyle
                     }
                   >
-                    基準点
+                    追試得点
                   </th>
 
                   <th
@@ -2183,7 +2743,23 @@ export default function RetestsPage() {
                       thStyle
                     }
                   >
-                    実施日
+                    得点率
+                  </th>
+
+                  <th
+                    style={
+                      thStyle
+                    }
+                  >
+                    順位
+                  </th>
+
+                  <th
+                    style={
+                      thStyle
+                    }
+                  >
+                    偏差値
                   </th>
 
                   <th
@@ -2205,7 +2781,7 @@ export default function RetestsPage() {
               </thead>
 
               <tbody>
-                {filteredRetests.map(
+                {displayedRetests.map(
                   (
                     retest
                   ) => {
@@ -2217,6 +2793,15 @@ export default function RetestsPage() {
                           item.id ===
                           retest.studentId
                       );
+
+                    const scoreValue =
+                      manualScores[
+                        retest.id
+                      ] ??
+                      (
+                        retest.manualScore ??
+                        ""
+                      ).toString();
 
                     return (
                       <tr
@@ -2249,18 +2834,8 @@ export default function RetestsPage() {
                             tdStyle
                           }
                         >
-                          {student?.name ||
+                          {student?.name ??
                             "—"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            retest.originalTestCode
-                          }
                         </td>
 
                         <td
@@ -2279,97 +2854,202 @@ export default function RetestsPage() {
                             tdStyle
                           }
                         >
-                          {
-                            retest.thresholdScore
-                          }
-                          点
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            retest.scheduledDate
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            retest.status
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <select
-                            value={
-                              retest.status
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateRetestStatus(
-                                retest,
-                                event
-                                  .target
-                                  .value as Retest["status"]
-                              )
-                            }
+                          <div
                             style={{
-                              padding:
-                                "6px 8px",
+                              display:
+                                "flex",
 
-                              border:
-                                "1px solid #ccc",
+                              alignItems:
+                                "center",
 
-                              borderRadius:
-                                6,
-
-                              background:
-                                "#fff",
+                              gap:
+                                5,
                             }}
                           >
-                            <option value="未受験">
-                              未受験
-                            </option>
+                            <input
+                              type="number"
+                              min="0"
+                              max={
+                                retest.manualMaxScore
+                              }
+                              step="0.1"
+                              value={
+                                scoreValue
+                              }
+                              disabled={
+                                retest.status ===
+                                "確定"
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                changeManualScore(
+                                  retest.id,
+                                  event
+                                    .target
+                                    .value
+                                )
+                              }
+                              style={
+                                scoreInputStyle
+                              }
+                            />
 
-                            <option value="受験済み">
-                              受験済み
-                            </option>
+                            <span>
+                              /
+                              {
+                                retest.manualMaxScore
+                              }
+                            </span>
+                          </div>
+                        </td>
 
-                            <option value="合格">
-                              合格
-                            </option>
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {retest.manualPercentage ===
+                          null
+                            ? "—"
+                            : `${retest.manualPercentage.toFixed(
+                                1
+                              )}%`}
+                        </td>
 
-                            <option value="不合格">
-                              不合格
-                            </option>
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {retest.manualRank ===
+                          null
+                            ? "—"
+                            : `${retest.manualRank}位`}
+                        </td>
 
-                            <option value="免除">
-                              免除
-                            </option>
-                          </select>
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {retest.manualDeviationScore ===
+                          null
+                            ? "—"
+                            : retest.manualDeviationScore.toFixed(
+                                1
+                              )}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          <StatusBadge
+                            status={
+                              retest.status
+                            }
+                          />
+
+                          {retest.status ===
+                            "採点済み" &&
+                            retest.manualScore !==
+                              null && (
+                              <div
+                                style={{
+                                  marginTop:
+                                    4,
+
+                                  fontSize:
+                                    11,
+
+                                  color:
+                                    isPassed(
+                                      retest
+                                    )
+                                      ? "#28733f"
+                                      : "#a00000",
+                                }}
+                              >
+                                {isPassed(
+                                  retest
+                                )
+                                  ? "基準点到達"
+                                  : "基準点未満"}
+                              </div>
+                            )}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          <div
+                            style={{
+                              display:
+                                "flex",
+
+                              flexDirection:
+                                "column",
+
+                              gap:
+                                6,
+                            }}
+                          >
+                            {retest.status !==
+                              "確定" && (
+                              <button
+                                type="button"
+                                disabled={
+                                  saving
+                                }
+                                onClick={() =>
+                                  saveManualScore(
+                                    retest
+                                  )
+                                }
+                                style={
+                                  smallPrimaryButton
+                                }
+                              >
+                                点数を保存
+                              </button>
+                            )}
+
+                            {retest.status ===
+                              "採点済み" && (
+                              <button
+                                type="button"
+                                disabled={
+                                  saving
+                                }
+                                onClick={() =>
+                                  finalizeRetest(
+                                    retest
+                                  )
+                                }
+                                style={
+                                  smallSecondaryButton
+                                }
+                              >
+                                確定
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
                   }
                 )}
 
-                {filteredRetests.length ===
+                {displayedRetests.length ===
                   0 && (
                   <tr>
                     <td
                       colSpan={
-                        9
+                        10
                       }
                       style={{
                         ...tdStyle,
@@ -2384,7 +3064,7 @@ export default function RetestsPage() {
                           "#777",
                       }}
                     >
-                      追試登録はありません。
+                      追試対象はありません。
                     </td>
                   </tr>
                 )}
@@ -2392,8 +3072,169 @@ export default function RetestsPage() {
             </table>
           </div>
         </section>
+
+        {/* ==================================================
+            仕様説明
+            ================================================== */}
+
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <h2>
+            追試の採点方式
+          </h2>
+
+          <div
+            style={{
+              display:
+                "grid",
+
+              gridTemplateColumns:
+                "repeat(3, 1fr)",
+
+              gap:
+                12,
+
+              marginTop:
+                16,
+            }}
+          >
+            <InfoBox
+              title="自動採点"
+              value="使用しない"
+            />
+
+            <InfoBox
+              title="OCR"
+              value="使用しない"
+            />
+
+            <InfoBox
+              title="手採点"
+              value="講師が点数入力"
+            />
+          </div>
+
+          <p
+            style={{
+              margin:
+                "18px 0 0",
+
+              color:
+                "#666",
+
+              fontSize:
+                13,
+
+              lineHeight:
+                1.8,
+            }}
+          >
+            保存した追試得点から、追試受験者内の順位・平均点・標準偏差・偏差値を自動計算します。
+            通常テストの成績母集団とは分離して管理します。
+          </p>
+        </section>
       </div>
     </main>
+  );
+}
+
+/* =========================================================
+   StatusBadge
+   ========================================================= */
+
+function StatusBadge({
+  status,
+}: {
+  status: RetestStatus;
+}) {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "5px 9px",
+
+        borderRadius:
+          999,
+
+        background:
+          getStatusBackground(
+            status
+          ),
+
+        color:
+          getStatusColor(
+            status
+          ),
+
+        fontSize:
+          11,
+
+        fontWeight:
+          600,
+      }}
+    >
+      {status}
+    </span>
+  );
+}
+
+/* =========================================================
+   InfoBox
+   ========================================================= */
+
+function InfoBox({
+  title,
+  value,
+}: {
+  title: string;
+  value: string;
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          14,
+
+        border:
+          "1px solid #eee",
+
+        borderRadius:
+          8,
+
+        background:
+          "#fafafa",
+      }}
+    >
+      <div
+        style={{
+          color:
+            "#777",
+
+          fontSize:
+            11,
+        }}
+      >
+        {title}
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+        }}
+      >
+        {value}
+      </strong>
+    </div>
   );
 }
 
@@ -2418,18 +3259,16 @@ function isUserRole(
 
 function isRetestStatus(
   value: unknown
-): value is Retest["status"] {
+): value is RetestStatus {
   return (
     value ===
       "未受験" ||
     value ===
-      "受験済み" ||
+      "採点待ち" ||
     value ===
-      "合格" ||
+      "採点済み" ||
     value ===
-      "不合格" ||
-    value ===
-      "免除"
+      "確定"
   );
 }
 
@@ -2485,6 +3324,83 @@ function numberValue(
     : 0;
 }
 
+function nullableNumber(
+  value: unknown
+) {
+  return typeof value ===
+    "number"
+    ? value
+    : null;
+}
+
+function getUserName(
+  user: CurrentUser
+) {
+  return user.uid;
+}
+
+function isPassed(
+  retest: Retest
+) {
+  if (
+    retest.manualScore ===
+    null
+  ) {
+    return false;
+  }
+
+  return (
+    retest.manualScore >=
+    retest.thresholdScore
+  );
+}
+
+function getStatusColor(
+  status: RetestStatus
+) {
+  switch (
+    status
+  ) {
+    case "未受験":
+      return "#555";
+
+    case "採点待ち":
+      return "#765d00";
+
+    case "採点済み":
+      return "#28733f";
+
+    case "確定":
+      return "#1f4d80";
+
+    default:
+      return "#555";
+  }
+}
+
+function getStatusBackground(
+  status: RetestStatus
+) {
+  switch (
+    status
+  ) {
+    case "未受験":
+      return "#f0f0f0";
+
+    case "採点待ち":
+      return "#fff8df";
+
+    case "採点済み":
+      return "#eef9f1";
+
+    case "確定":
+      return "#eef5fc";
+
+    default:
+      return "#f0f0f0";
+  }
+}
+
 function getSafeErrorMessage(
   error: unknown
 ) {
@@ -2509,7 +3425,9 @@ function getSafeErrorMessage(
       return "サーバーに接続できませんでした。しばらくしてからお試しください。";
 
     default:
-      return "追試情報を処理できませんでした。";
+      return error instanceof Error
+        ? error.message
+        : "追試情報を処理できませんでした。";
   }
 }
 
@@ -2625,7 +3543,7 @@ const primaryButton:
 const secondaryButton:
   React.CSSProperties = {
     padding:
-      "8px 12px",
+      "9px 13px",
 
     border:
       "1px solid #ccc",
@@ -2641,6 +3559,78 @@ const secondaryButton:
 
     fontSize:
       12,
+
+    fontWeight:
+      600,
+  };
+
+const smallPrimaryButton:
+  React.CSSProperties = {
+    padding:
+      "7px 10px",
+
+    border:
+      "none",
+
+    borderRadius:
+      6,
+
+    background:
+      "#111",
+
+    color:
+      "#fff",
+
+    cursor:
+      "pointer",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const smallSecondaryButton:
+  React.CSSProperties = {
+    padding:
+      "7px 10px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      6,
+
+    background:
+      "#fff",
+
+    cursor:
+      "pointer",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const scoreInputStyle:
+  React.CSSProperties = {
+    width:
+      80,
+
+    padding:
+      "7px 8px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      6,
+
+    textAlign:
+      "right",
   };
 
 const tableStyle:
