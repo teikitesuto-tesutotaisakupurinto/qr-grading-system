@@ -8,96 +8,164 @@ import {
 import Link from "next/link";
 
 import {
-  getCurrentUser,
+  onAuthStateChanged,
+} from "firebase/auth";
+
+import {
+  auth,
+} from "@/lib/firebase";
+
+import {
+  getAppUser,
   type AppUser,
 } from "@/lib/auth";
 
 export default function DashboardPage() {
-  const [user, setUser] =
-    useState<AppUser | null>(null);
+  const [
+    user,
+    setUser,
+  ] = useState<AppUser | null>(
+    null
+  );
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    checking,
+    setChecking,
+  ] = useState(true);
 
-  const [error, setError] =
-    useState("");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadUser() {
-      try {
-        const currentUser =
-          await getCurrentUser();
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (
+          firebaseUser
+        ) => {
+          if (cancelled) {
+            return;
+          }
 
-        if (cancelled) {
-          return;
+          /*
+           * Firebase Authentication上で
+           * ログイン状態が確認できない
+           */
+          if (!firebaseUser) {
+            setUser(null);
+            setChecking(false);
+
+            window.location.replace(
+              "/login"
+            );
+
+            return;
+          }
+
+          /*
+           * Firebase Authenticationでは
+           * ログイン済み
+           */
+          try {
+            const appUser =
+              await getAppUser(
+                firebaseUser
+              );
+
+            if (cancelled) {
+              return;
+            }
+
+            setUser(
+              appUser
+            );
+
+            setError("");
+            setChecking(false);
+          } catch (
+            error
+          ) {
+            if (cancelled) {
+              return;
+            }
+
+            setError(
+              error instanceof Error
+                ? error.message
+                : "ユーザー情報を取得できませんでした。"
+            );
+
+            setChecking(false);
+          }
         }
-
-        if (!currentUser) {
-          window.location.replace(
-            "/login"
-          );
-
-          return;
-        }
-
-        setUser(currentUser);
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "ユーザー情報を取得できませんでした。"
-        );
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void loadUser();
+      );
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
-  if (loading) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          background: "#f5f6f8",
-        }}
-      />
-    );
+  /*
+   * Firebaseの認証状態確認中
+   *
+   * ここでは何も表示しない。
+   */
+  if (checking) {
+    return null;
   }
 
-  if (error) {
+  /*
+   * Firebase Authenticationには
+   * ログインしているが、
+   * Firestoreのusers/{uid}がないなど。
+   */
+  if (!user) {
     return (
       <main
         style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          background: "#f5f6f8",
+          minHeight:
+            "100vh",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          padding:
+            24,
+
+          background:
+            "#f5f6f8",
         }}
       >
         <section
           style={{
-            width: "100%",
-            maxWidth: 520,
-            padding: 32,
-            background: "#fff",
-            border: "1px solid #ddd",
-            borderRadius: 12,
+            width:
+              "100%",
+
+            maxWidth:
+              520,
+
+            padding:
+              32,
+
+            background:
+              "#fff",
+
+            border:
+              "1px solid #ddd",
+
+            borderRadius:
+              12,
           }}
         >
           <h1>
@@ -106,23 +174,43 @@ export default function DashboardPage() {
 
           <p
             style={{
-              color: "#a00000",
-              lineHeight: 1.7,
+              marginTop:
+                16,
+
+              color:
+                "#a00000",
+
+              lineHeight:
+                1.8,
             }}
           >
-            {error}
+            {error ||
+              "ユーザー情報を取得できませんでした。"}
           </p>
 
           <Link
             href="/login"
             style={{
-              display: "inline-block",
-              marginTop: 16,
-              padding: "10px 18px",
-              borderRadius: 7,
-              background: "#111",
-              color: "#fff",
-              textDecoration: "none",
+              display:
+                "inline-block",
+
+              marginTop:
+                16,
+
+              padding:
+                "10px 18px",
+
+              borderRadius:
+                7,
+
+              background:
+                "#111",
+
+              color:
+                "#fff",
+
+              textDecoration:
+                "none",
             }}
           >
             ログイン画面へ
@@ -132,48 +220,62 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user) {
-    return null;
-  }
-
   return (
     <main
       style={{
-        minHeight: "100vh",
-        background: "#f5f6f8",
+        minHeight:
+          "100vh",
+
+        background:
+          "#f5f6f8",
       }}
     >
       <header
         style={{
-          height: 68,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 32px",
-          background: "#fff",
+          height:
+            68,
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "space-between",
+
+          padding:
+            "0 32px",
+
+          background:
+            "#fff",
+
           borderBottom:
             "1px solid #e5e7eb",
         }}
       >
-        <div>
-          <strong
-            style={{
-              fontSize: 20,
-            }}
-          >
-            答案採点システム
-          </strong>
-        </div>
+        <strong
+          style={{
+            fontSize:
+              20,
+          }}
+        >
+          答案採点システム
+        </strong>
 
         <div
           style={{
-            textAlign: "right",
+            textAlign:
+              "right",
           }}
         >
           <div
             style={{
-              fontWeight: 600,
-              fontSize: 14,
+              fontWeight:
+                600,
+
+              fontSize:
+                14,
             }}
           >
             {user.name}
@@ -181,9 +283,14 @@ export default function DashboardPage() {
 
           <div
             style={{
-              marginTop: 3,
-              color: "#777",
-              fontSize: 12,
+              marginTop:
+                3,
+
+              color:
+                "#777",
+
+              fontSize:
+                12,
             }}
           >
             {user.role}
@@ -193,20 +300,29 @@ export default function DashboardPage() {
 
       <section
         style={{
-          maxWidth: 1400,
-          margin: "0 auto",
-          padding: 32,
+          maxWidth:
+            1400,
+
+          margin:
+            "0 auto",
+
+          padding:
+            32,
         }}
       >
         <div
           style={{
-            marginBottom: 28,
+            marginBottom:
+              28,
           }}
         >
           <h1
             style={{
-              margin: "0 0 8px",
-              fontSize: 28,
+              margin:
+                "0 0 8px",
+
+              fontSize:
+                28,
             }}
           >
             ダッシュボード
@@ -215,7 +331,9 @@ export default function DashboardPage() {
           <p
             style={{
               margin: 0,
-              color: "#666",
+
+              color:
+                "#666",
             }}
           >
             答案採点システムへようこそ。
@@ -224,10 +342,14 @@ export default function DashboardPage() {
 
         <div
           style={{
-            display: "grid",
+            display:
+              "grid",
+
             gridTemplateColumns:
               "repeat(auto-fit, minmax(230px, 1fr))",
-            gap: 16,
+
+            gap:
+              16,
           }}
         >
           <DashboardCard
@@ -251,13 +373,13 @@ export default function DashboardPage() {
           <DashboardCard
             href="/answers"
             title="答案管理"
-            description="既存答案の登録・処理状況を確認します。"
+            description="既存答案を管理します。"
           />
 
           <DashboardCard
             href="/grading"
             title="採点"
-            description="自動採点・一次確認・二次確認を行います。"
+            description="答案の自動採点・確認を行います。"
           />
 
           <DashboardCard
@@ -269,42 +391,39 @@ export default function DashboardPage() {
           <DashboardCard
             href="/reports"
             title="成績表"
-            description="生徒の成績表を作成・確認します。"
+            description="成績表を作成・確認します。"
           />
 
           <DashboardCard
             href="/retests"
             title="追試"
-            description="追試対象者と追試結果を管理します。"
+            description="追試対象者と結果を管理します。"
           />
 
           {(user.role ===
             "本部管理者" ||
             user.role ===
               "校舎管理者") && (
-            <DashboardCard
-              href="/settings"
-              title="設定"
-              description="塾・校舎・採点システムの設定を管理します。"
-            />
-          )}
+            <>
+              <DashboardCard
+                href="/users"
+                title="ユーザー管理"
+                description="ユーザーと権限を管理します。"
+              />
 
-          {(user.role ===
-            "本部管理者" ||
-            user.role ===
-              "校舎管理者") && (
-            <DashboardCard
-              href="/users"
-              title="ユーザー管理"
-              description="管理者・校舎管理者・講師・生徒を管理します。"
-            />
+              <DashboardCard
+                href="/settings"
+                title="設定"
+                description="塾・校舎・システム設定を管理します。"
+              />
+            </>
           )}
 
           {user.role ===
             "本部管理者" && (
             <DashboardCard
               href="/schools"
-              title="学校・校舎管理"
+              title="学校・校舎"
               description="学校・校舎を管理します。"
             />
           )}
@@ -320,31 +439,53 @@ function DashboardCard({
   description,
 }: {
   href: string;
+
   title: string;
+
   description: string;
 }) {
   return (
     <Link
       href={href}
       style={{
-        display: "block",
-        minHeight: 150,
-        padding: 24,
-        background: "#fff",
+        display:
+          "block",
+
+        minHeight:
+          150,
+
+        padding:
+          24,
+
+        background:
+          "#fff",
+
         border:
           "1px solid #e1e4e8",
-        borderRadius: 12,
-        color: "#171717",
-        textDecoration: "none",
+
+        borderRadius:
+          12,
+
+        color:
+          "#171717",
+
+        textDecoration:
+          "none",
+
         boxShadow:
           "0 2px 8px rgba(0,0,0,.03)",
       }}
     >
       <strong
         style={{
-          display: "block",
-          marginBottom: 10,
-          fontSize: 17,
+          display:
+            "block",
+
+          marginBottom:
+            10,
+
+          fontSize:
+            17,
         }}
       >
         {title}
@@ -352,9 +493,14 @@ function DashboardCard({
 
       <span
         style={{
-          color: "#666",
-          fontSize: 13,
-          lineHeight: 1.7,
+          color:
+            "#666",
+
+          fontSize:
+            13,
+
+          lineHeight:
+            1.7,
         }}
       >
         {description}
