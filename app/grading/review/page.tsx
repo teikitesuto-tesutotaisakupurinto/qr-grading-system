@@ -1,73 +1,72 @@
 "use client";
 
 import {
+  useEffect,
   useMemo,
   useState,
 } from "react";
 
-type QuestionChange = {
-  questionId: string;
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
 
-  questionNumber: number;
+import {
+  auth,
+  db,
+} from "@/lib/firebase";
 
-  before: number;
+import {
+  getAppUser,
+} from "@/lib/auth";
 
-  after: number;
+import {
+  getGradingResult,
+  getFirstReview,
+  saveFirstReview,
+  type GradingResult,
+} from "@/lib/grading";
 
-  reason: string;
-};
+import {
+  answersQueries,
+  getScopedDocs,
+  studentsQueries,
+  testsQueries,
+} from "@/lib/firestore-scope";
 
-type ReviewItem = {
+type AnswerItem = {
   id: string;
 
-  questionId: string;
+  testId: string;
 
-  questionNumber: number;
+  studentId: string | null;
 
   studentNumber: string;
 
-  beforeScore: number;
+  status: string;
 
-  afterScore: number;
+  totalScore: number;
 
-  reason: string;
+  totalMaxScore: number;
 
-  status:
-    | "未確認"
-    | "確認済み";
+  reviewRequired: boolean;
+
+  fileName: string;
+
+  testName: string;
+
+  studentName: string;
 };
-
-const INITIAL_ITEMS: ReviewItem[] = [
-  {
-    id: "review-001",
-    questionId: "q-001",
-    questionNumber: 1,
-    studentNumber: "非表示",
-    beforeScore: 0,
-    afterScore: 0,
-    reason: "",
-    status: "未確認",
-  },
-
-  {
-    id: "review-002",
-    questionId: "q-002",
-    questionNumber: 2,
-    studentNumber: "非表示",
-    beforeScore: 3,
-    afterScore: 2,
-    reason: "部分点確認",
-    status: "未確認",
-  },
-];
 
 export default function GradingReviewPage() {
   const [
     items,
     setItems,
   ] =
-    useState<ReviewItem[]>(
-      INITIAL_ITEMS
+    useState<AnswerItem[]>(
+      []
     );
 
   const [
@@ -75,9 +74,40 @@ export default function GradingReviewPage() {
     setSelectedId,
   ] =
     useState<string | null>(
-      INITIAL_ITEMS[0]?.id ??
-        null
+      null
     );
+
+  const [
+    results,
+    setResults,
+  ] =
+    useState<GradingResult[]>(
+      []
+    );
+
+  const [
+    internalNote,
+    setInternalNote,
+  ] =
+    useState("");
+
+  const [
+    publicAnnotation,
+    setPublicAnnotation,
+  ] =
+    useState("");
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
 
   const [
     saving,
@@ -86,72 +116,430 @@ export default function GradingReviewPage() {
     useState(false);
 
   const [
-    message,
-    setMessage,
-  ] =
-    useState("");
-
-  const [
     error,
     setError,
   ] =
     useState("");
 
+  const [
+    message,
+    setMessage,
+  ] =
+    useState("");
+
   /* =======================================================
-     Selected item
+     Load
+     ======================================================= */
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function load() {
+    try {
+      setLoading(true);
+
+      setError("");
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        setError(
+          "ログインしてください。"
+        );
+
+        return;
+      }
+
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        setError(
+          "採点確認は職員のみ利用できます。"
+        );
+
+        return;
+      }
+
+      const firestoreUser =
+        {
+          uid:
+            user.uid,
+
+          organizationId:
+            user.organizationId,
+
+          role:
+            user.role,
+
+          schoolIds:
+            user.schoolIds,
+
+          studentId:
+            user.studentId,
+        };
+
+      const [
+        answerDocuments,
+        studentDocuments,
+        testDocuments,
+      ] =
+        await Promise.all([
+          getScopedDocs(
+            answersQueries(
+              firestoreUser
+            )
+          ),
+
+          getScopedDocs(
+            studentsQueries(
+              firestoreUser
+            )
+          ),
+
+          getScopedDocs(
+            testsQueries(
+              firestoreUser
+            )
+          ),
+        ]);
+
+      const studentMap =
+        new Map<
+          string,
+          {
+            name: string;
+            studentNumber: string;
+          }
+        >();
+
+      for (
+        const item of
+          studentDocuments
+      ) {
+        studentMap.set(
+          item.id,
+          {
+            name:
+              stringValue(
+                item.data.name
+              ),
+
+            studentNumber:
+              stringValue(
+                item.data
+                  .studentNumber
+              ),
+          }
+        );
+      }
+
+      const testMap =
+        new Map<
+          string,
+          string
+        >();
+
+      for (
+        const item of
+          testDocuments
+      ) {
+        testMap.set(
+          item.id,
+          stringValue(
+            item.data.name
+          )
+        );
+      }
+
+      const loaded: AnswerItem[] =
+        answerDocuments
+          .map(
+            (
+              item
+            ) => {
+              const data =
+                item.data;
+
+              const student =
+                data.studentId
+                  ? studentMap.get(
+                      String(
+                        data.studentId
+                      )
+                    )
+                  : undefined;
+
+              const status =
+                stringValue(
+                  data.status
+                );
+
+              const gradingStatus =
+                stringValue(
+                  data.gradingStatus
+                );
+
+              const reviewRequired =
+                data.reviewRequired ===
+                true;
+
+              const shouldShow =
+                reviewRequired ||
+                status ===
+                  "first_review" ||
+                gradingStatus ===
+                  "first_review";
+
+              if (
+                !shouldShow
+              ) {
+                return null;
+              }
+
+              return {
+                id:
+                  item.id,
+
+                testId:
+                  stringValue(
+                    data.testId
+                  ),
+
+                studentId:
+                  typeof data.studentId ===
+                  "string"
+                    ? data.studentId
+                    : null,
+
+                studentNumber:
+                  stringValue(
+                    data.studentNumber
+                  ) ||
+                  student
+                    ?.studentNumber ||
+                  "",
+
+                status,
+
+                totalScore:
+                  numberValue(
+                    data.totalScore
+                  ),
+
+                totalMaxScore:
+                  numberValue(
+                    data.totalMaxScore
+                  ),
+
+                reviewRequired,
+
+                fileName:
+                  stringValue(
+                    data.fileName
+                  ),
+
+                testName:
+                  testMap.get(
+                    String(
+                      data.testId
+                    )
+                  ) ??
+                  "テスト",
+
+                studentName:
+                  student?.name ??
+                  "未紐付け",
+              };
+            }
+          )
+          .filter(
+            (
+              item
+            ): item is AnswerItem =>
+              item !== null
+          );
+
+      setItems(
+        loaded
+      );
+
+      if (
+        loaded.length >
+        0
+      ) {
+        setSelectedId(
+          loaded[0].id
+        );
+      }
+    } catch (
+      err
+    ) {
+      console.error(
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "答案を取得できませんでした。"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /* =======================================================
+     Selected answer
      ======================================================= */
 
   const selected =
-    useMemo(
-      () =>
-        items.find(
-          (
-            item
-          ) =>
-            item.id ===
-            selectedId
-        ) ?? null,
-      [
-        items,
-        selectedId,
-      ]
-    );
-
-  /* =======================================================
-     Statistics
-     ======================================================= */
-
-  const pendingCount =
-    items.filter(
+    items.find(
       (
         item
       ) =>
-        item.status ===
-        "未確認"
-    ).length;
-
-  const confirmedCount =
-    items.filter(
-      (
-        item
-      ) =>
-        item.status ===
-        "確認済み"
-    ).length;
+        item.id ===
+        selectedId
+    ) ??
+    null;
 
   /* =======================================================
-     Score change
+     Load grading result
      ======================================================= */
 
-  function updateAfterScore(
-    value: string
-  ) {
+  useEffect(() => {
     if (
-      !selected
+      !selectedId
     ) {
+      setResults([]);
       return;
     }
 
+    void loadGrading(
+      selectedId
+    );
+  }, [
+    selectedId,
+  ]);
+
+  async function loadGrading(
+    answerId: string
+  ) {
+    try {
+      setError("");
+
+      const [
+        grading,
+        review,
+      ] =
+        await Promise.all([
+          getGradingResult(
+            answerId
+          ),
+
+          getFirstReview(
+            answerId
+          ),
+        ]);
+
+      const gradingResults =
+        Array.isArray(
+          grading?.results
+        )
+          ? grading.results
+          : [];
+
+      const reviewResults =
+        Array.isArray(
+          review?.results
+        )
+          ? review.results
+          : [];
+
+      const nextResults =
+        reviewResults.length >
+        0
+          ? reviewResults
+          : gradingResults;
+
+      setResults(
+        nextResults as GradingResult[]
+      );
+
+      setInternalNote(
+        review?.internalNote ??
+          ""
+      );
+
+      setPublicAnnotation(
+        review?.publicAnnotation ??
+          ""
+      );
+    } catch (
+      err
+    ) {
+      console.error(
+        err
+      );
+
+      setError(
+        "採点結果を取得できませんでした。"
+      );
+    }
+  }
+
+  /* =======================================================
+     Search
+     ======================================================= */
+
+  const filtered =
+    useMemo(() => {
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
+
+      if (
+        !keyword
+      ) {
+        return items;
+      }
+
+      return items.filter(
+        (
+          item
+        ) =>
+          item.studentNumber.includes(
+            keyword
+          ) ||
+          item.studentName
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          item.testName
+            .toLowerCase()
+            .includes(
+              keyword
+            )
+      );
+    }, [
+      items,
+      search,
+    ]);
+
+  /* =======================================================
+     Change score
+     ======================================================= */
+
+  function changeScore(
+    index: number,
+    value: string
+  ) {
     const score =
       Number(
         value
@@ -165,251 +553,158 @@ export default function GradingReviewPage() {
       return;
     }
 
-    setItems(
+    setResults(
       (
         current
       ) =>
         current.map(
           (
-            item
+            item,
+            itemIndex
           ) =>
-            item.id ===
-            selected.id
+            itemIndex ===
+            index
               ? {
                   ...item,
 
-                  afterScore:
-                    score,
+                  score:
+                    Math.min(
+                      Math.max(
+                        score,
+                        0
+                      ),
+                      item.maxScore
+                    ),
 
-                  status:
-                    "未確認",
+                  mark:
+                    score ===
+                    0
+                      ? "×"
+                      : score <
+                          item.maxScore
+                        ? "△"
+                        : "○",
                 }
               : item
         )
     );
-
-    setMessage("");
-    setError("");
   }
 
   /* =======================================================
      Reason
      ======================================================= */
 
-  function updateReason(
+  function changeReason(
+    index: number,
     value: string
   ) {
-    if (
-      !selected
-    ) {
-      return;
-    }
-
-    setItems(
+    setResults(
       (
         current
       ) =>
         current.map(
           (
-            item
+            item,
+            itemIndex
           ) =>
-            item.id ===
-            selected.id
+            itemIndex ===
+            index
               ? {
                   ...item,
 
                   reason:
                     value,
-
-                  status:
-                    "未確認",
                 }
               : item
         )
     );
-
-    setMessage("");
-    setError("");
-  }
-
-  /* =======================================================
-     Confirm selected
-     ======================================================= */
-
-  function confirmSelected() {
-    if (
-      !selected
-    ) {
-      return;
-    }
-
-    setItems(
-      (
-        current
-      ) =>
-        current.map(
-          (
-            item
-          ) =>
-            item.id ===
-            selected.id
-              ? {
-                  ...item,
-
-                  status:
-                    "確認済み",
-                }
-              : item
-        )
-    );
-
-    setMessage(
-      "確認済みにしました。"
-    );
-
-    setError("");
-  }
-
-  /* =======================================================
-     Build changes
-     =======================================================
-     nullを含む配列を作らない。
-     ======================================================= */
-
-  function buildChanges(): QuestionChange[] {
-    return items
-      .map(
-        (
-          item
-        ) => {
-          if (
-            item.beforeScore ===
-            item.afterScore
-          ) {
-            return null;
-          }
-
-          return {
-            questionId:
-              item.questionId,
-
-            questionNumber:
-              item.questionNumber,
-
-            before:
-              item.beforeScore,
-
-            after:
-              item.afterScore,
-
-            reason:
-              item.reason,
-          };
-        }
-      )
-      .filter(
-        (
-          change
-        ): change is QuestionChange =>
-          change !==
-          null
-      );
   }
 
   /* =======================================================
      Save
      ======================================================= */
 
-  async function saveChanges() {
+  async function saveReview() {
+    if (
+      !selected
+    ) {
+      return;
+    }
+
     if (
       saving
     ) {
       return;
     }
 
-    setSaving(
-      true
-    );
-
-    setMessage("");
-    setError("");
-
     try {
-      const changes =
-        buildChanges();
+      setSaving(true);
 
-      /*
-       * 変更がない場合。
-       */
+      setError("");
+      setMessage("");
+
+      const user =
+        await getAppUser();
+
       if (
-        changes.length ===
-        0
+        !user
       ) {
-        setMessage(
-          "変更はありません。"
+        throw new Error(
+          "ログインしてください。"
         );
-
-        return;
       }
 
-      /*
-       * ここで実際のFirestore保存処理に
-       * 接続する。
-       *
-       * 現在のBuildエラーの原因だった
-       * null混在は、この時点で完全に除去されている。
-       */
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "採点確認権限がありません。"
+        );
+      }
 
-      console.log(
-        "grading changes:",
-        changes
-      );
+      await saveFirstReview({
+        answerId:
+          selected.id,
 
-      /*
-       * 実際の保存が成功したものとして
-       * UIを更新。
-       */
-      setItems(
-        (
-          current
-        ) =>
-          current.map(
-            (
-              item
-            ) =>
-              item.beforeScore !==
-                item.afterScore
-                ? {
-                    ...item,
+        testId:
+          selected.testId,
 
-                    beforeScore:
-                      item.afterScore,
+        subjectId:
+          "",
 
-                    status:
-                      "確認済み",
-                  }
-                : item
-          )
-      );
+        studentNumber:
+          selected.studentNumber,
+
+        reviewerId:
+          user.uid,
+
+        results,
+
+        internalNote,
+
+        publicAnnotation,
+      });
 
       setMessage(
-        `${changes.length}件の採点変更を保存しました。`
+        "一次確認を保存しました。"
       );
+
+      await load();
     } catch (
       err
     ) {
       console.error(
-        "grading review save error:",
         err
       );
 
       setError(
-        "採点変更を保存できませんでした。"
+        err instanceof Error
+          ? err.message
+          : "一次確認を保存できませんでした。"
       );
     } finally {
-      setSaving(
-        false
-      );
+      setSaving(false);
     }
   }
 
@@ -417,154 +712,50 @@ export default function GradingReviewPage() {
      Render
      ======================================================= */
 
-  return (
-    <main
-      className="main"
-      style={{
-        padding:
-          24,
-      }}
-    >
-      <div
-        style={{
-          maxWidth:
-            1400,
-
-          margin:
-            "0 auto",
-        }}
-      >
-        <header
-          style={{
-            marginBottom:
-              24,
-          }}
-        >
+  if (
+    loading
+  ) {
+    return (
+      <main className="page">
+        <section className="content">
           <h1>
             一次確認
           </h1>
 
-          <p
-            className="muted"
-          >
-            自動採点結果を確認し、必要な採点変更を確認します。
+          <p>
+            採点結果を読み込んでいます...
           </p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="page">
+      <section className="content">
+        <header className="pageHeader">
+          <div>
+            <h1>
+              一次確認
+            </h1>
+
+            <p>
+              自動採点結果を確認し、必要な採点修正を行います。
+            </p>
+          </div>
         </header>
 
-        {/* ==================================================
-            Status
-            ================================================== */}
-
-        <div
-          className="row"
-          style={{
-            gap:
-              12,
-
-            marginBottom:
-              20,
-          }}
-        >
-          <div
-            className="card"
-            style={{
-              minWidth:
-                160,
-            }}
-          >
-            <div
-              className="muted"
-            >
-              未確認
-            </div>
-
-            <strong
-              style={{
-                fontSize:
-                  26,
-              }}
-            >
-              {
-                pendingCount
-              }
-            </strong>
+        {error && (
+          <div className="errorMessage">
+            {error}
           </div>
-
-          <div
-            className="card"
-            style={{
-              minWidth:
-                160,
-            }}
-          >
-            <div
-              className="muted"
-            >
-              確認済み
-            </div>
-
-            <strong
-              style={{
-                fontSize:
-                  26,
-              }}
-            >
-              {
-                confirmedCount
-              }
-            </strong>
-          </div>
-        </div>
+        )}
 
         {message && (
-          <div
-            className="card"
-            style={{
-              marginBottom:
-                16,
-
-              borderColor:
-                "#b8d9c0",
-
-              background:
-                "#f2faf4",
-
-              color:
-                "#25633a",
-            }}
-          >
-            {
-              message
-            }
+          <div className="successMessage">
+            {message}
           </div>
         )}
-
-        {error && (
-          <div
-            className="card"
-            style={{
-              marginBottom:
-                16,
-
-              borderColor:
-                "#efb5b5",
-
-              background:
-                "#fff4f4",
-
-              color:
-                "#9b1c1c",
-            }}
-          >
-            {
-              error
-            }
-          </div>
-        )}
-
-        {/* ==================================================
-            Review layout
-            ================================================== */}
 
         <div
           style={{
@@ -572,48 +763,359 @@ export default function GradingReviewPage() {
               "grid",
 
             gridTemplateColumns:
-              "minmax(320px, 1fr) minmax(360px, 1fr)",
+              "360px minmax(0, 1fr)",
 
             gap:
               20,
           }}
         >
           {/* ================================================
-              List
+              Answer list
               ================================================ */}
 
-          <section
-            className="card"
-          >
-            <h2>
-              採点確認
-            </h2>
-
-            <div
+          <section className="listCard">
+            <input
+              value={
+                search
+              }
+              onChange={(
+                event
+              ) =>
+                setSearch(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="生徒番号・氏名・テスト名"
               style={{
-                marginTop:
-                  16,
-              }}
-            >
-              {items.map(
-                (
-                  item
-                ) => {
-                  const active =
-                    item.id ===
-                    selectedId;
+                width:
+                  "100%",
 
-                  return (
-                    <button
-                      key={
-                        item.id
+                padding:
+                  10,
+
+                marginBottom:
+                  12,
+              }}
+            />
+
+            {filtered.length ===
+              0 && (
+              <p>
+                確認対象の答案はありません。
+              </p>
+            )}
+
+            {filtered.map(
+              (
+                item
+              ) => (
+                <button
+                  key={
+                    item.id
+                  }
+                  type="button"
+                  onClick={() =>
+                    setSelectedId(
+                      item.id
+                    )
+                  }
+                  style={{
+                    display:
+                      "block",
+
+                    width:
+                      "100%",
+
+                    marginBottom:
+                      8,
+
+                    padding:
+                      14,
+
+                    textAlign:
+                      "left",
+
+                    border:
+                      selectedId ===
+                      item.id
+                        ? "2px solid #111"
+                        : "1px solid #ddd",
+
+                    borderRadius:
+                      8,
+
+                    background:
+                      "#fff",
+
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  <strong>
+                    {
+                      item.studentName
+                    }
+                  </strong>
+
+                  <div
+                    style={{
+                      marginTop:
+                        4,
+
+                      fontSize:
+                        12,
+
+                      color:
+                        "#666",
+                    }}
+                  >
+                    {
+                      item.studentNumber
+                    }
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop:
+                        4,
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
+                      item.testName
+                    }
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop:
+                        8,
+
+                      fontWeight:
+                        700,
+                    }}
+                  >
+                    {
+                      item.totalScore
+                    }
+                    {" / "}
+                    {
+                      item.totalMaxScore
+                    }
+                  </div>
+                </button>
+              )
+            )}
+          </section>
+
+          {/* ================================================
+              Review
+              ================================================ */}
+
+          <section className="stepCard">
+            {!selected ? (
+              <p>
+                確認する答案を選択してください。
+              </p>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "space-between",
+
+                    alignItems:
+                      "center",
+
+                    marginBottom:
+                      20,
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        margin:
+                          0,
+                      }}
+                    >
+                      {
+                        selected.studentName
                       }
-                      type="button"
-                      onClick={() =>
-                        setSelectedId(
-                          item.id
+                    </h2>
+
+                    <p
+                      style={{
+                        margin:
+                          "5px 0 0",
+
+                        color:
+                          "#666",
+                      }}
+                    >
+                      {
+                        selected.testName
+                      }
+                      {" / "}
+                      {
+                        selected.studentNumber
+                      }
+                    </p>
+                  </div>
+
+                  <strong>
+                    {
+                      selected.totalScore
+                    }
+                    {" / "}
+                    {
+                      selected.totalMaxScore
+                    }
+                  </strong>
+                </div>
+
+                <div
+                  style={{
+                    overflowX:
+                      "auto",
+                  }}
+                >
+                  <table className="dataTable">
+                    <thead>
+                      <tr>
+                        <th>
+                          問題
+                        </th>
+
+                        <th>
+                          答え
+                        </th>
+
+                        <th>
+                          自動採点
+                        </th>
+
+                        <th>
+                          得点
+                        </th>
+
+                        <th>
+                          理由
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {results.map(
+                        (
+                          result,
+                          index
+                        ) => (
+                          <tr
+                            key={`${result.questionId}-${index}`}
+                          >
+                            <td>
+                              {
+                                result.questionNumber
+                              }
+                            </td>
+
+                            <td>
+                              {
+                                result.answerText ||
+                                "—"
+                              }
+                            </td>
+
+                            <td>
+                              {result.mark}
+                            </td>
+
+                            <td>
+                              <input
+                                type="number"
+                                min="0"
+                                max={
+                                  result.maxScore
+                                }
+                                value={
+                                  result.score
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  changeScore(
+                                    index,
+                                    event
+                                      .target
+                                      .value
+                                  )
+                                }
+                                style={{
+                                  width:
+                                    80,
+                                }}
+                              />
+                              {" / "}
+                              {
+                                result.maxScore
+                              }
+                            </td>
+
+                            <td>
+                              <input
+                                value={
+                                  result.reason ??
+                                  ""
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  changeReason(
+                                    index,
+                                    event
+                                      .target
+                                      .value
+                                  )
+                                }
+                                placeholder="確認理由"
+                              />
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div
+                  style={{
+                    marginTop:
+                      20,
+                  }}
+                >
+                  <label>
+                    内部メモ
+
+                    <textarea
+                      value={
+                        internalNote
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setInternalNote(
+                          event
+                            .target
+                            .value
                         )
                       }
+                      rows={4}
                       style={{
                         display:
                           "block",
@@ -621,247 +1123,102 @@ export default function GradingReviewPage() {
                         width:
                           "100%",
 
-                        padding:
-                          14,
-
-                        marginBottom:
-                          8,
-
-                        textAlign:
-                          "left",
-
-                        border:
-                          active
-                            ? "2px solid #111"
-                            : "1px solid #ddd",
-
-                        borderRadius:
-                          8,
-
-                        background:
-                          active
-                            ? "#f7f7f7"
-                            : "#fff",
-
-                        cursor:
-                          "pointer",
+                        marginTop:
+                          6,
                       }}
-                    >
-                      <div
-                        style={{
-                          display:
-                            "flex",
-
-                          justifyContent:
-                            "space-between",
-                        }}
-                      >
-                        <strong>
-                          問題{" "}
-                          {
-                            item.questionNumber
-                          }
-                        </strong>
-
-                        <span>
-                          {
-                            item.status
-                          }
-                        </span>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop:
-                            7,
-
-                          fontSize:
-                            13,
-
-                          color:
-                            "#666",
-                        }}
-                      >
-                        {
-                          item.beforeScore
-                        }
-                        点 →{" "}
-                        {
-                          item.afterScore
-                        }
-                        点
-                      </div>
-                    </button>
-                  );
-                }
-              )}
-            </div>
-          </section>
-
-          {/* ================================================
-              Detail
-              ================================================ */}
-
-          <section
-            className="card"
-          >
-            <h2>
-              問題詳細
-            </h2>
-
-            {!selected ? (
-              <p className="muted">
-                問題を選択してください。
-              </p>
-            ) : (
-              <>
-                <div
-                  style={{
-                    marginTop:
-                      18,
-
-                    padding:
-                      16,
-
-                    background:
-                      "#f7f7f7",
-
-                    borderRadius:
-                      8,
-                  }}
-                >
-                  <div className="muted">
-                    生徒番号
-                  </div>
-
-                  <strong>
-                    答案画面では非表示
-                  </strong>
+                    />
+                  </label>
                 </div>
 
                 <div
                   style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "1fr 1fr",
-
-                    gap:
-                      14,
-
                     marginTop:
-                      18,
+                      16,
                   }}
                 >
-                  <div>
-                    <label>
-                      採点前
-                    </label>
+                  <label>
+                    生徒公開コメント
 
-                    <input
-                      className="input"
-                      type="number"
+                    <textarea
                       value={
-                        selected.beforeScore
-                      }
-                      disabled
-                    />
-                  </div>
-
-                  <div>
-                    <label>
-                      確認後
-                    </label>
-
-                    <input
-                      className="input"
-                      type="number"
-                      value={
-                        selected.afterScore
+                        publicAnnotation
                       }
                       onChange={(
                         event
                       ) =>
-                        updateAfterScore(
+                        setPublicAnnotation(
                           event
                             .target
                             .value
                         )
                       }
+                      rows={4}
+                      style={{
+                        display:
+                          "block",
+
+                        width:
+                          "100%",
+
+                        marginTop:
+                          6,
+                      }}
                     />
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    marginTop:
-                      18,
-                  }}
-                >
-                  <label>
-                    変更理由
                   </label>
-
-                  <textarea
-                    className="input"
-                    value={
-                      selected.reason
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateReason(
-                        event
-                          .target
-                          .value
-                      )
-                    }
-                    rows={5}
-                    placeholder="採点変更の理由"
-                  />
                 </div>
 
                 <div
-                  className="row"
                   style={{
-                    gap:
-                      8,
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "flex-end",
 
                     marginTop:
-                      18,
+                      20,
                   }}
                 >
                   <button
                     type="button"
-                    className="btn secondary"
-                    onClick={
-                      confirmSelected
-                    }
-                  >
-                    確認済みにする
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn"
+                    className="primaryButton"
                     disabled={
                       saving
                     }
                     onClick={
-                      saveChanges
+                      saveReview
                     }
                   >
                     {saving
                       ? "保存中..."
-                      : "採点変更を保存"}
+                      : "一次確認を保存"}
                   </button>
                 </div>
               </>
             )}
           </section>
         </div>
-      </div>
+      </section>
     </main>
   );
+}
+
+function stringValue(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : "";
+}
+
+function numberValue(
+  value: unknown
+) {
+  return typeof value ===
+    "number"
+    ? value
+    : Number(
+        value ?? 0
+      );
 }
