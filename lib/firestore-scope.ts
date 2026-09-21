@@ -1,5 +1,6 @@
 import {
   collection,
+  getDocs,
   query,
   where,
   type CollectionReference,
@@ -7,13 +8,13 @@ import {
   type Query,
 } from "firebase/firestore";
 
-import type {
-  UserRole,
-} from "@/lib/types";
-
 import {
   db,
 } from "@/lib/firebase";
+
+import type {
+  UserRole,
+} from "@/lib/types";
 
 /* =========================================================
    Types
@@ -22,19 +23,21 @@ import {
 export type FirestoreUser = {
   uid: string;
 
-  organizationId:
-    | string
-    | null;
+  organizationId: string | null;
 
-  role:
-    | UserRole
-    | null;
+  role: UserRole | null;
 
   schoolIds: string[];
 
-  studentId:
-    | string
-    | null;
+  studentId: string | null;
+};
+
+export type ScopedDocument<
+  T extends DocumentData = DocumentData
+> = {
+  id: string;
+
+  data: T;
 };
 
 export type StudentScope = {
@@ -49,12 +52,7 @@ export type StudentScope = {
    Constants
    ========================================================= */
 
-/*
- * Firestore の `in` / `array-contains-any` の
- * 1クエリあたりの値数を10件以内にする。
- */
-const FIRESTORE_IN_LIMIT =
-  10;
+const FIRESTORE_IN_LIMIT = 10;
 
 /* =========================================================
    Collection
@@ -72,7 +70,7 @@ function getCollection<
 }
 
 /* =========================================================
-   Organization Query
+   Organization query
    ========================================================= */
 
 export function organizationQuery<
@@ -95,15 +93,14 @@ export function organizationQuery<
 }
 
 /* =========================================================
-   Split IDs
+   Split school IDs
    ========================================================= */
 
 function splitIntoChunks(
   values: string[],
   size: number
 ): string[][] {
-  const result: string[][] =
-    [];
+  const result: string[][] = [];
 
   for (
     let i = 0;
@@ -122,9 +119,7 @@ function splitIntoChunks(
 }
 
 /* =========================================================
-   School Queries
-   =========================================================
-   11校舎以上でも対応。
+   School queries
    ========================================================= */
 
 export function schoolQueries<
@@ -134,14 +129,13 @@ export function schoolQueries<
   organizationId: string,
   schoolIds: string[]
 ): Query<T>[] {
+  /*
+   * schoolIdsが空なら、
+   * 全校舎を取得してはいけない。
+   */
   if (
-    schoolIds.length ===
-    0
+    schoolIds.length === 0
   ) {
-    /*
-     * 権限がない場合に
-     * organization全件を取得しない。
-     */
     return [
       query(
         getCollection<T>(
@@ -163,6 +157,10 @@ export function schoolQueries<
     ];
   }
 
+  /*
+   * Firestoreのin制限に合わせて
+   * 10校舎ずつ分割。
+   */
   const chunks =
     splitIntoChunks(
       schoolIds,
@@ -171,7 +169,7 @@ export function schoolQueries<
 
   return chunks.map(
     (
-      chunk
+      schoolChunk
     ) =>
       query(
         getCollection<T>(
@@ -187,14 +185,14 @@ export function schoolQueries<
         where(
           "schoolId",
           "in",
-          chunk
+          schoolChunk
         )
       )
   );
 }
 
 /* =========================================================
-   Student Query
+   Student query
    ========================================================= */
 
 export function studentQuery<
@@ -262,11 +260,26 @@ export function studentsQueries(
         return [];
       }
 
+      /*
+       * 生徒は自分のstudentIdだけ。
+       */
       return [
-        studentQuery(
-          "students",
-          user.organizationId,
-          user.studentId
+        query(
+          getCollection(
+            "students"
+          ),
+
+          where(
+            "organizationId",
+            "==",
+            user.organizationId
+          ),
+
+          where(
+            "__name__",
+            "==",
+            user.studentId
+          )
         ),
       ];
 
@@ -307,6 +320,10 @@ export function testsQueries(
         user.schoolIds
       );
 
+    /*
+     * 生徒のテスト一覧は、
+     * 学習公開条件を別途指定して取得する。
+     */
     case "生徒":
       return [];
 
@@ -504,19 +521,10 @@ export function retestsQueries(
       );
 
     case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "retests",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
+      /*
+       * 生徒は追試管理画面に入れない。
+       */
+      return [];
 
     default:
       return [];
@@ -630,6 +638,40 @@ export function studentHistoryQueries(
 }
 
 /* =========================================================
+   Student Number Registry
+   ========================================================= */
+
+export function studentNumberRegistryQueries(
+  user: FirestoreUser
+): Query<DocumentData>[] {
+  if (
+    !user.organizationId
+  ) {
+    return [];
+  }
+
+  /*
+   * 生徒番号Registryは
+   * 組織単位で管理。
+   */
+  if (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者"
+  ) {
+    return [
+      organizationQuery(
+        "studentNumberRegistry",
+        user.organizationId
+      ),
+    ];
+  }
+
+  return [];
+}
+
+/* =========================================================
    System Logs
    ========================================================= */
 
@@ -678,40 +720,28 @@ export function schoolsQueries(
     return [];
   }
 
-  /*
-   * 本部管理者
-   * → 全校舎
-   */
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return [
-      organizationQuery(
+    case "本部管理者":
+      return [
+        organizationQuery(
+          "schools",
+          user.organizationId
+        ),
+      ];
+
+    case "校舎管理者":
+    case "講師":
+      return schoolQueries(
         "schools",
-        user.organizationId
-      ),
-    ];
-  }
+        user.organizationId,
+        user.schoolIds
+      );
 
-  /*
-   * 校舎管理者・講師
-   * → 自分のschoolIds
-   */
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQueries(
-      "schools",
-      user.organizationId,
-      user.schoolIds
-    );
+    default:
+      return [];
   }
-
-  return [];
 }
 
 /* =========================================================
@@ -727,30 +757,27 @@ export function usageQueries(
     return [];
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return [
-      organizationQuery(
+    case "本部管理者":
+      return [
+        organizationQuery(
+          "usage",
+          user.organizationId
+        ),
+      ];
+
+    case "校舎管理者":
+      return schoolQueries(
         "usage",
-        user.organizationId
-      ),
-    ];
-  }
+        user.organizationId,
+        user.schoolIds
+      );
 
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return schoolQueries(
-      "usage",
-      user.organizationId,
-      user.schoolIds
-    );
+    default:
+      return [];
   }
-
-  return [];
 }
 
 /* =========================================================
@@ -767,60 +794,56 @@ export function scopedQueries(
     return [];
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return [
-      organizationQuery(
-        collectionName,
-        user.organizationId
-      ),
-    ];
-  }
+    case "本部管理者":
+      return [
+        organizationQuery(
+          collectionName,
+          user.organizationId
+        ),
+      ];
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQueries(
-      collectionName,
-      user.organizationId,
-      user.schoolIds
-    );
-  }
-
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return [
-      studentQuery(
+    case "校舎管理者":
+    case "講師":
+      return schoolQueries(
         collectionName,
         user.organizationId,
-        user.studentId
-      ),
-    ];
-  }
+        user.schoolIds
+      );
 
-  return [];
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return [];
+      }
+
+      return [
+        studentQuery(
+          collectionName,
+          user.organizationId,
+          user.studentId
+        ),
+      ];
+
+    default:
+      return [];
+  }
 }
 
 /* =========================================================
-   Execute multiple queries
-   =========================================================
-   各ページから簡単に使えるように、
-   Query[]をまとめて実行する。
+   Execute scoped queries
    ========================================================= */
 
 export async function getScopedDocs<
   T extends DocumentData
 >(
   queries: Query<T>[]
-): Promise<T[]> {
+): Promise<
+  ScopedDocument<T>[]
+> {
   if (
     queries.length ===
     0
@@ -832,25 +855,21 @@ export async function getScopedDocs<
     await Promise.all(
       queries.map(
         (
-          item
+          currentQuery
         ) =>
-          import(
-            "firebase/firestore"
-          ).then(
-            ({
-              getDocs,
-            }) =>
-              getDocs(
-                item
-              )
+          getDocs(
+            currentQuery
           )
       )
     );
 
-  const map =
+  /*
+   * document IDをキーにして重複除去。
+   */
+  const documents =
     new Map<
       string,
-      T
+      ScopedDocument<T>
     >();
 
   for (
@@ -858,35 +877,38 @@ export async function getScopedDocs<
       snapshots
   ) {
     for (
-      const item of
+      const document of
         snapshot.docs
     ) {
-      /*
-       * 同じドキュメントが
-       * 複数Queryに入っても重複しない。
-       */
-      map.set(
-        item.id,
-        item.data()
+      documents.set(
+        document.id,
+        {
+          id:
+            document.id,
+
+          data:
+            document.data(),
+        }
       );
     }
   }
 
   return Array.from(
-    map.values()
+    documents.values()
   );
 }
 
 /* =========================================================
-   Access checks
+   Access: School
    ========================================================= */
 
 export function canAccessSchool(
   user: FirestoreUser,
   schoolId: string
-) {
+): boolean {
   if (
-    !user.organizationId
+    !user.organizationId ||
+    !schoolId
   ) {
     return false;
   }
@@ -903,10 +925,14 @@ export function canAccessSchool(
   );
 }
 
+/* =========================================================
+   Access: Student
+   ========================================================= */
+
 export function canAccessStudent(
   user: FirestoreUser,
   student: StudentScope
-) {
+): boolean {
   if (
     !user.organizationId
   ) {
@@ -952,12 +978,28 @@ export function canAccessStudent(
 }
 
 /* =========================================================
+   Access: Own data
+   ========================================================= */
+
+export function canAccessOwnStudentData(
+  user: FirestoreUser,
+  studentId: string
+): boolean {
+  return (
+    user.role ===
+      "生徒" &&
+    user.studentId ===
+      studentId
+  );
+}
+
+/* =========================================================
    Role helpers
    ========================================================= */
 
 export function isHeadOfficeAdmin(
   user: FirestoreUser
-) {
+): boolean {
   return (
     user.role ===
     "本部管理者"
@@ -966,7 +1008,7 @@ export function isHeadOfficeAdmin(
 
 export function isSchoolAdmin(
   user: FirestoreUser
-) {
+): boolean {
   return (
     user.role ===
     "校舎管理者"
@@ -975,7 +1017,7 @@ export function isSchoolAdmin(
 
 export function isTeacher(
   user: FirestoreUser
-) {
+): boolean {
   return (
     user.role ===
     "講師"
@@ -984,9 +1026,103 @@ export function isTeacher(
 
 export function isStudent(
   user: FirestoreUser
-) {
+): boolean {
   return (
     user.role ===
     "生徒"
   );
+}
+
+export function isStaff(
+  user: FirestoreUser
+): boolean {
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   School management
+   ========================================================= */
+
+export function canManageSchool(
+  user: FirestoreUser,
+  schoolId: string
+): boolean {
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  if (
+    user.role ===
+    "校舎管理者"
+  ) {
+    return user.schoolIds.includes(
+      schoolId
+    );
+  }
+
+  return false;
+}
+
+/* =========================================================
+   Student management
+   ========================================================= */
+
+export function canManageStudent(
+  user: FirestoreUser,
+  schoolId: string
+): boolean {
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  if (
+    user.role ===
+    "校舎管理者"
+  ) {
+    return user.schoolIds.includes(
+      schoolId
+    );
+  }
+
+  return false;
+}
+
+/* =========================================================
+   Test management
+   ========================================================= */
+
+export function canManageTest(
+  user: FirestoreUser,
+  schoolId: string
+): boolean {
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  if (
+    user.role ===
+    "校舎管理者"
+  ) {
+    return user.schoolIds.includes(
+      schoolId
+    );
+  }
+
+  return false;
 }
