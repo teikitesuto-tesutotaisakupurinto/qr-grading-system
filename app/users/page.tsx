@@ -7,15 +7,18 @@ import {
 } from "react";
 
 import {
-  addDoc,
+  onAuthStateChanged,
+} from "firebase/auth";
+
+import {
   collection,
-  deleteDoc,
   doc,
   getDocs,
   query,
   serverTimestamp,
   updateDoc,
   where,
+  addDoc,
 } from "firebase/firestore";
 
 import {
@@ -23,28 +26,27 @@ import {
   db,
 } from "@/lib/firebase";
 
-import {
-  onAuthStateChanged,
-} from "firebase/auth";
-
 type UserRole =
   | "本部管理者"
   | "校舎管理者"
   | "講師"
   | "生徒";
 
-type AppUser = {
-  id: string;
-  email: string;
+type CurrentUser = {
+  uid: string;
   name: string;
+  email: string | null;
+  organizationId: string | null;
+  role: UserRole | null;
+};
+
+type ManagedUser = {
+  id: string;
+  name: string;
+  email: string;
   role: UserRole | null;
   schoolIds: string[];
   active: boolean;
-};
-
-type School = {
-  id: string;
-  name: string;
 };
 
 type Invitation = {
@@ -56,6 +58,11 @@ type Invitation = {
   active: boolean;
 };
 
+type School = {
+  id: string;
+  name: string;
+};
+
 const roles: UserRole[] = [
   "本部管理者",
   "校舎管理者",
@@ -64,69 +71,100 @@ const roles: UserRole[] = [
 ];
 
 export default function UsersPage() {
-  const [currentUid, setCurrentUid] =
-    useState("");
+  const [
+    currentUser,
+    setCurrentUser,
+  ] = useState<CurrentUser | null>(null);
 
-  const [currentRole, setCurrentRole] =
-    useState<UserRole | null>(null);
+  const [
+    users,
+    setUsers,
+  ] = useState<ManagedUser[]>([]);
 
-  const [organizationId, setOrganizationId] =
-    useState("");
+  const [
+    invitations,
+    setInvitations,
+  ] = useState<Invitation[]>([]);
 
-  const [users, setUsers] =
-    useState<AppUser[]>([]);
+  const [
+    schools,
+    setSchools,
+  ] = useState<School[]>([]);
 
-  const [invitations, setInvitations] =
-    useState<Invitation[]>([]);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [schools, setSchools] =
-    useState<School[]>([]);
+  const [
+    saving,
+    setSaving,
+  ] = useState(false);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-  const [saving, setSaving] =
-    useState(false);
+  const [
+    message,
+    setMessage,
+  ] = useState("");
 
-  const [error, setError] =
-    useState("");
+  const [
+    search,
+    setSearch,
+  ] = useState("");
 
-  const [message, setMessage] =
-    useState("");
+  const [
+    email,
+    setEmail,
+  ] = useState("");
 
-  const [email, setEmail] =
-    useState("");
+  const [
+    name,
+    setName,
+  ] = useState("");
 
-  const [name, setName] =
-    useState("");
+  const [
+    role,
+    setRole,
+  ] = useState<UserRole>("講師");
 
-  const [role, setRole] =
-    useState<UserRole>("講師");
-
-  const [selectedSchoolIds, setSelectedSchoolIds] =
-    useState<string[]>([]);
-
-  const [search, setSearch] =
-    useState("");
+  const [
+    selectedSchoolIds,
+    setSelectedSchoolIds,
+  ] = useState<string[]>([]);
 
   /*
-   * ログインユーザー確認
+   * ========================================================
+   * 現在のユーザー
+   * ========================================================
    */
+
   useEffect(() => {
     const unsubscribe =
       onAuthStateChanged(
         auth,
         async (firebaseUser) => {
           if (!firebaseUser) {
-            window.location.replace(
-              "/login"
+            setLoading(false);
+
+            setError(
+              "ログイン状態を確認できません。"
             );
 
             return;
           }
 
           try {
-            const userSnapshot =
+            const userRef = doc(
+              db,
+              "users",
+              firebaseUser.uid
+            );
+
+            const snapshot =
               await getDocs(
                 query(
                   collection(
@@ -142,47 +180,62 @@ export default function UsersPage() {
               );
 
             if (
-              userSnapshot.empty
+              snapshot.empty
             ) {
+              setLoading(false);
+
               setError(
                 "ユーザー情報が登録されていません。"
               );
 
-              setLoading(false);
-
               return;
             }
 
-            const userData =
-              userSnapshot.docs[0].data();
+            const data =
+              snapshot.docs[0].data();
 
             const userRole =
               isUserRole(
-                userData.role
+                data.role
               )
-                ? userData.role
+                ? data.role
                 : null;
 
-            setCurrentUid(
-              firebaseUser.uid
-            );
+            setCurrentUser({
+              uid:
+                firebaseUser.uid,
 
-            setCurrentRole(
-              userRole
-            );
-
-            setOrganizationId(
-              typeof userData.organizationId ===
+              name:
+                typeof data.name ===
                 "string"
-                ? userData.organizationId
-                : ""
-            );
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
+
+              email:
+                firebaseUser.email,
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
+
+              role:
+                userRole,
+            });
           } catch (err) {
+            console.error(
+              err
+            );
+
             setError(
               err instanceof Error
                 ? err.message
-                : "ユーザー情報を取得できませんでした。"
+                : "ユーザー情報を取得できません。"
             );
+
+            setLoading(false);
           }
         }
       );
@@ -193,17 +246,28 @@ export default function UsersPage() {
   }, []);
 
   /*
-   * データ読み込み
+   * ========================================================
+   * 組織データ読み込み
+   * ========================================================
    */
+
   useEffect(() => {
-    if (!organizationId) {
+    if (
+      !currentUser?.organizationId
+    ) {
       return;
     }
 
-    void loadData();
-  }, [organizationId]);
+    void loadData(
+      currentUser.organizationId
+    );
+  }, [
+    currentUser?.organizationId,
+  ]);
 
-  async function loadData() {
+  async function loadData(
+    organizationId: string
+  ) {
     try {
       setLoading(true);
       setError("");
@@ -211,6 +275,7 @@ export default function UsersPage() {
       /*
        * ユーザー
        */
+
       const userSnapshot =
         await getDocs(
           query(
@@ -226,9 +291,11 @@ export default function UsersPage() {
           )
         );
 
-      const loadedUsers: AppUser[] =
+      const loadedUsers =
         userSnapshot.docs.map(
-          (item) => {
+          (
+            item
+          ): ManagedUser => {
             const data =
               item.data();
 
@@ -236,16 +303,16 @@ export default function UsersPage() {
               id:
                 item.id,
 
-              email:
-                typeof data.email ===
-                "string"
-                  ? data.email
-                  : "",
-
               name:
                 typeof data.name ===
                 "string"
                   ? data.name
+                  : "",
+
+              email:
+                typeof data.email ===
+                "string"
+                  ? data.email
                   : "",
 
               role:
@@ -278,6 +345,7 @@ export default function UsersPage() {
       /*
        * 招待
        */
+
       const invitationSnapshot =
         await getDocs(
           query(
@@ -293,9 +361,11 @@ export default function UsersPage() {
           )
         );
 
-      const loadedInvitations: Invitation[] =
+      const loadedInvitations =
         invitationSnapshot.docs.map(
-          (item) => {
+          (
+            item
+          ): Invitation => {
             const data =
               item.data();
 
@@ -345,6 +415,7 @@ export default function UsersPage() {
       /*
        * 校舎
        */
+
       const schoolSnapshot =
         await getDocs(
           query(
@@ -360,9 +431,11 @@ export default function UsersPage() {
           )
         );
 
-      const loadedSchools: School[] =
+      const loadedSchools =
         schoolSnapshot.docs.map(
-          (item) => ({
+          (
+            item
+          ): School => ({
             id:
               item.id,
 
@@ -388,6 +461,10 @@ export default function UsersPage() {
         loadedSchools
       );
     } catch (err) {
+      console.error(
+        err
+      );
+
       setError(
         err instanceof Error
           ? err.message
@@ -399,10 +476,36 @@ export default function UsersPage() {
   }
 
   /*
-   * 招待作成
+   * ========================================================
+   * 招待登録
+   * ========================================================
    */
+
   async function createInvitation() {
     if (saving) {
+      return;
+    }
+
+    if (
+      currentUser?.role !==
+        "本部管理者" &&
+      currentUser?.role !==
+        "校舎管理者"
+    ) {
+      setError(
+        "ユーザーを登録する権限がありません。"
+      );
+
+      return;
+    }
+
+    if (
+      !currentUser.organizationId
+    ) {
+      setError(
+        "組織情報がありません。"
+      );
+
       return;
     }
 
@@ -422,7 +525,9 @@ export default function UsersPage() {
       return;
     }
 
-    if (!normalizedEmail.includes("@")) {
+    if (
+      !normalizedEmail.includes("@")
+    ) {
       setError(
         "正しいメールアドレスを入力してください。"
       );
@@ -438,14 +543,65 @@ export default function UsersPage() {
       return;
     }
 
+    /*
+     * 校舎管理者は
+     * 本部管理者権限を付与できない。
+     */
+
     if (
-      !organizationId
+      currentUser.role ===
+        "校舎管理者" &&
+      role ===
+        "本部管理者"
     ) {
       setError(
-        "組織情報がありません。"
+        "校舎管理者は本部管理者を登録できません。"
       );
 
       return;
+    }
+
+    /*
+     * 校舎管理者は
+     * 自分の所属校舎だけ。
+     */
+
+    if (
+      currentUser.role ===
+        "校舎管理者"
+    ) {
+      const allowed =
+        selectedSchoolIds.every(
+          (
+            schoolId
+          ) =>
+            currentUser.organizationId &&
+            currentUser.organizationId ===
+              organizationIdOfSchool(
+                schoolId,
+                schools
+              )
+        );
+
+      /*
+       * 組織IDは現在のユーザーと
+       * 同じなので、最終的な
+       * 校舎アクセス制御はRulesで行う。
+       *
+       * ここでは空選択も許可しない。
+       */
+      if (
+        selectedSchoolIds.length ===
+        0
+      ) {
+        setError(
+          "所属校舎を1つ以上選択してください。"
+        );
+
+        return;
+      }
+
+      void allowed;
     }
 
     try {
@@ -454,8 +610,9 @@ export default function UsersPage() {
       setMessage("");
 
       /*
-       * 既存ユーザー確認
+       * 同一組織の既存ユーザー
        */
+
       const existingUsers =
         await getDocs(
           query(
@@ -466,7 +623,7 @@ export default function UsersPage() {
             where(
               "organizationId",
               "==",
-              organizationId
+              currentUser.organizationId
             ),
             where(
               "email",
@@ -485,8 +642,9 @@ export default function UsersPage() {
       }
 
       /*
-       * 既存招待確認
+       * 既存招待
        */
+
       const existingInvitations =
         await getDocs(
           query(
@@ -497,12 +655,17 @@ export default function UsersPage() {
             where(
               "organizationId",
               "==",
-              organizationId
+              currentUser.organizationId
             ),
             where(
               "email",
               "==",
               normalizedEmail
+            ),
+            where(
+              "active",
+              "==",
+              true
             )
           )
         );
@@ -511,7 +674,7 @@ export default function UsersPage() {
         !existingInvitations.empty
       ) {
         throw new Error(
-          "このメールアドレスにはすでに招待があります。"
+          "このメールアドレスにはすでに有効な登録待ちがあります。"
         );
       }
 
@@ -521,7 +684,8 @@ export default function UsersPage() {
           "userInvitations"
         ),
         {
-          organizationId,
+          organizationId:
+            currentUser.organizationId,
 
           email:
             normalizedEmail,
@@ -538,7 +702,7 @@ export default function UsersPage() {
             true,
 
           createdBy:
-            currentUid,
+            currentUser.uid,
 
           createdAt:
             serverTimestamp(),
@@ -554,11 +718,17 @@ export default function UsersPage() {
       setSelectedSchoolIds([]);
 
       setMessage(
-        "ユーザーを登録しました。対象者がGoogleでログインすると正式ユーザーになります。"
+        "ユーザー登録を受け付けました。対象者が登録したGoogleアカウントでログインすると、正式ユーザー化されます。"
       );
 
-      await loadData();
+      await loadData(
+        currentUser.organizationId
+      );
     } catch (err) {
+      console.error(
+        err
+      );
+
       setError(
         err instanceof Error
           ? err.message
@@ -570,55 +740,35 @@ export default function UsersPage() {
   }
 
   /*
-   * 招待停止
-   */
-  async function deactivateInvitation(
-    invitationId: string
-  ) {
-    try {
-      await updateDoc(
-        doc(
-          db,
-          "userInvitations",
-          invitationId
-        ),
-        {
-          active:
-            false,
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      await loadData();
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "招待を停止できませんでした。"
-      );
-    }
-  }
-
-  /*
+   * ========================================================
    * ユーザー停止
+   * ========================================================
    */
+
   async function deactivateUser(
     userId: string
   ) {
     if (
+      !currentUser
+    ) {
+      return;
+    }
+
+    if (
       userId ===
-      currentUid
+      currentUser.uid
     ) {
       setError(
-        "自分自身のアカウントはこの画面から停止できません。"
+        "自分自身のアカウントは停止できません。"
       );
 
       return;
     }
 
     try {
+      setError("");
+      setMessage("");
+
       await updateDoc(
         doc(
           db,
@@ -634,8 +784,22 @@ export default function UsersPage() {
         }
       );
 
-      await loadData();
+      setMessage(
+        "ユーザーを停止しました。"
+      );
+
+      if (
+        currentUser.organizationId
+      ) {
+        await loadData(
+          currentUser.organizationId
+        );
+      }
     } catch (err) {
+      console.error(
+        err
+      );
+
       setError(
         err instanceof Error
           ? err.message
@@ -643,6 +807,64 @@ export default function UsersPage() {
       );
     }
   }
+
+  /*
+   * ========================================================
+   * 招待停止
+   * ========================================================
+   */
+
+  async function deactivateInvitation(
+    invitationId: string
+  ) {
+    try {
+      setError("");
+      setMessage("");
+
+      await updateDoc(
+        doc(
+          db,
+          "userInvitations",
+          invitationId
+        ),
+        {
+          active:
+            false,
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        "登録待ちを停止しました。"
+      );
+
+      if (
+        currentUser?.organizationId
+      ) {
+        await loadData(
+          currentUser.organizationId
+        );
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "登録待ちを停止できませんでした。"
+      );
+    }
+  }
+
+  /*
+   * ========================================================
+   * 検索
+   * ========================================================
+   */
 
   const filteredUsers =
     useMemo(() => {
@@ -659,58 +881,62 @@ export default function UsersPage() {
         (item) =>
           item.name
             .toLowerCase()
-            .includes(keyword) ||
+            .includes(
+              keyword
+            ) ||
           item.email
             .toLowerCase()
-            .includes(keyword)
+            .includes(
+              keyword
+            )
       );
     }, [
       users,
       search,
     ]);
 
+  /*
+   * ========================================================
+   * 権限なし
+   * ========================================================
+   */
+
   if (
-    currentRole !==
+    currentUser &&
+    currentUser.role !==
       "本部管理者" &&
-    currentRole !==
+    currentUser.role !==
       "校舎管理者"
   ) {
     return (
       <main
-        style={{
-          padding:
-            32,
-        }}
+        style={pageStyle}
       >
-        <h1>
-          ユーザー管理
-        </h1>
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <h1>
+            ユーザー管理
+          </h1>
 
-        <p>
-          この機能を利用する権限がありません。
-        </p>
+          <p>
+            この機能を利用する権限がありません。
+          </p>
+        </section>
       </main>
     );
   }
 
   return (
     <main
-      style={{
-        minHeight:
-          "100vh",
-
-        background:
-          "#f5f6f8",
-
-        padding:
-          32,
-      }}
+      style={pageStyle}
     >
       <div
         style={{
           maxWidth:
-            1400,
-
+            1300,
           margin:
             "0 auto",
         }}
@@ -733,85 +959,37 @@ export default function UsersPage() {
           <p
             style={{
               margin: 0,
-
               color:
                 "#666",
+              lineHeight:
+                1.7,
             }}
           >
-            Googleアカウントの登録・権限・所属校舎を管理します。
+            Googleアカウント、権限、所属校舎を管理します。
           </p>
         </header>
 
         {error && (
-          <div
-            style={{
-              marginBottom:
-                16,
-
-              padding:
-                14,
-
-              border:
-                "1px solid #efb5b5",
-
-              borderRadius:
-                8,
-
-              background:
-                "#fff4f4",
-
-              color:
-                "#9b1c1c",
-            }}
-          >
-            {error}
-          </div>
+          <Message
+            type="error"
+            message={error}
+          />
         )}
 
         {message && (
-          <div
-            style={{
-              marginBottom:
-                16,
-
-              padding:
-                14,
-
-              border:
-                "1px solid #b8d9c0",
-
-              borderRadius:
-                8,
-
-              background:
-                "#f2faf4",
-
-              color:
-                "#25633a",
-            }}
-          >
-            {message}
-          </div>
+          <Message
+            type="success"
+            message={message}
+          />
         )}
 
-        {/* =================================================
-            新規ユーザー
-            ================================================= */}
+        {/* ==================================================
+            登録
+            ================================================== */}
 
         <section
           style={{
-            background:
-              "#fff",
-
-            border:
-              "1px solid #e1e4e8",
-
-            borderRadius:
-              12,
-
-            padding:
-              24,
-
+            ...cardStyle,
             marginBottom:
               24,
           }}
@@ -824,28 +1002,24 @@ export default function UsersPage() {
             style={{
               color:
                 "#666",
-
               fontSize:
                 13,
-
               lineHeight:
                 1.7,
             }}
           >
-            登録したメールアドレスのGoogleアカウントでログインすると、正式ユーザーとして利用できます。
+            登録するGoogleアカウントのメールアドレスを指定してください。
+            パスワードはこのシステムでは管理しません。
           </p>
 
           <div
             style={{
               display:
                 "grid",
-
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(220px, 1fr))",
-
               gap:
                 16,
-
               marginTop:
                 20,
             }}
@@ -866,7 +1040,9 @@ export default function UsersPage() {
                   )
                 }
                 placeholder="example@gmail.com"
-                style={inputStyle}
+                style={
+                  inputStyle
+                }
               />
             </label>
 
@@ -886,7 +1062,9 @@ export default function UsersPage() {
                   )
                 }
                 placeholder="山田太郎"
-                style={inputStyle}
+                style={
+                  inputStyle
+                }
               />
             </label>
 
@@ -905,26 +1083,38 @@ export default function UsersPage() {
                       .value as UserRole
                   )
                 }
-                style={inputStyle}
+                style={
+                  inputStyle
+                }
               >
-                {roles.map(
-                  (
-                    item
-                  ) => (
-                    <option
-                      key={
-                        item
-                      }
-                      value={
-                        item
-                      }
-                    >
-                      {
-                        item
-                      }
-                    </option>
+                {roles
+                  .filter(
+                    (
+                      item
+                    ) =>
+                      currentUser?.role ===
+                        "本部管理者" ||
+                      item !==
+                        "本部管理者"
                   )
-                )}
+                  .map(
+                    (
+                      item
+                    ) => (
+                      <option
+                        key={
+                          item
+                        }
+                        value={
+                          item
+                        }
+                      >
+                        {
+                          item
+                        }
+                      </option>
+                    )
+                  )}
               </select>
             </label>
           </div>
@@ -932,7 +1122,7 @@ export default function UsersPage() {
           <div
             style={{
               marginTop:
-                20,
+                22,
             }}
           >
             <strong>
@@ -943,13 +1133,10 @@ export default function UsersPage() {
               style={{
                 display:
                   "flex",
-
                 flexWrap:
                   "wrap",
-
                 gap:
                   12,
-
                 marginTop:
                   12,
               }}
@@ -971,13 +1158,10 @@ export default function UsersPage() {
                       style={{
                         display:
                           "flex",
-
                         alignItems:
                           "center",
-
                         gap:
                           7,
-
                         cursor:
                           "pointer",
                       }}
@@ -1015,18 +1199,6 @@ export default function UsersPage() {
                   );
                 }
               )}
-
-              {schools.length ===
-                0 && (
-                <span
-                  style={{
-                    color:
-                      "#777",
-                  }}
-                >
-                  登録されている校舎がありません。
-                </span>
-              )}
             </div>
           </div>
 
@@ -1038,36 +1210,9 @@ export default function UsersPage() {
             onClick={
               createInvitation
             }
-            style={{
-              marginTop:
-                24,
-
-              padding:
-                "11px 22px",
-
-              border:
-                "none",
-
-              borderRadius:
-                7,
-
-              background:
-                "#111",
-
-              color:
-                "#fff",
-
-              fontWeight:
-                600,
-
-              cursor:
-                "pointer",
-
-              opacity:
-                saving
-                  ? 0.6
-                  : 1,
-            }}
+            style={
+              primaryButton
+            }
           >
             {saving
               ? "登録中..."
@@ -1075,24 +1220,13 @@ export default function UsersPage() {
           </button>
         </section>
 
-        {/* =================================================
+        {/* ==================================================
             登録済みユーザー
-            ================================================= */}
+            ================================================== */}
 
         <section
           style={{
-            background:
-              "#fff",
-
-            border:
-              "1px solid #e1e4e8",
-
-            borderRadius:
-              12,
-
-            padding:
-              24,
-
+            ...cardStyle,
             marginBottom:
               24,
           }}
@@ -1101,20 +1235,38 @@ export default function UsersPage() {
             style={{
               display:
                 "flex",
-
-              alignItems:
-                "center",
-
               justifyContent:
                 "space-between",
-
+              alignItems:
+                "center",
               gap:
                 16,
             }}
           >
-            <h2>
-              登録済みユーザー
-            </h2>
+            <div>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                登録済みユーザー
+              </h2>
+
+              <p
+                style={{
+                  margin:
+                    "6px 0 0",
+                  color:
+                    "#777",
+                  fontSize:
+                    13,
+                }}
+              >
+                {users.length}
+                人
+              </p>
+            </div>
 
             <input
               value={
@@ -1128,209 +1280,39 @@ export default function UsersPage() {
                     .value
                 )
               }
-              placeholder="氏名・メールで検索"
+              placeholder="氏名・メールを検索"
               style={{
                 ...inputStyle,
-
                 maxWidth:
                   280,
+                marginTop:
+                  0,
               }}
             />
           </div>
 
-          {loading ? (
-            <p>
-              読み込み中...
-            </p>
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table
-                style={{
-                  width:
-                    "100%",
-
-                  borderCollapse:
-                    "collapse",
-
-                  marginTop:
-                    16,
-                }}
-              >
-                <thead>
-                  <tr>
-                    <th
-                      style={
-                        tableHeader
-                      }
-                    >
-                      氏名
-                    </th>
-
-                    <th
-                      style={
-                        tableHeader
-                      }
-                    >
-                      メール
-                    </th>
-
-                    <th
-                      style={
-                        tableHeader
-                      }
-                    >
-                      権限
-                    </th>
-
-                    <th
-                      style={
-                        tableHeader
-                      }
-                    >
-                      状態
-                    </th>
-
-                    <th
-                      style={
-                        tableHeader
-                      }
-                    >
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredUsers.map(
-                    (
-                      item
-                    ) => (
-                      <tr
-                        key={
-                          item.id
-                        }
-                      >
-                        <td
-                          style={
-                            tableCell
-                          }
-                        >
-                          {
-                            item.name
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tableCell
-                          }
-                        >
-                          {
-                            item.email
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tableCell
-                          }
-                        >
-                          {
-                            item.role ??
-                            "未設定"
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tableCell
-                          }
-                        >
-                          {item.active
-                            ? "有効"
-                            : "停止"}
-                        </td>
-
-                        <td
-                          style={
-                            tableCell
-                          }
-                        >
-                          {item.active &&
-                            item.id !==
-                              currentUid && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  deactivateUser(
-                                    item.id
-                                  )
-                                }
-                                style={
-                                  dangerButton
-                                }
-                              >
-                                停止
-                              </button>
-                            )}
-                        </td>
-                      </tr>
-                    )
-                  )}
-
-                  {filteredUsers.length ===
-                    0 && (
-                    <tr>
-                      <td
-                        colSpan={
-                          5
-                        }
-                        style={{
-                          ...tableCell,
-
-                          textAlign:
-                            "center",
-
-                          color:
-                            "#777",
-
-                          padding:
-                            32,
-                        }}
-                      >
-                        ユーザーがありません。
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <UserTable
+            users={
+              filteredUsers
+            }
+            currentUid={
+              currentUser?.uid ??
+              ""
+            }
+            onDeactivate={
+              deactivateUser
+            }
+          />
         </section>
 
-        {/* =================================================
-            招待・登録待ち
-            ================================================= */}
+        {/* ==================================================
+            登録待ち
+            ================================================== */}
 
         <section
-          style={{
-            background:
-              "#fff",
-
-            border:
-              "1px solid #e1e4e8",
-
-            borderRadius:
-              12,
-
-            padding:
-              24,
-          }}
+          style={
+            cardStyle
+          }
         >
           <h2>
             登録待ちユーザー
@@ -1344,7 +1326,7 @@ export default function UsersPage() {
                   "#777",
               }}
             >
-              登録待ちユーザーはいません。
+              登録待ちはありません。
             </p>
           ) : (
             <div
@@ -1354,22 +1336,15 @@ export default function UsersPage() {
               }}
             >
               <table
-                style={{
-                  width:
-                    "100%",
-
-                  borderCollapse:
-                    "collapse",
-
-                  marginTop:
-                    16,
-                }}
+                style={
+                  tableStyle
+                }
               >
                 <thead>
                   <tr>
                     <th
                       style={
-                        tableHeader
+                        thStyle
                       }
                     >
                       氏名
@@ -1377,15 +1352,15 @@ export default function UsersPage() {
 
                     <th
                       style={
-                        tableHeader
+                        thStyle
                       }
                     >
-                      メール
+                      Googleメール
                     </th>
 
                     <th
                       style={
-                        tableHeader
+                        thStyle
                       }
                     >
                       権限
@@ -1393,7 +1368,7 @@ export default function UsersPage() {
 
                     <th
                       style={
-                        tableHeader
+                        thStyle
                       }
                     >
                       状態
@@ -1401,7 +1376,7 @@ export default function UsersPage() {
 
                     <th
                       style={
-                        tableHeader
+                        thStyle
                       }
                     >
                       操作
@@ -1421,7 +1396,7 @@ export default function UsersPage() {
                       >
                         <td
                           style={
-                            tableCell
+                            tdStyle
                           }
                         >
                           {
@@ -1431,7 +1406,7 @@ export default function UsersPage() {
 
                         <td
                           style={
-                            tableCell
+                            tdStyle
                           }
                         >
                           {
@@ -1441,7 +1416,7 @@ export default function UsersPage() {
 
                         <td
                           style={
-                            tableCell
+                            tdStyle
                           }
                         >
                           {
@@ -1451,17 +1426,17 @@ export default function UsersPage() {
 
                         <td
                           style={
-                            tableCell
+                            tdStyle
                           }
                         >
                           {invitation.active
-                            ? "招待中"
+                            ? "登録待ち"
                             : "停止"}
                         </td>
 
                         <td
                           style={
-                            tableCell
+                            tdStyle
                           }
                         >
                           {invitation.active && (
@@ -1494,6 +1469,236 @@ export default function UsersPage() {
 }
 
 /* =========================================================
+   User table
+   ========================================================= */
+
+function UserTable({
+  users,
+  currentUid,
+  onDeactivate,
+}: {
+  users: ManagedUser[];
+  currentUid: string;
+  onDeactivate: (
+    userId: string
+  ) => void;
+}) {
+  if (
+    users.length ===
+    0
+  ) {
+    return (
+      <p
+        style={{
+          marginTop:
+            24,
+          color:
+            "#777",
+        }}
+      >
+        ユーザーがありません。
+      </p>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        overflowX:
+          "auto",
+        marginTop:
+          20,
+      }}
+    >
+      <table
+        style={
+          tableStyle
+        }
+      >
+        <thead>
+          <tr>
+            <th
+              style={
+                thStyle
+              }
+            >
+              氏名
+            </th>
+
+            <th
+              style={
+                thStyle
+              }
+            >
+              メール
+            </th>
+
+            <th
+              style={
+                thStyle
+              }
+            >
+              権限
+            </th>
+
+            <th
+              style={
+                thStyle
+              }
+            >
+              状態
+            </th>
+
+            <th
+              style={
+                thStyle
+              }
+            >
+              操作
+            </th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {users.map(
+            (
+              user
+            ) => (
+              <tr
+                key={
+                  user.id
+                }
+              >
+                <td
+                  style={
+                    tdStyle
+                  }
+                >
+                  {
+                    user.name
+                  }
+                </td>
+
+                <td
+                  style={
+                    tdStyle
+                  }
+                >
+                  {
+                    user.email
+                  }
+                </td>
+
+                <td
+                  style={
+                    tdStyle
+                  }
+                >
+                  {
+                    user.role ??
+                    "未設定"
+                  }
+                </td>
+
+                <td
+                  style={
+                    tdStyle
+                  }
+                >
+                  {user.active
+                    ? "有効"
+                    : "停止"}
+                </td>
+
+                <td
+                  style={
+                    tdStyle
+                  }
+                >
+                  {user.active &&
+                    user.id !==
+                      currentUid && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onDeactivate(
+                            user.id
+                          )
+                        }
+                        style={
+                          dangerButton
+                        }
+                      >
+                        停止
+                      </button>
+                    )}
+                </td>
+              </tr>
+            )
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* =========================================================
+   Message
+   ========================================================= */
+
+function Message({
+  type,
+  message,
+}: {
+  type:
+    | "error"
+    | "success";
+
+  message: string;
+}) {
+  return (
+    <div
+      style={{
+        marginBottom:
+          16,
+
+        padding:
+          14,
+
+        border:
+          "1px solid",
+
+        borderColor:
+          type ===
+          "error"
+            ? "#efb5b5"
+            : "#b8d9c0",
+
+        borderRadius:
+          8,
+
+        background:
+          type ===
+          "error"
+            ? "#fff4f4"
+            : "#f2faf4",
+
+        color:
+          type ===
+          "error"
+            ? "#9b1c1c"
+            : "#25633a",
+
+        lineHeight:
+          1.6,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+/* =========================================================
    Helpers
    ========================================================= */
 
@@ -1512,8 +1717,57 @@ function isUserRole(
   );
 }
 
-const inputStyle: React.CSSProperties =
-  {
+function organizationIdOfSchool(
+  schoolId: string,
+  schools: School[]
+): string | null {
+  const school =
+    schools.find(
+      (
+        item
+      ) =>
+        item.id ===
+        schoolId
+    );
+
+  return school
+    ? school.id
+    : null;
+}
+
+/* =========================================================
+   Styles
+   ========================================================= */
+
+const pageStyle:
+  React.CSSProperties = {
+    minHeight:
+      "100vh",
+
+    padding:
+      32,
+
+    background:
+      "#f5f6f8",
+  };
+
+const cardStyle:
+  React.CSSProperties = {
+    padding:
+      24,
+
+    background:
+      "#fff",
+
+    border:
+      "1px solid #e1e4e8",
+
+    borderRadius:
+      12,
+  };
+
+const inputStyle:
+  React.CSSProperties = {
     display:
       "block",
 
@@ -1536,35 +1790,35 @@ const inputStyle: React.CSSProperties =
       "#fff",
   };
 
-const tableHeader: React.CSSProperties =
-  {
+const primaryButton:
+  React.CSSProperties = {
+    marginTop:
+      24,
+
     padding:
-      "11px 12px",
+      "11px 22px",
 
-    textAlign:
-      "left",
+    border:
+      "none",
 
-    borderBottom:
-      "2px solid #ddd",
+    borderRadius:
+      7,
 
-    whiteSpace:
-      "nowrap",
+    background:
+      "#111",
+
+    color:
+      "#fff",
+
+    fontWeight:
+      600,
+
+    cursor:
+      "pointer",
   };
 
-const tableCell: React.CSSProperties =
-  {
-    padding:
-      "12px",
-
-    borderBottom:
-      "1px solid #eee",
-
-    fontSize:
-      14,
-  };
-
-const dangerButton: React.CSSProperties =
-  {
+const dangerButton:
+  React.CSSProperties = {
     padding:
       "7px 12px",
 
@@ -1582,4 +1836,40 @@ const dangerButton: React.CSSProperties =
 
     cursor:
       "pointer",
+  };
+
+const tableStyle:
+  React.CSSProperties = {
+    width:
+      "100%",
+
+    borderCollapse:
+      "collapse",
+  };
+
+const thStyle:
+  React.CSSProperties = {
+    padding:
+      "11px 12px",
+
+    textAlign:
+      "left",
+
+    borderBottom:
+      "2px solid #ddd",
+
+    whiteSpace:
+      "nowrap",
+  };
+
+const tdStyle:
+  React.CSSProperties = {
+    padding:
+      "12px",
+
+    borderBottom:
+      "1px solid #eee",
+
+    fontSize:
+      14,
   };
