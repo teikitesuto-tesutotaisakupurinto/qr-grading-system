@@ -1,290 +1,911 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-import SchoolHeader from "@/components/SchoolHeader";
-import GradeReport, {
-  GradeReportData,
-} from "@/components/GradeReport";
+import {
+  onAuthStateChanged,
+} from "firebase/auth";
 
-type DeliveryStatus =
-  | "未生成"
-  | "生成済み"
-  | "配信済み"
-  | "紙のみ";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
 
-const reportData: GradeReportData = {
-  studentName: "山田 太郎",
-  studentNumber: "583214",
-  testName: "第1回確認テスト",
-  testDate: "2026/09/24",
+import {
+  auth,
+  db,
+} from "@/lib/firebase";
 
-  subjects: [
-    {
-      subject: "国語",
-      score: 34,
-      maxScore: 50,
-      percentage: 68,
-      deviationScore: 52.4,
-      rank: 52,
-    },
-    {
-      subject: "数学",
-      score: 42,
-      maxScore: 50,
-      percentage: 84,
-      deviationScore: 58.7,
-      rank: 21,
-    },
-    {
-      subject: "英語",
-      score: 40,
-      maxScore: 50,
-      percentage: 80,
-      deviationScore: 56.9,
-      rank: 28,
-    },
-  ],
+import type {
+  UserProfile,
+} from "@/lib/types";
 
-  sections: [
-    {
-      name: "大問1",
-      score: 8,
-      maxScore: 10,
-    },
-    {
-      name: "大問2",
-      score: 12,
-      maxScore: 15,
-    },
-    {
-      name: "大問3",
-      score: 18,
-      maxScore: 25,
-    },
-  ],
+type SubjectRow = {
+  subject: string;
 
-  totalScore: 116,
-  totalMaxScore: 150,
-  totalPercentage: 77.3,
-  totalDeviationScore: 56.2,
+  score: number;
 
-  overallRank: 38,
-  schoolRank: 7,
-  gradeRank: 12,
-  classRank: 3,
+  maxScore: number;
 
-  isRetest: false,
+  average: number | null;
+
+  deviation: number | null;
+
+  rank: number | null;
+
+  count: number | null;
+
+  distribution: Array<{
+    range: string;
+    count: number;
+    selected: boolean;
+  }>;
+};
+
+type Report = {
+  id: string;
+
+  testId: string;
+
+  studentNumber: string;
+
+  data: {
+    studentName: string;
+
+    studentNumber: string;
+
+    testName: string;
+
+    testDate: string;
+
+    subjects: SubjectRow[];
+
+    totalScore: number;
+
+    totalMaxScore: number;
+
+    totalPercentage: number;
+
+    totalDeviationScore?: number;
+
+    overallRank?: number;
+
+    publicComment?: string;
+
+    isRetest: boolean;
+  };
 };
 
 export default function ReportsPage() {
-  const [isRetest, setIsRetest] =
-    useState(false);
-
-  const [status, setStatus] =
-    useState<DeliveryStatus>(
-      "未生成"
+  const [
+    user,
+    setUser,
+  ] =
+    useState<UserProfile | null>(
+      null
     );
 
-  const [template, setTemplate] =
-    useState("通常テスト用");
+  const [
+    reports,
+    setReports,
+  ] =
+    useState<Report[]>([]);
 
-  const [delivery, setDelivery] =
-    useState<
-      "データ配信" | "紙のみ"
-    >("データ配信");
+  const [
+    selectedId,
+    setSelectedId,
+  ] =
+    useState("");
 
-  const displayData =
-    useMemo<GradeReportData>(() => {
-      return {
-        ...reportData,
-        isRetest,
-      };
-    }, [isRetest]);
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
 
-  function generateReport() {
-    setStatus(
-      isRetest
-        ? "生成済み"
-        : "生成済み"
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  useEffect(() => {
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (
+          firebaseUser
+        ) => {
+          if (
+            !firebaseUser
+          ) {
+            setLoading(false);
+            return;
+          }
+
+          try {
+            const userSnapshot =
+              await getDocs(
+                query(
+                  collection(
+                    db,
+                    "users"
+                  ),
+                  where(
+                    "__name__",
+                    "==",
+                    firebaseUser.uid
+                  )
+                )
+              );
+
+            if (
+              userSnapshot.empty
+            ) {
+              setError(
+                "ユーザー情報がありません。"
+              );
+
+              return;
+            }
+
+            const userData =
+              userSnapshot
+                .docs[0]
+                .data();
+
+            const appUser: UserProfile =
+              {
+                uid:
+                  firebaseUser.uid,
+
+                organizationId:
+                  typeof userData.organizationId ===
+                  "string"
+                    ? userData.organizationId
+                    : null,
+
+                role:
+                  normalizeRole(
+                    userData.role
+                  ),
+
+                schoolIds:
+                  Array.isArray(
+                    userData.schoolIds
+                  )
+                    ? userData.schoolIds
+                    : [],
+
+                studentId:
+                  typeof userData.studentId ===
+                  "string"
+                    ? userData.studentId
+                    : null,
+
+                name:
+                  typeof userData.name ===
+                  "string"
+                    ? userData.name
+                    : "",
+
+                email:
+                  firebaseUser.email,
+
+                active:
+                  userData.active !==
+                  false,
+              };
+
+            setUser(
+              appUser
+            );
+
+            if (
+              !appUser.organizationId
+            ) {
+              return;
+            }
+
+            /*
+             * 生徒は自分の成績表だけ。
+             * 職員は担当範囲。
+             */
+            let reportQuery;
+
+            if (
+              appUser.role ===
+                "生徒" &&
+              appUser.studentId
+            ) {
+              reportQuery =
+                query(
+                  collection(
+                    db,
+                    "gradeReports"
+                  ),
+
+                  where(
+                    "organizationId",
+                    "==",
+                    appUser.organizationId
+                  ),
+
+                  where(
+                    "studentId",
+                    "==",
+                    appUser.studentId
+                  )
+                );
+            } else {
+              reportQuery =
+                query(
+                  collection(
+                    db,
+                    "gradeReports"
+                  ),
+
+                  where(
+                    "organizationId",
+                    "==",
+                    appUser.organizationId
+                  )
+                );
+            }
+
+            const snapshot =
+              await getDocs(
+                reportQuery
+              );
+
+            const loaded =
+              snapshot.docs.map(
+                (
+                  item
+                ) =>
+                  ({
+                    id:
+                      item.id,
+
+                    ...item.data(),
+                  }) as Report
+              );
+
+            setReports(
+              loaded
+            );
+
+            if (
+              loaded.length >
+              0
+            ) {
+              setSelectedId(
+                loaded[0].id
+              );
+            }
+          } catch (
+            err
+          ) {
+            console.error(
+              err
+            );
+
+            setError(
+              "成績表を取得できませんでした。"
+            );
+          } finally {
+            setLoading(false);
+          }
+        }
+      );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const selected =
+    useMemo(
+      () =>
+        reports.find(
+          (
+            report
+          ) =>
+            report.id ===
+            selectedId
+        ) ??
+        reports[0] ??
+        null,
+      [
+        reports,
+        selectedId,
+      ]
+    );
+
+  if (
+    loading
+  ) {
+    return (
+      <main className="reportPage">
+        <div className="reportLoading">
+          Tsystem
+          <br />
+          成績表を読み込んでいます...
+        </div>
+      </main>
     );
   }
 
-  function deliverReport() {
-    if (isRetest) {
-      setDelivery("紙のみ");
-      setStatus("紙のみ");
-      return;
-    }
+  if (
+    !selected
+  ) {
+    return (
+      <main className="reportPage">
+        <section className="reportEmpty">
+          <h1>
+            成績表
+          </h1>
 
-    setDelivery("データ配信");
-    setStatus("配信済み");
+          <p>
+            {error ||
+              "表示できる成績表がありません。"}
+          </p>
+        </section>
+      </main>
+    );
   }
 
-  function printReport() {
-    window.print();
-  }
+  const data =
+    selected.data;
 
   return (
-    <main className="page">
-      <SchoolHeader title="成績表" />
-
-      <section className="content">
-        <div className="pageHeader">
-          <div>
-            <h1>成績表</h1>
-
-            <p>
-              成績表の生成・確認・配信
-            </p>
-          </div>
+    <main className="reportPage">
+      <div className="reportToolbar">
+        <div>
+          <h1>
+            成績表
+          </h1>
         </div>
 
-        <section className="formCard">
-          <h2>
-            成績表設定
-          </h2>
+        <button
+          type="button"
+          className="reportPrintButton"
+          onClick={() =>
+            window.print()
+          }
+        >
+          印刷
+        </button>
+      </div>
 
+      {reports.length >
+        1 && (
+        <div className="reportSelector">
           <label>
-            成績表テンプレート
-
-            <select
-              value={template}
-              onChange={(event) =>
-                setTemplate(
-                  event.target.value
-                )
-              }
-            >
-              <option>
-                通常テスト用
-              </option>
-
-              <option>
-                詳細成績表
-              </option>
-
-              <option>
-                模試用
-              </option>
-
-              <option>
-                追試用
-              </option>
-            </select>
-          </label>
-
-          <label>
-            成績区分
+            成績表を選択
 
             <select
               value={
-                isRetest
-                  ? "追試"
-                  : "通常テスト"
+                selected.id
               }
-              onChange={(event) =>
-                setIsRetest(
-                  event.target.value ===
-                    "追試"
+              onChange={(
+                event
+              ) =>
+                setSelectedId(
+                  event.target
+                    .value
                 )
               }
             >
-              <option>
-                通常テスト
-              </option>
-
-              <option>
-                追試
-              </option>
+              {reports.map(
+                (
+                  report
+                ) => (
+                  <option
+                    key={
+                      report.id
+                    }
+                    value={
+                      report.id
+                    }
+                  >
+                    {
+                      report.data
+                        .testName
+                    }
+                    {" / "}
+                    {
+                      report.data
+                        .testDate
+                    }
+                  </option>
+                )
+              )}
             </select>
           </label>
+        </div>
+      )}
 
-          <div className="selectionPanel">
-            <strong>
-              配信方法
-            </strong>
+      <article className="gradeReportPaper">
+        <header className="reportStudentHeader">
+          <div className="reportStudentGrid">
+            <div>
+              <span>
+                教場
+              </span>
+
+              <strong>
+                —
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                学年
+              </span>
+
+              <strong>
+                —
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                クラス
+              </span>
+
+              <strong>
+                —
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                氏名
+              </span>
+
+              <strong>
+                {
+                  data.studentName
+                }
+                さん
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                性別
+              </span>
+
+              <strong>
+                —
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                在学校
+              </span>
+
+              <strong>
+                —
+              </strong>
+            </div>
+          </div>
+
+          <div className="reportDate">
+            {data.testDate}
+          </div>
+        </header>
+
+        <section>
+          <div className="reportTestTitle">
+            テスト名
+          </div>
+
+          <h2 className="reportExamName">
+            {
+              data.testName
+            }
+          </h2>
+
+          <div className="reportExamDate">
+            実施日　{data.testDate}
+          </div>
+        </section>
+
+        <section className="reportSection">
+          <h3>
+            ●今回の成績
+          </h3>
+
+          <div className="reportTableWrap">
+            <table className="reportTable">
+              <thead>
+                <tr>
+                  <th>
+                    科目
+                  </th>
+
+                  <th>
+                    配点
+                  </th>
+
+                  <th>
+                    得点
+                  </th>
+
+                  <th>
+                    受験者平均点
+                  </th>
+
+                  <th>
+                    偏差値
+                  </th>
+
+                  <th>
+                    順位 / 受験者数
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {data.subjects.map(
+                  (
+                    subject
+                  ) => (
+                    <tr
+                      key={
+                        subject.subject
+                      }
+                    >
+                      <td>
+                        {
+                          subject.subject
+                        }
+                      </td>
+
+                      <td>
+                        {
+                          subject.maxScore
+                        }
+                      </td>
+
+                      <td className="reportStrong">
+                        {
+                          subject.score
+                        }
+                      </td>
+
+                      <td>
+                        {formatNumber(
+                          subject.average
+                        )}
+                      </td>
+
+                      <td>
+                        {formatNumber(
+                          subject.deviation
+                        )}
+                      </td>
+
+                      <td>
+                        {formatRank(
+                          subject.rank,
+                          subject.count
+                        )}
+                      </td>
+                    </tr>
+                  )
+                )}
+
+                <tr className="reportTotalRow">
+                  <td>
+                    総合計
+                  </td>
+
+                  <td>
+                    {
+                      data.totalMaxScore
+                    }
+                  </td>
+
+                  <td>
+                    {
+                      data.totalScore
+                    }
+                  </td>
+
+                  <td>
+                    —
+                  </td>
+
+                  <td>
+                    {formatNumber(
+                      data.totalDeviationScore
+                    )}
+                  </td>
+
+                  <td>
+                    {formatRank(
+                      data.overallRank,
+                      null
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="reportSection">
+          <h3>
+            ●度数分布表
+          </h3>
+
+          <div className="distributionGrid">
+            {data.subjects.map(
+              (
+                subject
+              ) => (
+                <div
+                  key={
+                    subject.subject
+                  }
+                  className="distributionBlock"
+                >
+                  <h4>
+                    【
+                    {
+                      subject.subject
+                    }
+                    】
+                  </h4>
+
+                  <div className="distributionHeader">
+                    <span>
+                      得点
+                    </span>
+
+                    <span>
+                      人数
+                    </span>
+                  </div>
+
+                  {subject.distribution.map(
+                    (
+                      row
+                    ) => (
+                      <div
+                        key={
+                          row.range
+                        }
+                        className={
+                          row.selected
+                            ? "distributionRow selected"
+                            : "distributionRow"
+                        }
+                      >
+                        <span>
+                          {
+                            row.range
+                          }
+                        </span>
+
+                        <span>
+                          {
+                            row.count
+                          }
+
+                          {row.selected &&
+                            " ★"}
+                        </span>
+                      </div>
+                    )
+                  )}
+                </div>
+              )
+            )}
+          </div>
+        </section>
+
+        <section className="reportSection">
+          <h3>
+            ◆過去の成績推移（偏差値）◆
+          </h3>
+
+          <p className="reportHint">
+            あなたの得点の位置を★で表示しています。
+          </p>
+
+          <div className="reportTableWrap">
+            <table className="reportTable">
+              <thead>
+                <tr>
+                  <th>
+                    実施日
+                  </th>
+
+                  <th>
+                    テスト名称
+                  </th>
+
+                  {data.subjects.map(
+                    (
+                      subject
+                    ) => (
+                      <th
+                        key={
+                          subject.subject
+                        }
+                      >
+                        {
+                          subject.subject
+                        }
+                      </th>
+                    )
+                  )}
+
+                  <th>
+                    総合
+                  </th>
+
+                  <th>
+                    位 / 人中
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                <tr>
+                  <td>
+                    {
+                      data.testDate
+                    }
+                  </td>
+
+                  <td>
+                    {
+                      data.testName
+                    }
+                  </td>
+
+                  {data.subjects.map(
+                    (
+                      subject
+                    ) => (
+                      <td
+                        key={
+                          subject.subject
+                        }
+                      >
+                        {formatNumber(
+                          subject.deviation
+                        )}
+                      </td>
+                    )
+                  )}
+
+                  <td>
+                    {formatNumber(
+                      data.totalDeviationScore
+                    )}
+                  </td>
+
+                  <td>
+                    {formatRank(
+                      data.overallRank,
+                      null
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {data.publicComment && (
+          <section className="reportComment">
+            <h3>
+              コメント
+            </h3>
 
             <p>
-              {isRetest
-                ? "追試：紙のみ"
-                : "通常テスト：データ配信"}
+              {
+                data.publicComment
+              }
             </p>
-          </div>
-
-          <div className="actionBar">
-            <button
-              type="button"
-              className="primaryButton"
-              onClick={
-                generateReport
-              }
-            >
-              成績表を生成
-            </button>
-
-            <button
-              type="button"
-              className="secondaryButton"
-              onClick={
-                printReport
-              }
-            >
-              印刷
-            </button>
-
-            <button
-              type="button"
-              className="secondaryButton"
-              disabled={
-                status === "未生成"
-              }
-              onClick={
-                deliverReport
-              }
-            >
-              {isRetest
-                ? "紙返却用に確定"
-                : "データ配信"}
-            </button>
-          </div>
-        </section>
-
-        <section
-          className="selectionPanel"
-          style={{
-            marginTop: 20,
-          }}
-        >
-          <strong>
-            現在の状態
-          </strong>
-
-          <span>
-            {status}
-          </span>
-
-          <span>
-            テンプレート：
-            {template}
-          </span>
-
-          <span>
-            配信：
-            {delivery}
-          </span>
-        </section>
-
-        <section
-          style={{
-            marginTop: 24,
-          }}
-        >
-          <GradeReport
-            data={displayData}
-          />
-        </section>
-      </section>
+          </section>
+        )}
+      </article>
     </main>
   );
+}
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function normalizeRole(
+  value: unknown
+) {
+  switch (
+    value
+  ) {
+    case "本部管理者":
+    case "hq":
+      return "本部管理者" as const;
+
+    case "校舎管理者":
+    case "school_admin":
+      return "校舎管理者" as const;
+
+    case "講師":
+    case "teacher":
+      return "講師" as const;
+
+    case "生徒":
+    case "student":
+      return "生徒" as const;
+
+    default:
+      return null;
+  }
+}
+
+function formatNumber(
+  value:
+    | number
+    | null
+    | undefined
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
+    return "—";
+  }
+
+  return Number(
+    value
+  ).toFixed(1);
+}
+
+function formatRank(
+  rank:
+    | number
+    | null
+    | undefined,
+  count:
+    | number
+    | null
+    | undefined
+) {
+  if (
+    rank ===
+      null ||
+    rank ===
+      undefined
+  ) {
+    return "—";
+  }
+
+  if (
+    count ===
+      null ||
+    count ===
+      undefined
+  ) {
+    return `${rank}`;
+  }
+
+  return `${rank} / ${count}`;
 }
