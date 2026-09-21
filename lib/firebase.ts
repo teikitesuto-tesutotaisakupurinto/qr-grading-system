@@ -6,7 +6,9 @@ import {
 } from "firebase/app";
 
 import {
+  browserLocalPersistence,
   getAuth,
+  setPersistence,
   type Auth,
 } from "firebase/auth";
 
@@ -19,38 +21,41 @@ import {
    Firebase Configuration
    ========================================================= */
 
-const apiKey =
-  process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "";
+const firebaseConfig = {
+  apiKey:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_API_KEY ??
+    "",
 
-const authDomain =
-  process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "";
+  authDomain:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
+    "",
 
-const projectId =
-  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "";
+  projectId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_PROJECT_ID ??
+    "",
 
-const messagingSenderId =
-  process.env
-    .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "";
+  storageBucket:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ??
+    "",
 
-const appId =
-  process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "";
+  messagingSenderId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ??
+    "",
 
-const storageBucket =
-  process.env
-    .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "";
+  appId:
+    process.env
+      .NEXT_PUBLIC_FIREBASE_APP_ID ??
+    "",
+};
 
 /* =========================================================
    Firebase App
    ========================================================= */
-
-const firebaseConfig = {
-  apiKey,
-  authDomain,
-  projectId,
-  storageBucket,
-  messagingSenderId,
-  appId,
-};
 
 export const app: FirebaseApp =
   getApps().length > 0
@@ -64,53 +69,100 @@ export const app: FirebaseApp =
    ========================================================= */
 
 export const auth: Auth =
-  getAuth(app);
+  getAuth(
+    app
+  );
+
+/*
+ * ログイン状態をブラウザに維持する。
+ *
+ * ページ移動
+ * リロード
+ * ブラウザ再起動
+ *
+ * 後もFirebase Authenticationの
+ * セッションを利用する。
+ */
+if (
+  typeof window !==
+  "undefined"
+) {
+  void setPersistence(
+    auth,
+    browserLocalPersistence
+  ).catch(
+    (
+      error
+    ) => {
+      console.error(
+        "Firebase Auth persistence error:",
+        error
+      );
+    }
+  );
+}
 
 /* =========================================================
    Firestore
    ========================================================= */
 
 export const db: Firestore =
-  getFirestore(app);
+  getFirestore(
+    app
+  );
 
 /* =========================================================
    Configuration check
    ========================================================= */
 
 export function assertFirebaseConfig() {
-  const missing: string[] = [];
+  const missing: string[] =
+    [];
 
-  if (!apiKey.trim()) {
+  if (
+    !firebaseConfig.apiKey.trim()
+  ) {
     missing.push(
       "NEXT_PUBLIC_FIREBASE_API_KEY"
     );
   }
 
-  if (!authDomain.trim()) {
+  if (
+    !firebaseConfig.authDomain.trim()
+  ) {
     missing.push(
       "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"
     );
   }
 
-  if (!projectId.trim()) {
+  if (
+    !firebaseConfig.projectId.trim()
+  ) {
     missing.push(
       "NEXT_PUBLIC_FIREBASE_PROJECT_ID"
     );
   }
 
-  if (!messagingSenderId.trim()) {
+  if (
+    !firebaseConfig.messagingSenderId.trim()
+  ) {
     missing.push(
       "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"
     );
   }
 
-  if (!appId.trim()) {
+  if (
+    !firebaseConfig.appId.trim()
+  ) {
     missing.push(
       "NEXT_PUBLIC_FIREBASE_APP_ID"
     );
   }
 
-  if (missing.length > 0) {
+  if (
+    missing.length >
+    0
+  ) {
     throw new Error(
       `Firebase環境変数が不足しています: ${missing.join(
         ", "
