@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+
 import "./globals.css";
 
+import AuthGuard from "@/components/AuthGuard";
+
 export const metadata: Metadata = {
-  title: "答案採点システム",
+  title:
+    "答案採点システム",
   description:
-    "答案採点・管理システム",
+    "学校・塾向け答案採点管理システム",
 };
 
 export default function RootLayout({
@@ -14,7 +18,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        <AuthGuard>
+          {children}
+        </AuthGuard>
+      </body>
     </html>
   );
 }
