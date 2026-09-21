@@ -43,7 +43,7 @@ export type AppUser = {
 
   name: string;
 
-  role: UserRole;
+  role: UserRole | null;
 
   schoolIds: string[];
 
@@ -77,6 +77,12 @@ export async function loginWithGoogle(): Promise<AppUser> {
       provider
     );
 
+  /*
+   * Google Authentication自体は
+   * 成功している。
+   *
+   * ここでは勝手にsignOutしない。
+   */
   return getAppUser(
     result.user
   );
@@ -86,12 +92,12 @@ export async function loginWithGoogle(): Promise<AppUser> {
    ログアウト
    ========================================================= */
 
-export async function logout(): Promise<void> {
+export async function logout() {
   await signOut(auth);
 }
 
 /* =========================================================
-   現在のFirebaseユーザー
+   Firebase User取得
    ========================================================= */
 
 export function getFirebaseUser():
@@ -100,7 +106,7 @@ export function getFirebaseUser():
 }
 
 /* =========================================================
-   現在のアプリユーザー
+   現在のユーザー
    ========================================================= */
 
 export async function getCurrentUser():
@@ -136,40 +142,52 @@ export async function getAppUser(
       userRef
     );
 
+  /*
+   * Firestoreにユーザーが存在しない。
+   *
+   * Google Authenticationには
+   * 正常にログインしている。
+   *
+   * ここでFirebaseからログアウト
+   * させない。
+   */
   if (
     !snapshot.exists()
   ) {
-    throw new Error(
-      "このGoogleアカウントはシステムに登録されていません。管理者にアカウント登録を依頼してください。"
-    );
+    return {
+      uid:
+        firebaseUser.uid,
+
+      email:
+        firebaseUser.email,
+
+      name:
+        firebaseUser.displayName ??
+        "",
+
+      role:
+        null,
+
+      schoolIds:
+        [],
+
+      active:
+        false,
+
+      photoURL:
+        firebaseUser.photoURL,
+    };
   }
 
   const data =
     snapshot.data();
 
   const role =
-    data.role as UserRole;
-
-  if (
-    !isValidRole(role)
-  ) {
-    throw new Error(
-      "ユーザー権限が不正です。"
-    );
-  }
-
-  const active =
-    data.active !== false;
-
-  if (!active) {
-    await signOut(
-      auth
-    );
-
-    throw new Error(
-      "このアカウントは停止されています。"
-    );
-  }
+    isValidRole(
+      data.role
+    )
+      ? data.role
+      : null;
 
   const schoolIds =
     Array.isArray(
@@ -208,7 +226,12 @@ export async function getAppUser(
         ? data.studentNumber
         : undefined,
 
-    active,
+    /*
+     * active=falseでも
+     * signOutしない。
+     */
+    active:
+      data.active !== false,
 
     photoURL:
       firebaseUser.photoURL,
@@ -237,7 +260,9 @@ export function observeAuth(
         if (
           !firebaseUser
         ) {
-          callback(null);
+          callback(
+            null
+          );
 
           return;
         }
@@ -266,7 +291,7 @@ export function observeAuth(
 }
 
 /* =========================================================
-   Googleログイン後のユーザー登録確認
+   初回Googleユーザー登録
    ========================================================= */
 
 export async function ensureUserProfile(
@@ -293,8 +318,9 @@ export async function ensureUserProfile(
   }
 
   /*
-   * 初回Googleログインだけでは
-   * 権限を与えない。
+   * 初回ログインしたGoogleアカウント。
+   *
+   * 自動で管理者権限は与えない。
    */
   await setDoc(
     userRef,
@@ -307,7 +333,7 @@ export async function ensureUserProfile(
         firebaseUser.email,
 
       role:
-        "生徒",
+        null,
 
       schoolIds:
         [],
@@ -323,9 +349,29 @@ export async function ensureUserProfile(
     }
   );
 
-  throw new Error(
-    "Googleアカウントは認証されましたが、システムへの登録が完了していません。管理者に登録を依頼してください。"
-  );
+  return {
+    uid:
+      firebaseUser.uid,
+
+    email:
+      firebaseUser.email,
+
+    name:
+      firebaseUser.displayName ??
+      "",
+
+    role:
+      null,
+
+    schoolIds:
+      [],
+
+    active:
+      false,
+
+    photoURL:
+      firebaseUser.photoURL,
+  };
 }
 
 /* =========================================================
@@ -338,11 +384,20 @@ export async function hasRole(
   const user =
     await getCurrentUser();
 
+  if (!user) {
+    return false;
+  }
+
   return (
-    user?.role ===
-    role
+    user.active &&
+    user.role ===
+      role
   );
 }
+
+/* =========================================================
+   複数権限確認
+   ========================================================= */
 
 export async function hasAnyRole(
   roles: UserRole[]
@@ -350,7 +405,11 @@ export async function hasAnyRole(
   const user =
     await getCurrentUser();
 
-  if (!user) {
+  if (
+    !user ||
+    !user.active ||
+    !user.role
+  ) {
     return false;
   }
 
@@ -369,7 +428,10 @@ export async function canAccessSchool(
   const user =
     await getCurrentUser();
 
-  if (!user) {
+  if (
+    !user ||
+    !user.active
+  ) {
     return false;
   }
 
@@ -386,7 +448,7 @@ export async function canAccessSchool(
 }
 
 /* =========================================================
-   ロール検証
+   権限検証
    ========================================================= */
 
 function isValidRole(
