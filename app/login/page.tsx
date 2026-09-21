@@ -8,8 +8,11 @@ import { loginWithGoogle } from "@/lib/auth";
 export default function LoginPage() {
   const router = useRouter();
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   async function handleGoogleLogin() {
     if (loading) {
@@ -39,6 +42,7 @@ export default function LoginPage() {
   return (
     <main className="loginPage">
       <section className="loginCard">
+
         <div className="loginHeader">
           <h1>答案採点システム</h1>
 
@@ -81,6 +85,7 @@ export default function LoginPage() {
         <p className="loginNotice">
           登録済みユーザーのみ利用できます。
         </p>
+
       </section>
     </main>
   );
