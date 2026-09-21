@@ -42,7 +42,6 @@ export default function LoginPage() {
   return (
     <main className="loginPage">
       <section className="loginCard">
-
         <div className="loginHeader">
           <h1>答案採点システム</h1>
 
@@ -61,7 +60,7 @@ export default function LoginPage() {
         >
           <img
             src="/google-logo.svg"
-            alt="Google"
+            alt=""
             width={20}
             height={20}
           />
@@ -85,7 +84,6 @@ export default function LoginPage() {
         <p className="loginNotice">
           登録済みユーザーのみ利用できます。
         </p>
-
       </section>
     </main>
   );
