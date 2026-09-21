@@ -3,44 +3,49 @@ import type {
 } from "@/lib/types";
 
 /* =========================================================
-   Permission definitions
+   Permission
    ========================================================= */
 
 export type Permission =
   /* Dashboard */
-  | "dashboard.view"
+  | "dashboard.headOffice"
+  | "dashboard.school"
+  | "dashboard.teacher"
+  | "dashboard.student"
 
   /* Students */
   | "students.view"
   | "students.create"
   | "students.update"
   | "students.csv"
+  | "students.history"
 
   /* Tests */
   | "tests.view"
   | "tests.create"
   | "tests.update"
+  | "tests.delete"
 
   /* Answers */
   | "answers.view"
   | "answers.upload"
+  | "answers.delete"
 
   /* Grading */
+  | "grading.view"
   | "grading.firstReview"
   | "grading.secondReview"
+  | "grading.confirm"
 
   /* Results */
   | "results.view"
   | "results.all"
   | "results.self"
 
-  /* Report cards */
-  | "reportCards.view"
-  | "reportCards.self"
-
-  /* Learning */
-  | "learning.view"
-  | "learning.self"
+  /* Reports */
+  | "reports.view"
+  | "reports.all"
+  | "reports.self"
 
   /* Retests */
   | "retests.view"
@@ -57,274 +62,185 @@ export type Permission =
   | "schools.create"
   | "schools.update"
 
-  /* Teachers */
-  | "teachers.view"
-  | "teachers.create"
-  | "teachers.update"
-
-  /* Roles */
-  | "roles.view"
-  | "roles.update"
-
-  /* Usage */
-  | "usage.view"
-
-  /* Logs */
-  | "logs.view"
+  /* Users */
+  | "users.view"
+  | "users.create"
+  | "users.update"
+  | "users.disable"
 
   /* Settings */
   | "settings.view"
   | "settings.update";
 
 /* =========================================================
-   Role permissions
+   本部管理者
+   ========================================================= */
+
+const HEAD_OFFICE_PERMISSIONS: readonly Permission[] = [
+  "dashboard.headOffice",
+
+  "students.view",
+  "students.create",
+  "students.update",
+  "students.csv",
+  "students.history",
+
+  "tests.view",
+  "tests.create",
+  "tests.update",
+  "tests.delete",
+
+  "answers.view",
+  "answers.upload",
+  "answers.delete",
+
+  "grading.view",
+  "grading.firstReview",
+  "grading.secondReview",
+  "grading.confirm",
+
+  "results.view",
+  "results.all",
+
+  "reports.view",
+  "reports.all",
+
+  "retests.view",
+  "retests.create",
+  "retests.score",
+  "retests.finalize",
+
+  "qr.view",
+  "qr.create",
+
+  "schools.view",
+  "schools.create",
+  "schools.update",
+
+  "users.view",
+  "users.create",
+  "users.update",
+  "users.disable",
+
+  "settings.view",
+  "settings.update",
+];
+
+/* =========================================================
+   校舎管理者
+   ========================================================= */
+
+const SCHOOL_ADMIN_PERMISSIONS: readonly Permission[] = [
+  "dashboard.school",
+
+  "students.view",
+  "students.create",
+  "students.update",
+  "students.csv",
+  "students.history",
+
+  "tests.view",
+  "tests.create",
+  "tests.update",
+
+  "answers.view",
+  "answers.upload",
+
+  "grading.view",
+  "grading.firstReview",
+  "grading.secondReview",
+  "grading.confirm",
+
+  "results.view",
+  "results.all",
+
+  "reports.view",
+  "reports.all",
+
+  "retests.view",
+  "retests.create",
+  "retests.score",
+  "retests.finalize",
+
+  "qr.view",
+  "qr.create",
+
+  "users.view",
+  "users.create",
+  "users.update",
+
+  "settings.view",
+];
+
+/* =========================================================
+   講師
+   ========================================================= */
+
+const TEACHER_PERMISSIONS: readonly Permission[] = [
+  "dashboard.teacher",
+
+  "tests.view",
+
+  "answers.view",
+  "answers.upload",
+
+  "grading.view",
+  "grading.firstReview",
+  "grading.secondReview",
+  "grading.confirm",
+
+  "results.view",
+  "results.all",
+
+  "reports.view",
+  "reports.all",
+
+  "retests.view",
+  "retests.create",
+  "retests.score",
+  "retests.finalize",
+
+  "qr.view",
+  "qr.create",
+];
+
+/* =========================================================
+   生徒
+   ========================================================= */
+
+const STUDENT_PERMISSIONS: readonly Permission[] = [
+  "dashboard.student",
+
+  "results.view",
+  "results.self",
+
+  "reports.view",
+  "reports.self",
+];
+
+/* =========================================================
+   Permission map
    ========================================================= */
 
 const ROLE_PERMISSIONS: Record<
   UserRole,
   readonly Permission[]
 > = {
-  /* =======================================================
-     本部管理者
-     ======================================================= */
+  "本部管理者":
+    HEAD_OFFICE_PERMISSIONS,
 
-  "本部管理者": [
-    "dashboard.view",
+  "校舎管理者":
+    SCHOOL_ADMIN_PERMISSIONS,
 
-    /*
-     * 生徒
-     */
-    "students.view",
-    "students.create",
-    "students.update",
-    "students.csv",
+  "講師":
+    TEACHER_PERMISSIONS,
 
-    /*
-     * テスト
-     */
-    "tests.view",
-    "tests.create",
-    "tests.update",
-
-    /*
-     * 答案
-     */
-    "answers.view",
-    "answers.upload",
-
-    /*
-     * 採点
-     */
-    "grading.firstReview",
-    "grading.secondReview",
-
-    /*
-     * 成績
-     */
-    "results.view",
-    "results.all",
-
-    /*
-     * 成績表
-     */
-    "reportCards.view",
-
-    /*
-     * 追試
-     */
-    "retests.view",
-    "retests.create",
-    "retests.score",
-    "retests.finalize",
-
-    /*
-     * QR
-     */
-    "qr.view",
-    "qr.create",
-
-    /*
-     * 校舎
-     */
-    "schools.view",
-    "schools.create",
-    "schools.update",
-
-    /*
-     * 講師
-     */
-    "teachers.view",
-    "teachers.create",
-    "teachers.update",
-
-    /*
-     * 権限
-     */
-    "roles.view",
-    "roles.update",
-
-    /*
-     * 利用状況
-     */
-    "usage.view",
-
-    /*
-     * ログ
-     */
-    "logs.view",
-
-    /*
-     * システム設定
-     */
-    "settings.view",
-    "settings.update",
-  ],
-
-  /* =======================================================
-     校舎管理者
-     ======================================================= */
-
-  "校舎管理者": [
-    "dashboard.view",
-
-    /*
-     * 生徒
-     */
-    "students.view",
-    "students.create",
-    "students.update",
-    "students.csv",
-
-    /*
-     * テスト
-     */
-    "tests.view",
-    "tests.create",
-    "tests.update",
-
-    /*
-     * 答案
-     */
-    "answers.view",
-    "answers.upload",
-
-    /*
-     * 採点
-     */
-    "grading.firstReview",
-    "grading.secondReview",
-
-    /*
-     * 成績
-     */
-    "results.view",
-    "results.all",
-
-    /*
-     * 成績表
-     */
-    "reportCards.view",
-
-    /*
-     * 追試
-     */
-    "retests.view",
-    "retests.create",
-    "retests.score",
-    "retests.finalize",
-
-    /*
-     * QR
-     */
-    "qr.view",
-    "qr.create",
-
-    /*
-     * 校舎運用
-     */
-    "usage.view",
-    "logs.view",
-  ],
-
-  /* =======================================================
-     講師
-     ======================================================= */
-
-  "講師": [
-    "dashboard.view",
-
-    /*
-     * テスト
-     */
-    "tests.view",
-
-    /*
-     * 答案
-     */
-    "answers.view",
-    "answers.upload",
-
-    /*
-     * 採点
-     */
-    "grading.firstReview",
-    "grading.secondReview",
-
-    /*
-     * 成績
-     */
-    "results.view",
-    "results.all",
-
-    /*
-     * 成績表
-     */
-    "reportCards.view",
-
-    /*
-     * 追試
-     */
-    "retests.view",
-    "retests.create",
-    "retests.score",
-    "retests.finalize",
-
-    /*
-     * QR
-     */
-    "qr.view",
-    "qr.create",
-  ],
-
-  /* =======================================================
-     生徒
-     ======================================================= */
-
-  "生徒": [
-    "dashboard.view",
-
-    /*
-     * 自分の成績だけ
-     */
-    "results.view",
-    "results.self",
-
-    /*
-     * 自分の成績表だけ
-     */
-    "reportCards.view",
-    "reportCards.self",
-
-    /*
-     * 自分の学習情報だけ
-     */
-    "learning.view",
-    "learning.self",
-  ],
+  "生徒":
+    STUDENT_PERMISSIONS,
 };
 
 /* =========================================================
-   Permission check
+   Has permission
    ========================================================= */
 
 export function hasPermission(
@@ -332,9 +248,12 @@ export function hasPermission(
     | UserRole
     | null
     | undefined,
+
   permission: Permission
-): boolean {
-  if (!role) {
+) {
+  if (
+    !role
+  ) {
     return false;
   }
 
@@ -354,14 +273,46 @@ export function getPermissions(
     | UserRole
     | null
     | undefined
-): readonly Permission[] {
-  if (!role) {
+) {
+  if (
+    !role
+  ) {
     return [];
   }
 
   return ROLE_PERMISSIONS[
     role
   ];
+}
+
+/* =========================================================
+   Dashboard
+   ========================================================= */
+
+export function getDashboardPermission(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  switch (
+    role
+  ) {
+    case "本部管理者":
+      return "dashboard.headOffice" as const;
+
+    case "校舎管理者":
+      return "dashboard.school" as const;
+
+    case "講師":
+      return "dashboard.teacher" as const;
+
+    case "生徒":
+      return "dashboard.student" as const;
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
@@ -373,7 +324,7 @@ export function isHeadOfficeAdmin(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
     "本部管理者"
@@ -385,7 +336,7 @@ export function isSchoolAdmin(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
     "校舎管理者"
@@ -397,7 +348,7 @@ export function isTeacher(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
     "講師"
@@ -409,7 +360,7 @@ export function isStudent(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
     "生徒"
@@ -421,7 +372,7 @@ export function isStaff(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
       "本部管理者" ||
@@ -437,7 +388,7 @@ export function isManagement(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return (
     role ===
       "本部管理者" ||
@@ -447,59 +398,247 @@ export function isManagement(
 }
 
 /* =========================================================
-   Scope helpers
+   Scope
    ========================================================= */
 
-export type PermissionScope =
+export type DataScope =
   | "organization"
   | "school"
   | "student";
 
-export function getDefaultScope(
+export function getDataScope(
   role:
     | UserRole
     | null
     | undefined
-): PermissionScope | null {
-  if (
-    role ===
-    "本部管理者"
+): DataScope | null {
+  switch (
+    role
   ) {
-    return "organization";
-  }
+    case "本部管理者":
+      return "organization";
 
-  if (
-    role ===
-      "校舎管理者" ||
-    role ===
-      "講師"
-  ) {
-    return "school";
-  }
+    case "校舎管理者":
+    case "講師":
+      return "school";
 
-  if (
-    role ===
-    "生徒"
-  ) {
-    return "student";
-  }
+    case "生徒":
+      return "student";
 
-  return null;
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   Self-only checks
+   Students
    ========================================================= */
 
-export function canViewOwnResults(
+export function canViewStudents(
   role:
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return hasPermission(
     role,
-    "results.self"
+    "students.view"
+  );
+}
+
+export function canCreateStudents(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "students.create"
+  );
+}
+
+export function canUpdateStudents(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "students.update"
+  );
+}
+
+export function canImportStudents(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "students.csv"
+  );
+}
+
+/* =========================================================
+   Tests
+   ========================================================= */
+
+export function canViewTests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "tests.view"
+  );
+}
+
+export function canCreateTests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "tests.create"
+  );
+}
+
+export function canUpdateTests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "tests.update"
+  );
+}
+
+export function canDeleteTests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "tests.delete"
+  );
+}
+
+/* =========================================================
+   Answers
+   ========================================================= */
+
+export function canViewAnswers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "answers.view"
+  );
+}
+
+export function canUploadAnswers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "answers.upload"
+  );
+}
+
+export function canDeleteAnswers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "answers.delete"
+  );
+}
+
+/* =========================================================
+   Grading
+   ========================================================= */
+
+export function canViewGrading(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "grading.view"
+  );
+}
+
+export function canFirstReview(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "grading.firstReview"
+  );
+}
+
+export function canSecondReview(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "grading.secondReview"
+  );
+}
+
+export function canConfirmGrading(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "grading.confirm"
+  );
+}
+
+/* =========================================================
+   Results
+   ========================================================= */
+
+export function canViewResults(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "results.view"
   );
 }
 
@@ -508,45 +647,261 @@ export function canViewAllResults(
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return hasPermission(
     role,
     "results.all"
   );
 }
 
-export function canViewOwnReportCard(
+export function canViewOwnResults(
   role:
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return hasPermission(
     role,
-    "reportCards.self"
+    "results.self"
   );
 }
 
-export function canViewLearning(
+/* =========================================================
+   Reports
+   ========================================================= */
+
+export function canViewReports(
   role:
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return hasPermission(
     role,
-    "learning.view"
+    "reports.view"
   );
 }
 
-export function canViewOwnLearning(
+export function canViewAllReports(
   role:
     | UserRole
     | null
     | undefined
-): boolean {
+) {
   return hasPermission(
     role,
-    "learning.self"
+    "reports.all"
+  );
+}
+
+export function canViewOwnReports(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "reports.self"
+  );
+}
+
+/* =========================================================
+   Retests
+   ========================================================= */
+
+export function canViewRetests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "retests.view"
+  );
+}
+
+export function canCreateRetests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "retests.create"
+  );
+}
+
+export function canScoreRetests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "retests.score"
+  );
+}
+
+export function canFinalizeRetests(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "retests.finalize"
+  );
+}
+
+/* =========================================================
+   QR
+   ========================================================= */
+
+export function canViewQR(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "qr.view"
+  );
+}
+
+export function canCreateQR(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "qr.create"
+  );
+}
+
+/* =========================================================
+   Schools
+   ========================================================= */
+
+export function canViewSchools(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "schools.view"
+  );
+}
+
+export function canCreateSchools(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "schools.create"
+  );
+}
+
+export function canUpdateSchools(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "schools.update"
+  );
+}
+
+/* =========================================================
+   Users
+   ========================================================= */
+
+export function canViewUsers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "users.view"
+  );
+}
+
+export function canCreateUsers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "users.create"
+  );
+}
+
+export function canUpdateUsers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "users.update"
+  );
+}
+
+export function canDisableUsers(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "users.disable"
+  );
+}
+
+/* =========================================================
+   Settings
+   ========================================================= */
+
+export function canViewSettings(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "settings.view"
+  );
+}
+
+export function canUpdateSettings(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  return hasPermission(
+    role,
+    "settings.update"
   );
 }
