@@ -1,574 +1,1087 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-import SchoolHeader from "@/components/SchoolHeader";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  writeBatch,
+} from "firebase/firestore";
+
+import {
+  onAuthStateChanged,
+} from "firebase/auth";
+
+import {
+  auth,
+  db,
+} from "@/lib/firebase";
+
+type UserRole =
+  | "本部管理者"
+  | "校舎管理者"
+  | "講師"
+  | "生徒";
+
+type CurrentUser = {
+  uid: string;
+  name: string;
+  email: string | null;
+  organizationId: string | null;
+  role: UserRole | null;
+};
 
 type School = {
   id: string;
+  organizationId: string;
   name: string;
-  address: string;
+  logoUrl: string;
   active: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 };
-
-type ClassRoom = {
-  id: string;
-  schoolId: string;
-  schoolName: string;
-  grade: string;
-  name: string;
-  active: boolean;
-};
-
-const initialSchools: School[] = [
-  {
-    id: "school-001",
-    name: "○○校",
-    address: "",
-    active: true,
-  },
-  {
-    id: "school-002",
-    name: "△△校",
-    address: "",
-    active: true,
-  },
-];
-
-const initialClasses: ClassRoom[] = [
-  {
-    id: "class-001",
-    schoolId: "school-001",
-    schoolName: "○○校",
-    grade: "中学2年",
-    name: "2TZ",
-    active: true,
-  },
-  {
-    id: "class-002",
-    schoolId: "school-001",
-    schoolName: "○○校",
-    grade: "中学2年",
-    name: "2TS",
-    active: true,
-  },
-  {
-    id: "class-003",
-    schoolId: "school-002",
-    schoolName: "△△校",
-    grade: "中学2年",
-    name: "2TZ",
-    active: true,
-  },
-];
-
-const grades = [
-  "小学1年",
-  "小学2年",
-  "小学3年",
-  "小学4年",
-  "小学5年",
-  "小学6年",
-  "中学1年",
-  "中学2年",
-  "中学3年",
-  "高校1年",
-  "高校2年",
-  "高校3年",
-];
 
 export default function SchoolsPage() {
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
+
   const [schools, setSchools] =
-    useState<School[]>(
-      initialSchools
-    );
+    useState<School[]>([]);
 
-  const [classes, setClasses] =
-    useState<ClassRoom[]>(
-      initialClasses
-    );
+  const [loading, setLoading] =
+    useState(true);
 
-  const [selectedSchoolId, setSelectedSchoolId] =
-    useState(
-      initialSchools[0].id
-    );
-
-  const [showSchoolForm, setShowSchoolForm] =
+  const [saving, setSaving] =
     useState(false);
 
-  const [showClassForm, setShowClassForm] =
-    useState(false);
-
-  const [schoolName, setSchoolName] =
-    useState("");
-
-  const [schoolAddress, setSchoolAddress] =
-    useState("");
-
-  const [classGrade, setClassGrade] =
-    useState("中学2年");
-
-  const [className, setClassName] =
+  const [error, setError] =
     useState("");
 
   const [message, setMessage] =
     useState("");
 
-  const selectedSchool =
-    schools.find(
-      (school) =>
-        school.id ===
-        selectedSchoolId
-    );
+  const [schoolName, setSchoolName] =
+    useState("");
 
-  const filteredClasses =
-    useMemo(
-      () =>
-        classes.filter(
-          (item) =>
-            item.schoolId ===
-            selectedSchoolId
-        ),
-      [
-        classes,
-        selectedSchoolId,
-      ]
-    );
+  const [search, setSearch] =
+    useState("");
 
-  function addSchool() {
-    if (!schoolName.trim()) {
-      setMessage(
+  /*
+   * ========================================================
+   * 認証ユーザー取得
+   * ========================================================
+   */
+
+  useEffect(() => {
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (firebaseUser) => {
+          if (!firebaseUser) {
+            window.location.replace(
+              "/login"
+            );
+
+            return;
+          }
+
+          try {
+            const snapshot =
+              await getDocs(
+                query(
+                  collection(
+                    db,
+                    "users"
+                  ),
+                  where(
+                    "__name__",
+                    "==",
+                    firebaseUser.uid
+                  )
+                )
+              );
+
+            if (
+              snapshot.empty
+            ) {
+              setError(
+                "ユーザー情報が登録されていません。"
+              );
+
+              setLoading(false);
+
+              return;
+            }
+
+            const data =
+              snapshot.docs[0].data();
+
+            const role =
+              isUserRole(
+                data.role
+              )
+                ? data.role
+                : null;
+
+            setCurrentUser({
+              uid:
+                firebaseUser.uid,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
+
+              email:
+                firebaseUser.email,
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
+
+              role,
+            });
+          } catch (err) {
+            console.error(err);
+
+            setError(
+              err instanceof Error
+                ? err.message
+                : "ユーザー情報を取得できませんでした。"
+            );
+
+            setLoading(false);
+          }
+        }
+      );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  /*
+   * ========================================================
+   * 校舎読み込み
+   * ========================================================
+   */
+
+  useEffect(() => {
+    if (
+      !currentUser?.organizationId
+    ) {
+      return;
+    }
+
+    void loadSchools(
+      currentUser.organizationId
+    );
+  }, [
+    currentUser?.organizationId,
+  ]);
+
+  async function loadSchools(
+    organizationId: string
+  ) {
+    try {
+      setLoading(true);
+      setError("");
+
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "schools"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        );
+
+      const items: School[] =
+        snapshot.docs.map(
+          (item) => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              organizationId:
+                organizationId,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              logoUrl:
+                typeof data.logoUrl ===
+                "string"
+                  ? data.logoUrl
+                  : "",
+
+              active:
+                data.active !==
+                false,
+
+              createdAt:
+                data.createdAt,
+
+              updatedAt:
+                data.updatedAt,
+            };
+          }
+        );
+
+      setSchools(
+        items
+      );
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "校舎情報を取得できませんでした。"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * 校舎作成
+   * ========================================================
+   */
+
+  async function createSchool() {
+    if (saving) {
+      return;
+    }
+
+    if (
+      currentUser?.role !==
+      "本部管理者"
+    ) {
+      setError(
+        "校舎を作成できる権限がありません。"
+      );
+
+      return;
+    }
+
+    if (
+      !currentUser.organizationId
+    ) {
+      setError(
+        "組織情報がありません。"
+      );
+
+      return;
+    }
+
+    const name =
+      schoolName.trim();
+
+    if (!name) {
+      setError(
         "校舎名を入力してください。"
       );
+
       return;
     }
 
-    const id =
-      `school-${Date.now()}`;
+    try {
+      setSaving(true);
+      setError("");
+      setMessage("");
 
-    const school: School = {
-      id,
-      name: schoolName.trim(),
-      address:
-        schoolAddress.trim(),
-      active: true,
-    };
+      /*
+       * 新しい校舎ID
+       */
+      const schoolRef =
+        doc(
+          collection(
+            db,
+            "schools"
+          )
+        );
 
-    setSchools((current) => [
-      ...current,
-      school,
-    ]);
+      /*
+       * 本部管理者が作成した校舎。
+       */
+      await writeBatch(
+        db
+      )
+        .set(
+          schoolRef,
+          {
+            organizationId:
+              currentUser.organizationId,
 
-    setSelectedSchoolId(id);
+            name,
 
-    setSchoolName("");
-    setSchoolAddress("");
-    setShowSchoolForm(false);
+            logoUrl:
+              "",
 
-    setMessage(
-      "校舎を追加しました。"
-    );
-  }
+            active:
+              true,
 
-  function addClass() {
-    if (!selectedSchool) {
-      return;
-    }
+            createdAt:
+              serverTimestamp(),
 
-    if (!className.trim()) {
+            updatedAt:
+              serverTimestamp(),
+          }
+        )
+        .commit();
+
+      setSchoolName("");
+
       setMessage(
-        "クラス名を入力してください。"
+        "校舎を登録しました。"
       );
+
+      await loadSchools(
+        currentUser.organizationId
+      );
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "校舎の登録に失敗しました。"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * 校舎有効/停止
+   * ========================================================
+   */
+
+  async function toggleSchool(
+    school: School
+  ) {
+    if (
+      currentUser?.role !==
+      "本部管理者"
+    ) {
+      setError(
+        "校舎状態を変更できる権限がありません。"
+      );
+
       return;
     }
 
-    const newClass: ClassRoom = {
-      id:
-        `class-${Date.now()}`,
-      schoolId:
-        selectedSchool.id,
-      schoolName:
-        selectedSchool.name,
-      grade: classGrade,
-      name: className.trim(),
-      active: true,
-    };
+    try {
+      setError("");
+      setMessage("");
 
-    setClasses((current) => [
-      ...current,
-      newClass,
+      await updateDoc(
+        doc(
+          db,
+          "schools",
+          school.id
+        ),
+        {
+          active:
+            !school.active,
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        school.active
+          ? "校舎を停止しました。"
+          : "校舎を有効にしました。"
+      );
+
+      if (
+        currentUser.organizationId
+      ) {
+        await loadSchools(
+          currentUser.organizationId
+        );
+      }
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "校舎状態の変更に失敗しました。"
+      );
+    }
+  }
+
+  /*
+   * ========================================================
+   * 検索
+   * ========================================================
+   */
+
+  const filteredSchools =
+    useMemo(() => {
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
+
+      if (!keyword) {
+        return schools;
+      }
+
+      return schools.filter(
+        (school) =>
+          school.name
+            .toLowerCase()
+            .includes(
+              keyword
+            )
+      );
+    }, [
+      schools,
+      search,
     ]);
 
-    setClassName("");
-    setShowClassForm(false);
+  /*
+   * ========================================================
+   * 権限なし
+   * ========================================================
+   */
 
-    setMessage(
-      "クラスを追加しました。"
-    );
-  }
-
-  function toggleSchool(
-    schoolId: string
+  if (
+    currentUser &&
+    currentUser.role !==
+      "本部管理者" &&
+    currentUser.role !==
+      "校舎管理者"
   ) {
-    setSchools((current) =>
-      current.map((school) =>
-        school.id === schoolId
-          ? {
-              ...school,
-              active:
-                !school.active,
-            }
-          : school
-      )
-    );
-  }
+    return (
+      <main
+        style={{
+          minHeight:
+            "100vh",
 
-  function toggleClass(
-    classId: string
-  ) {
-    setClasses((current) =>
-      current.map((item) =>
-        item.id === classId
-          ? {
-              ...item,
-              active:
-                !item.active,
-            }
-          : item
-      )
+          padding:
+            32,
+
+          background:
+            "#f5f6f8",
+        }}
+      >
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <h1>
+            学校・校舎
+          </h1>
+
+          <p>
+            この機能を利用する権限がありません。
+          </p>
+        </section>
+      </main>
     );
   }
 
   return (
-    <main className="page">
-      <SchoolHeader
-        title="校舎・クラス管理"
-      />
+    <main
+      style={{
+        minHeight:
+          "100vh",
 
-      <section className="content">
-        <div className="pageHeader">
-          <div>
-            <h1>
-              校舎・クラス管理
-            </h1>
+        padding:
+          32,
 
-            <p>
-              校舎、学年、クラスを管理します。
-            </p>
+        background:
+          "#f5f6f8",
+      }}
+    >
+      <div
+        style={{
+          maxWidth:
+            1200,
+
+          margin:
+            "0 auto",
+        }}
+      >
+        {/* =================================================
+            Header
+            ================================================= */}
+
+        <header
+          style={{
+            marginBottom:
+              28,
+          }}
+        >
+          <h1
+            style={{
+              margin:
+                "0 0 8px",
+            }}
+          >
+            学校・校舎
+          </h1>
+
+          <p
+            style={{
+              margin: 0,
+
+              color:
+                "#666",
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            校舎と校舎ごとの基本情報を管理します。
+          </p>
+        </header>
+
+        {/* =================================================
+            Message
+            ================================================= */}
+
+        {error && (
+          <div
+            style={{
+              ...messageStyle,
+
+              borderColor:
+                "#efb5b5",
+
+              background:
+                "#fff4f4",
+
+              color:
+                "#9b1c1c",
+            }}
+          >
+            {error}
           </div>
-        </div>
+        )}
 
         {message && (
-          <div className="selectionPanel">
+          <div
+            style={{
+              ...messageStyle,
+
+              borderColor:
+                "#b8d9c0",
+
+              background:
+                "#f2faf4",
+
+              color:
+                "#25633a",
+            }}
+          >
             {message}
           </div>
         )}
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "360px minmax(0, 1fr)",
-            gap: 20,
-          }}
-        >
-          <section className="stepCard">
-            <div className="pageHeader">
-              <h2>
-                校舎
-              </h2>
+        {/* =================================================
+            New School
+            ================================================= */}
+
+        {currentUser?.role ===
+          "本部管理者" && (
+          <section
+            style={{
+              ...cardStyle,
+
+              marginBottom:
+                24,
+            }}
+          >
+            <h2>
+              校舎を登録
+            </h2>
+
+            <p
+              style={{
+                color:
+                  "#666",
+
+                fontSize:
+                  13,
+
+                lineHeight:
+                  1.7,
+              }}
+            >
+              新しい校舎を組織に追加します。
+            </p>
+
+            <div
+              style={{
+                display:
+                  "flex",
+
+                gap:
+                  12,
+
+                alignItems:
+                  "end",
+
+                marginTop:
+                  20,
+              }}
+            >
+              <label
+                style={{
+                  flex:
+                    1,
+                }}
+              >
+                校舎名
+
+                <input
+                  value={
+                    schoolName
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setSchoolName(
+                      event.target
+                        .value
+                    )
+                  }
+                  placeholder="本校"
+                  style={
+                    inputStyle
+                  }
+                />
+              </label>
 
               <button
                 type="button"
-                className="secondaryButton"
-                onClick={() =>
-                  setShowSchoolForm(
-                    true
-                  )
+                disabled={
+                  saving
+                }
+                onClick={
+                  createSchool
+                }
+                style={
+                  primaryButton
                 }
               >
-                ＋ 校舎
+                {saving
+                  ? "登録中..."
+                  : "校舎を登録"}
               </button>
             </div>
+          </section>
+        )}
 
-            {showSchoolForm && (
-              <div
-                className="formCard"
+        {/* =================================================
+            School List
+            ================================================= */}
+
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <div
+            style={{
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              justifyContent:
+                "space-between",
+
+              gap:
+                16,
+
+              marginBottom:
+                18,
+            }}
+          >
+            <div>
+              <h2
                 style={{
-                  marginBottom: 16,
+                  margin:
+                    0,
                 }}
               >
-                <label>
-                  校舎名
+                校舎一覧
+              </h2>
 
-                  <input
-                    value={schoolName}
-                    onChange={(event) =>
-                      setSchoolName(
-                        event.target
-                          .value
-                      )
+              <p
+                style={{
+                  margin:
+                    "6px 0 0",
+
+                  color:
+                    "#777",
+
+                  fontSize:
+                    13,
+                }}
+              >
+                {schools.length}
+                校
+              </p>
+            </div>
+
+            <input
+              value={
+                search
+              }
+              onChange={(
+                event
+              ) =>
+                setSearch(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="校舎名を検索"
+              style={{
+                ...inputStyle,
+
+                maxWidth:
+                  260,
+
+                marginTop:
+                  0,
+              }}
+            />
+          </div>
+
+          {loading ? (
+            <p>
+              読み込み中...
+            </p>
+          ) : filteredSchools.length ===
+            0 ? (
+            <div
+              style={{
+                padding:
+                  40,
+
+                textAlign:
+                  "center",
+
+                color:
+                  "#777",
+              }}
+            >
+              校舎がありません。
+            </div>
+          ) : (
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  "repeat(auto-fill, minmax(280px, 1fr))",
+
+                gap:
+                  16,
+              }}
+            >
+              {filteredSchools.map(
+                (
+                  school
+                ) => (
+                  <article
+                    key={
+                      school.id
                     }
-                    placeholder="○○校"
-                  />
-                </label>
-
-                <label>
-                  所在地
-
-                  <input
-                    value={
-                      schoolAddress
-                    }
-                    onChange={(event) =>
-                      setSchoolAddress(
-                        event.target
-                          .value
-                      )
-                    }
-                  />
-                </label>
-
-                <div className="actionBar">
-                  <button
-                    type="button"
-                    className="secondaryButton"
-                    onClick={() =>
-                      setShowSchoolForm(
-                        false
-                      )
-                    }
-                  >
-                    キャンセル
-                  </button>
-
-                  <button
-                    type="button"
-                    className="primaryButton"
-                    onClick={addSchool}
-                  >
-                    校舎を追加
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="listCard">
-              {schools.map(
-                (school) => (
-                  <button
-                    type="button"
-                    key={school.id}
-                    className="listRow"
                     style={{
-                      width: "100%",
-                      textAlign:
-                        "left",
-                      border: 0,
-                      borderBottom:
-                        "1px solid #eee",
+                      padding:
+                        20,
+
+                      border:
+                        "1px solid #e1e4e8",
+
+                      borderRadius:
+                        10,
+
                       background:
-                        selectedSchoolId ===
-                        school.id
-                          ? "#f3f3f3"
-                          : "#fff",
-                      cursor:
-                        "pointer",
+                        "#fff",
                     }}
-                    onClick={() =>
-                      setSelectedSchoolId(
-                        school.id
-                      )
-                    }
                   >
-                    <strong>
-                      {school.name}
-                    </strong>
+                    <div
+                      style={{
+                        display:
+                          "flex",
 
-                    <span>
-                      {school.active
-                        ? "利用中"
-                        : "停止中"}
-                    </span>
+                        alignItems:
+                          "center",
 
-                    <span>
-                      <button
-                        type="button"
-                        className="textButton"
-                        onClick={(
-                          event
-                        ) => {
-                          event.stopPropagation();
+                        justifyContent:
+                          "space-between",
 
-                          toggleSchool(
-                            school.id
-                          );
+                        gap:
+                          12,
+                      }}
+                    >
+                      <h3
+                        style={{
+                          margin:
+                            0,
+
+                          fontSize:
+                            17,
+                        }}
+                      >
+                        {
+                          school.name
+                        }
+                      </h3>
+
+                      <span
+                        style={{
+                          padding:
+                            "4px 8px",
+
+                          borderRadius:
+                            999,
+
+                          background:
+                            school.active
+                              ? "#eef8f1"
+                              : "#f3f3f3",
+
+                          color:
+                            school.active
+                              ? "#28733f"
+                              : "#777",
+
+                          fontSize:
+                            11,
+
+                          fontWeight:
+                            600,
                         }}
                       >
                         {school.active
-                          ? "停止"
-                          : "再開"}
-                      </button>
-                    </span>
-                  </button>
-                )
-              )}
-            </div>
-          </section>
+                          ? "有効"
+                          : "停止"}
+                      </span>
+                    </div>
 
-          <section className="stepCard">
-            <div className="pageHeader">
-              <div>
-                <h2>
-                  {selectedSchool
-                    ?.name ??
-                    "校舎"}
-                  のクラス
-                </h2>
-
-                <p>
-                  学年・クラス単位で管理します。
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="secondaryButton"
-                onClick={() =>
-                  setShowClassForm(
-                    true
-                  )
-                }
-              >
-                ＋ クラス
-              </button>
-            </div>
-
-            {showClassForm && (
-              <div
-                className="formCard"
-                style={{
-                  marginBottom: 16,
-                }}
-              >
-                <label>
-                  学年
-
-                  <select
-                    value={
-                      classGrade
-                    }
-                    onChange={(event) =>
-                      setClassGrade(
-                        event.target
-                          .value
-                      )
-                    }
-                  >
-                    {grades.map(
-                      (grade) => (
-                        <option
-                          key={grade}
-                          value={grade}
-                        >
-                          {grade}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </label>
-
-                <label>
-                  クラス名
-
-                  <input
-                    value={
-                      className
-                    }
-                    onChange={(event) =>
-                      setClassName(
-                        event.target
-                          .value
-                      )
-                    }
-                    placeholder="2TZ"
-                  />
-                </label>
-
-                <div className="actionBar">
-                  <button
-                    type="button"
-                    className="secondaryButton"
-                    onClick={() =>
-                      setShowClassForm(
-                        false
-                      )
-                    }
-                  >
-                    キャンセル
-                  </button>
-
-                  <button
-                    type="button"
-                    className="primaryButton"
-                    onClick={
-                      addClass
-                    }
-                  >
-                    クラスを追加
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="listCard">
-              {filteredClasses.length ===
-              0 ? (
-                <div className="emptyState">
-                  クラスがありません。
-                </div>
-              ) : (
-                filteredClasses.map(
-                  (item) => (
                     <div
-                      key={item.id}
-                      className="listRow"
+                      style={{
+                        marginTop:
+                          18,
+
+                        fontSize:
+                          12,
+
+                        color:
+                          "#888",
+
+                        wordBreak:
+                          "break-all",
+                      }}
                     >
-                      <strong>
-                        {item.grade}
-                      </strong>
+                      校舎ID
+                      <br />
+                      {
+                        school.id
+                      }
+                    </div>
 
-                      <span>
-                        {item.name}
-                      </span>
-
-                      <span>
-                        {item.active
-                          ? "利用中"
-                          : "停止中"}
-                      </span>
-
+                    {currentUser?.role ===
+                      "本部管理者" && (
                       <button
                         type="button"
-                        className="textButton"
                         onClick={() =>
-                          toggleClass(
-                            item.id
+                          toggleSchool(
+                            school
                           )
                         }
+                        style={{
+                          marginTop:
+                            18,
+
+                          width:
+                            "100%",
+
+                          padding:
+                            "9px 12px",
+
+                          border:
+                            "1px solid #ccc",
+
+                          borderRadius:
+                            7,
+
+                          background:
+                            "#fff",
+
+                          color:
+                            school.active
+                              ? "#a00000"
+                              : "#25633a",
+
+                          cursor:
+                            "pointer",
+                        }}
                       >
-                        {item.active
-                          ? "停止"
-                          : "再開"}
+                        {school.active
+                          ? "校舎を停止"
+                          : "校舎を有効化"}
                       </button>
-                    </div>
-                  )
+                    )}
+                  </article>
                 )
               )}
             </div>
-          </section>
-        </div>
-      </section>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+const cardStyle: React.CSSProperties =
+  {
+    padding:
+      24,
+
+    background:
+      "#fff",
+
+    border:
+      "1px solid #e1e4e8",
+
+    borderRadius:
+      12,
+  };
+
+const inputStyle: React.CSSProperties =
+  {
+    display:
+      "block",
+
+    width:
+      "100%",
+
+    marginTop:
+      7,
+
+    padding:
+      "11px 12px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      7,
+
+    background:
+      "#fff",
+
+    outline:
+      "none",
+  };
+
+const primaryButton: React.CSSProperties =
+  {
+    height:
+      44,
+
+    padding:
+      "0 20px",
+
+    border:
+      "none",
+
+    borderRadius:
+      7,
+
+    background:
+      "#111",
+
+    color:
+      "#fff",
+
+    fontWeight:
+      600,
+
+    whiteSpace:
+      "nowrap",
+
+    cursor:
+      "pointer",
+  };
+
+const messageStyle: React.CSSProperties =
+  {
+    marginBottom:
+      16,
+
+    padding:
+      14,
+
+    border:
+      "1px solid",
+
+    borderRadius:
+      8,
+
+    lineHeight:
+      1.6,
+  };
