@@ -1,327 +1,1352 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-import SchoolHeader from "@/components/SchoolHeader";
+import Link from "next/link";
 
 import {
-  createTest,
-  getTests,
-  type Test,
-} from "@/lib/tests";
+  onAuthStateChanged,
+} from "firebase/auth";
 
-type TargetMode =
-  | "all"
-  | "specific";
+import {
+  addDoc,
+  collection,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+  doc,
+  where,
+} from "firebase/firestore";
 
-type TargetClass = {
-  id: string;
-  school: string;
-  grade: string;
-  className: string;
+import {
+  auth,
+  db,
+} from "@/lib/firebase";
+
+type UserRole =
+  | "本部管理者"
+  | "校舎管理者"
+  | "講師"
+  | "生徒";
+
+type CurrentUser = {
+  uid: string;
+  organizationId: string | null;
+  role: UserRole | null;
+  schoolIds: string[];
 };
 
-const availableClasses: TargetClass[] = [
-  {
-    id: "tokyo-n2-tz",
-    school: "○○校",
-    grade: "中学2年",
-    className: "2TZ",
-  },
-  {
-    id: "tokyo-n2-ts",
-    school: "○○校",
-    grade: "中学2年",
-    className: "2TS",
-  },
-  {
-    id: "tokyo-n2-s",
-    school: "○○校",
-    grade: "中学2年",
-    className: "2S",
-  },
-  {
-    id: "chiba-n2-tz",
-    school: "△△校",
-    grade: "中学2年",
-    className: "2TZ",
-  },
-  {
-    id: "chiba-n2-ts",
-    school: "△△校",
-    grade: "中学2年",
-    className: "2TS",
-  },
-  {
-    id: "chiba-n3-tz",
-    school: "△△校",
-    grade: "中学3年",
-    className: "3TZ",
-  },
-];
+type School = {
+  id: string;
+  name: string;
+  active: boolean;
+};
 
-const subjects = [
+type Test = {
+  id: string;
+  organizationId: string;
+  schoolId: string;
+  testId: string;
+  name: string;
+  subject: string;
+  grade: string;
+  className: string;
+  examDate: string;
+  totalScore: number;
+  active: boolean;
+};
+
+const SUBJECTS = [
   "国語",
   "数学",
+  "算数",
   "英語",
   "理科",
   "社会",
+  "その他",
+];
+
+const GRADES = [
+  "未設定",
+  "小学1年",
+  "小学2年",
+  "小学3年",
+  "小学4年",
+  "小学5年",
+  "小学6年",
+  "中学1年",
+  "中学2年",
+  "中学3年",
+  "高校1年",
+  "高校2年",
+  "高校3年",
 ];
 
 export default function TestsPage() {
-  const [tests, setTests] =
-    useState<Test[]>([]);
+  const [
+    currentUser,
+    setCurrentUser,
+  ] = useState<CurrentUser | null>(
+    null
+  );
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    tests,
+    setTests,
+  ] = useState<Test[]>([]);
 
-  const [showCreate, setShowCreate] =
-    useState(false);
+  const [
+    schools,
+    setSchools,
+  ] = useState<School[]>([]);
 
-  const [name, setName] =
-    useState("");
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [date, setDate] =
-    useState("");
+  const [
+    saving,
+    setSaving,
+  ] = useState(false);
 
-  const [targetMode, setTargetMode] =
-    useState<TargetMode>("all");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-  const [selectedClasses, setSelectedClasses] =
-    useState<string[]>([]);
+  const [
+    message,
+    setMessage,
+  ] = useState("");
 
-  const [selectedSubjects, setSelectedSubjects] =
-    useState<string[]>([]);
+  const [
+    search,
+    setSearch,
+  ] = useState("");
 
-  const [message, setMessage] =
-    useState("");
+  const [
+    editingId,
+    setEditingId,
+  ] = useState<string | null>(
+    null
+  );
 
-  async function loadTests() {
-    setLoading(true);
+  const [
+    testId,
+    setTestId,
+  ] = useState("");
 
+  const [
+    testName,
+    setTestName,
+  ] = useState("");
+
+  const [
+    subject,
+    setSubject,
+  ] = useState("国語");
+
+  const [
+    grade,
+    setGrade,
+  ] = useState("未設定");
+
+  const [
+    className,
+    setClassName,
+  ] = useState("");
+
+  const [
+    schoolId,
+    setSchoolId,
+  ] = useState("");
+
+  const [
+    examDate,
+    setExamDate,
+  ] = useState("");
+
+  const [
+    totalScore,
+    setTotalScore,
+  ] = useState("100");
+
+  /*
+   * ========================================================
+   * 認証
+   * ========================================================
+   */
+
+  useEffect(() => {
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (firebaseUser) => {
+          if (!firebaseUser) {
+            setLoading(false);
+
+            setError(
+              "ログイン状態を確認できません。"
+            );
+
+            return;
+          }
+
+          try {
+            const snapshot =
+              await getDocs(
+                query(
+                  collection(
+                    db,
+                    "users"
+                  ),
+                  where(
+                    "__name__",
+                    "==",
+                    firebaseUser.uid
+                  )
+                )
+              );
+
+            if (
+              snapshot.empty
+            ) {
+              setLoading(false);
+
+              setError(
+                "システムのユーザー情報が登録されていません。"
+              );
+
+              return;
+            }
+
+            const data =
+              snapshot.docs[0].data();
+
+            const role =
+              isUserRole(
+                data.role
+              )
+                ? data.role
+                : null;
+
+            setCurrentUser({
+              uid:
+                firebaseUser.uid,
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
+
+              role,
+
+              schoolIds:
+                Array.isArray(
+                  data.schoolIds
+                )
+                  ? data.schoolIds.filter(
+                      (
+                        value
+                      ): value is string =>
+                        typeof value ===
+                        "string"
+                    )
+                  : [],
+            });
+          } catch (err) {
+            console.error(
+              err
+            );
+
+            setError(
+              getSafeErrorMessage(
+                err
+              )
+            );
+
+            setLoading(false);
+          }
+        }
+      );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  /*
+   * ========================================================
+   * データ読み込み
+   * ========================================================
+   */
+
+  useEffect(() => {
+    if (
+      !currentUser?.organizationId
+    ) {
+      return;
+    }
+
+    void loadData(
+      currentUser.organizationId
+    );
+  }, [
+    currentUser?.organizationId,
+  ]);
+
+  async function loadData(
+    organizationId: string
+  ) {
     try {
-      const data = await getTests();
-      setTests(data);
-    } catch {
-      setMessage(
-        "テスト情報を読み込めませんでした。"
+      setLoading(true);
+      setError("");
+
+      const [
+        testSnapshot,
+        schoolSnapshot,
+      ] = await Promise.all([
+        getDocs(
+          query(
+            collection(
+              db,
+              "tests"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        ),
+
+        getDocs(
+          query(
+            collection(
+              db,
+              "schools"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        ),
+      ]);
+
+      const loadedTests =
+        testSnapshot.docs.map(
+          (
+            item
+          ): Test => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              organizationId,
+
+              schoolId:
+                typeof data.schoolId ===
+                "string"
+                  ? data.schoolId
+                  : "",
+
+              testId:
+                typeof data.testId ===
+                "string"
+                  ? data.testId
+                  : "",
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              subject:
+                typeof data.subject ===
+                "string"
+                  ? data.subject
+                  : "",
+
+              grade:
+                typeof data.grade ===
+                "string"
+                  ? data.grade
+                  : "未設定",
+
+              className:
+                typeof data.className ===
+                "string"
+                  ? data.className
+                  : "",
+
+              examDate:
+                typeof data.examDate ===
+                "string"
+                  ? data.examDate
+                  : "",
+
+              totalScore:
+                typeof data.totalScore ===
+                "number"
+                  ? data.totalScore
+                  : 0,
+
+              active:
+                data.active !==
+                false,
+            };
+          }
+        );
+
+      const loadedSchools =
+        schoolSnapshot.docs.map(
+          (
+            item
+          ): School => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              active:
+                data.active !==
+                false,
+            };
+          }
+        );
+
+      setTests(
+        loadedTests
+      );
+
+      setSchools(
+        loadedSchools
+      );
+
+      if (
+        !schoolId
+      ) {
+        const available =
+          getAvailableSchools(
+            loadedSchools,
+            currentUser
+          );
+
+        if (
+          available.length >
+          0
+        ) {
+          setSchoolId(
+            available[0].id
+          );
+        }
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
       );
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    loadTests();
-  }, []);
+  /*
+   * ========================================================
+   * 利用可能校舎
+   * ========================================================
+   */
 
-  const schools = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          availableClasses.map(
-            (item) => item.school
-          )
+  const availableSchools =
+    useMemo(
+      () =>
+        getAvailableSchools(
+          schools,
+          currentUser
+        ),
+      [
+        schools,
+        currentUser,
+      ]
+    );
+
+  /*
+   * ========================================================
+   * テストID生成
+   * ========================================================
+   */
+
+  function generateTestId() {
+    const existing =
+      new Set(
+        tests.map(
+          (
+            test
+          ) =>
+            test.testId
         )
-      ),
-    []
-  );
+      );
 
-  function toggleClass(id: string) {
-    setSelectedClasses((current) =>
-      current.includes(id)
-        ? current.filter(
-            (item) => item !== id
-          )
-        : [...current, id]
+    let value = "";
+
+    do {
+      value =
+        `T${Date.now()
+          .toString(36)
+          .toUpperCase()
+          .slice(-7)}`;
+    } while (
+      existing.has(value)
+    );
+
+    setTestId(
+      value
     );
   }
 
-  function toggleSubject(
-    subject: string
-  ) {
-    setSelectedSubjects((current) =>
-      current.includes(subject)
-        ? current.filter(
-            (item) => item !== subject
-          )
-        : [...current, subject]
-    );
-  }
+  /*
+   * ========================================================
+   * 保存
+   * ========================================================
+   */
 
-  function selectSchool(
-    school: string
-  ) {
-    const schoolIds =
-      availableClasses
-        .filter(
-          (item) =>
-            item.school === school
-        )
-        .map((item) => item.id);
+  async function saveTest() {
+    if (saving) {
+      return;
+    }
 
-    setSelectedClasses((current) =>
-      Array.from(
-        new Set([
-          ...current,
-          ...schoolIds,
-        ])
-      )
-    );
-  }
-
-  function selectGrade(
-    school: string,
-    grade: string
-  ) {
-    const ids =
-      availableClasses
-        .filter(
-          (item) =>
-            item.school === school &&
-            item.grade === grade
-        )
-        .map((item) => item.id);
-
-    setSelectedClasses((current) =>
-      Array.from(
-        new Set([
-          ...current,
-          ...ids,
-        ])
-      )
-    );
-  }
-
-  async function handleCreate() {
+    setError("");
     setMessage("");
 
-    if (!name.trim()) {
-      setMessage(
+    if (
+      !currentUser?.organizationId
+    ) {
+      setError(
+        "組織情報を確認できません。"
+      );
+
+      return;
+    }
+
+    if (
+      !schoolId
+    ) {
+      setError(
+        "校舎を選択してください。"
+      );
+
+      return;
+    }
+
+    if (
+      !testId.trim()
+    ) {
+      setError(
+        "テストIDを入力してください。"
+      );
+
+      return;
+    }
+
+    if (
+      !testName.trim()
+    ) {
+      setError(
         "テスト名を入力してください。"
       );
+
       return;
     }
 
-    if (!date) {
-      setMessage(
-        "実施日を選択してください。"
+    const score =
+      Number(
+        totalScore
       );
+
+    if (
+      !Number.isFinite(score) ||
+      score <= 0
+    ) {
+      setError(
+        "満点は1以上の数字で入力してください。"
+      );
+
       return;
     }
 
     if (
-      targetMode === "specific" &&
-      selectedClasses.length === 0
+      currentUser.role !==
+        "本部管理者" &&
+      !currentUser.schoolIds.includes(
+        schoolId
+      )
     ) {
-      setMessage(
-        "対象クラスを選択してください。"
+      setError(
+        "この校舎のテストを管理する権限がありません。"
       );
+
       return;
     }
 
-    if (
-      selectedSubjects.length === 0
-    ) {
-      setMessage(
-        "教科を1つ以上選択してください。"
-      );
-      return;
-    }
+    try {
+      setSaving(true);
 
-    const schoolIds =
-      targetMode === "all"
-        ? schools
-        : Array.from(
-            new Set(
-              availableClasses
-                .filter((item) =>
-                  selectedClasses.includes(
-                    item.id
-                  )
-                )
-                .map(
-                  (item) => item.school
-                )
+      /*
+       * テストIDは組織内で一意。
+       */
+
+      const duplicateSnapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "tests"
+            ),
+            where(
+              "organizationId",
+              "==",
+              currentUser.organizationId
+            ),
+            where(
+              "testId",
+              "==",
+              testId.trim()
             )
-          );
+          )
+        );
 
-    await createTest({
-      name: name.trim(),
-      date,
-      targetSchoolIds:
-        schoolIds,
-      targetClassIds:
-        targetMode === "all"
-          ? []
-          : selectedClasses,
-      subjectIds:
-        selectedSubjects,
-      status: "draft",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
+      const duplicate =
+        duplicateSnapshot.docs.find(
+          (
+            item
+          ) =>
+            item.id !==
+            editingId
+        );
 
-    setMessage(
-      "テストを作成しました。"
+      if (
+        duplicate
+      ) {
+        throw new Error(
+          "このテストIDはすでに使用されています。"
+        );
+      }
+
+      const payload = {
+        organizationId:
+          currentUser.organizationId,
+
+        schoolId,
+
+        testId:
+          testId
+            .trim()
+            .toUpperCase(),
+
+        name:
+          testName.trim(),
+
+        subject,
+
+        grade,
+
+        className:
+          className.trim(),
+
+        examDate,
+
+        totalScore:
+          score,
+
+        active:
+          true,
+
+        updatedAt:
+          serverTimestamp(),
+      };
+
+      if (
+        editingId
+      ) {
+        await updateDoc(
+          doc(
+            db,
+            "tests",
+            editingId
+          ),
+          payload
+        );
+
+        setMessage(
+          "テストを更新しました。"
+        );
+      } else {
+        await addDoc(
+          collection(
+            db,
+            "tests"
+          ),
+          {
+            ...payload,
+
+            createdAt:
+              serverTimestamp(),
+          }
+        );
+
+        setMessage(
+          "テストを登録しました。"
+        );
+      }
+
+      resetForm();
+
+      await loadData(
+        currentUser.organizationId
+      );
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      if (
+        err instanceof Error &&
+        !isFirebaseError(
+          err
+        )
+      ) {
+        setError(
+          err.message
+        );
+      } else {
+        setError(
+          getSafeErrorMessage(
+            err
+          )
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * 編集
+   * ========================================================
+   */
+
+  function startEdit(
+    test: Test
+  ) {
+    setEditingId(
+      test.id
     );
 
-    setName("");
-    setDate("");
-    setTargetMode("all");
-    setSelectedClasses([]);
-    setSelectedSubjects([]);
-    setShowCreate(false);
+    setTestId(
+      test.testId
+    );
 
-    await loadTests();
+    setTestName(
+      test.name
+    );
+
+    setSubject(
+      test.subject
+    );
+
+    setGrade(
+      test.grade
+    );
+
+    setClassName(
+      test.className
+    );
+
+    setSchoolId(
+      test.schoolId
+    );
+
+    setExamDate(
+      test.examDate
+    );
+
+    setTotalScore(
+      test.totalScore.toString()
+    );
+
+    setError("");
+    setMessage("");
+
+    window.scrollTo({
+      top: 0,
+      behavior:
+        "smooth",
+    });
+  }
+
+  /*
+   * ========================================================
+   * 停止/有効化
+   * ========================================================
+   */
+
+  async function toggleTest(
+    test: Test
+  ) {
+    if (
+      !currentUser
+    ) {
+      return;
+    }
+
+    if (
+      currentUser.role !==
+        "本部管理者" &&
+      !currentUser.schoolIds.includes(
+        test.schoolId
+      )
+    ) {
+      setError(
+        "このテストを変更する権限がありません。"
+      );
+
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      await updateDoc(
+        doc(
+          db,
+          "tests",
+          test.id
+        ),
+        {
+          active:
+            !test.active,
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        test.active
+          ? "テストを停止しました。"
+          : "テストを有効にしました。"
+      );
+
+      if (
+        currentUser.organizationId
+      ) {
+        await loadData(
+          currentUser.organizationId
+        );
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
+      );
+    }
+  }
+
+  /*
+   * ========================================================
+   * フォームリセット
+   * ========================================================
+   */
+
+  function resetForm() {
+    setEditingId(
+      null
+    );
+
+    setTestId("");
+
+    setTestName("");
+
+    setSubject(
+      "国語"
+    );
+
+    setGrade(
+      "未設定"
+    );
+
+    setClassName("");
+
+    setExamDate("");
+
+    setTotalScore(
+      "100"
+    );
+
+    const first =
+      availableSchools[0];
+
+    setSchoolId(
+      first?.id ??
+        ""
+    );
+  }
+
+  /*
+   * ========================================================
+   * 検索
+   * ========================================================
+   */
+
+  const filteredTests =
+    useMemo(() => {
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
+
+      if (!keyword) {
+        return tests;
+      }
+
+      return tests.filter(
+        (
+          test
+        ) =>
+          test.testId
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          test.name
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          test.subject
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          test.className
+            .toLowerCase()
+            .includes(
+              keyword
+            )
+      );
+    }, [
+      tests,
+      search,
+    ]);
+
+  /*
+   * ========================================================
+   * 権限
+   * ========================================================
+   */
+
+  if (
+    currentUser &&
+    currentUser.role !==
+      "本部管理者" &&
+    currentUser.role !==
+      "校舎管理者" &&
+    currentUser.role !==
+      "講師"
+  ) {
+    return (
+      <main
+        style={
+          pageStyle
+        }
+      >
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <h1>
+            テスト管理
+          </h1>
+
+          <p>
+            この機能を利用する権限がありません。
+          </p>
+        </section>
+      </main>
+    );
   }
 
   return (
-    <main className="page">
-      <SchoolHeader title="テスト管理" />
-
-      <section className="content">
-        <div className="pageHeader">
-          <div>
-            <h1>テスト管理</h1>
-            <p>
-              全校統一テストを基本として、対象クラスを指定できます。
-            </p>
-          </div>
-
-          <button
-            type="button"
-            className="primaryButton"
-            onClick={() =>
-              setShowCreate(true)
-            }
+    <main
+      style={
+        pageStyle
+      }
+    >
+      <div
+        style={{
+          maxWidth:
+            1400,
+          margin:
+            "0 auto",
+        }}
+      >
+        <header
+          style={{
+            marginBottom:
+              28,
+          }}
+        >
+          <h1
+            style={{
+              margin:
+                "0 0 8px",
+            }}
           >
-            ＋ テスト作成
-          </button>
-        </div>
+            テスト管理
+          </h1>
 
-        {message && (
-          <div className="selectionPanel">
-            {message}
-          </div>
+          <p
+            style={{
+              margin: 0,
+              color:
+                "#666",
+              lineHeight:
+                1.7,
+            }}
+          >
+            テストID・教科・学年・配点を管理します。
+          </p>
+        </header>
+
+        {error && (
+          <Message
+            type="error"
+            message={error}
+          />
         )}
 
-        {showCreate && (
-          <section className="formCard">
-            <h2>テスト作成</h2>
+        {message && (
+          <Message
+            type="success"
+            message={message}
+          />
+        )}
+
+        {/* ==================================================
+            登録
+            ================================================== */}
+
+        <section
+          style={{
+            ...cardStyle,
+            marginBottom:
+              24,
+          }}
+        >
+          <div
+            style={{
+              display:
+                "flex",
+              justifyContent:
+                "space-between",
+              alignItems:
+                "center",
+              gap:
+                16,
+            }}
+          >
+            <div>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                {editingId
+                  ? "テストを編集"
+                  : "テストを登録"}
+              </h2>
+
+              <p
+                style={{
+                  margin:
+                    "6px 0 0",
+                  color:
+                    "#777",
+                  fontSize:
+                    13,
+                }}
+              >
+                テストIDは答案用紙のテストID QRと一致させます。
+              </p>
+            </div>
+
+            {editingId && (
+              <button
+                type="button"
+                onClick={
+                  resetForm
+                }
+                style={
+                  secondaryButton
+                }
+              >
+                新規登録に戻す
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              display:
+                "grid",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(220px, 1fr))",
+              gap:
+                16,
+              marginTop:
+                20,
+            }}
+          >
+            <label>
+              テストID
+
+              <div
+                style={{
+                  display:
+                    "flex",
+                  gap:
+                    8,
+                }}
+              >
+                <input
+                  value={
+                    testId
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setTestId(
+                      event.target.value
+                    )
+                  }
+                  placeholder="T2026A01"
+                  style={
+                    inputStyle
+                  }
+                />
+
+                {!editingId && (
+                  <button
+                    type="button"
+                    onClick={
+                      generateTestId
+                    }
+                    style={
+                      secondaryButton
+                    }
+                  >
+                    自動発行
+                  </button>
+                )}
+              </div>
+            </label>
 
             <label>
               テスト名
 
               <input
-                value={name}
-                onChange={(event) =>
-                  setName(
+                value={
+                  testName
+                }
+                onChange={(
+                  event
+                ) =>
+                  setTestName(
                     event.target.value
                   )
                 }
-                placeholder="第1回確認テスト"
+                placeholder="第1回定期テスト"
+                style={
+                  inputStyle
+                }
               />
+            </label>
+
+            <label>
+              教科
+
+              <select
+                value={
+                  subject
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSubject(
+                    event.target.value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                {SUBJECTS.map(
+                  (
+                    item
+                  ) => (
+                    <option
+                      key={
+                        item
+                      }
+                      value={
+                        item
+                      }
+                    >
+                      {
+                        item
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              学年
+
+              <select
+                value={
+                  grade
+                }
+                onChange={(
+                  event
+                ) =>
+                  setGrade(
+                    event.target.value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                {GRADES.map(
+                  (
+                    item
+                  ) => (
+                    <option
+                      key={
+                        item
+                      }
+                      value={
+                        item
+                      }
+                    >
+                      {
+                        item
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              クラス
+
+              <input
+                value={
+                  className
+                }
+                onChange={(
+                  event
+                ) =>
+                  setClassName(
+                    event.target.value
+                  )
+                }
+                placeholder="3年2組"
+                style={
+                  inputStyle
+                }
+              />
+            </label>
+
+            <label>
+              校舎
+
+              <select
+                value={
+                  schoolId
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSchoolId(
+                    event.target.value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                <option value="">
+                  選択してください
+                </option>
+
+                {availableSchools.map(
+                  (
+                    school
+                  ) => (
+                    <option
+                      key={
+                        school.id
+                      }
+                      value={
+                        school.id
+                      }
+                    >
+                      {
+                        school.name
+                      }
+                    </option>
+                  )
+                )}
+              </select>
             </label>
 
             <label>
@@ -329,287 +1354,773 @@ export default function TestsPage() {
 
               <input
                 type="date"
-                value={date}
-                onChange={(event) =>
-                  setDate(
+                value={
+                  examDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  setExamDate(
                     event.target.value
                   )
+                }
+                style={
+                  inputStyle
                 }
               />
             </label>
 
-            <h3>対象</h3>
+            <label>
+              満点
 
-            <div className="actionBar">
-              <button
-                type="button"
-                className={
-                  targetMode === "all"
-                    ? "primaryButton"
-                    : "secondaryButton"
+              <input
+                type="number"
+                min="1"
+                value={
+                  totalScore
                 }
-                onClick={() => {
-                  setTargetMode("all");
-                  setSelectedClasses([]);
-                }}
-              >
-                全校
-              </button>
-
-              <button
-                type="button"
-                className={
-                  targetMode === "specific"
-                    ? "primaryButton"
-                    : "secondaryButton"
-                }
-                onClick={() =>
-                  setTargetMode(
-                    "specific"
+                onChange={(
+                  event
+                ) =>
+                  setTotalScore(
+                    event.target.value
                   )
                 }
-              >
-                指定する
-              </button>
-            </div>
+                style={
+                  inputStyle
+                }
+              />
+            </label>
+          </div>
 
-            {targetMode === "all" && (
-              <div className="selectionPanel">
-                <strong>
-                  全校統一テスト
-                </strong>
+          <div
+            style={{
+              display:
+                "flex",
+              gap:
+                10,
+              marginTop:
+                24,
+            }}
+          >
+            <button
+              type="button"
+              disabled={
+                saving
+              }
+              onClick={
+                saveTest
+              }
+              style={
+                primaryButton
+              }
+            >
+              {saving
+                ? "保存中..."
+                : editingId
+                  ? "変更を保存"
+                  : "テストを登録"}
+            </button>
 
-                <p>
-                  登録されている全校舎を対象にします。
-                </p>
-              </div>
-            )}
-
-            {targetMode ===
-              "specific" && (
-              <div>
-                <h3>
-                  校舎・学年・クラス
-                </h3>
-
-                {schools.map(
-                  (schoolName) => {
-                    const grades =
-                      Array.from(
-                        new Set(
-                          availableClasses
-                            .filter(
-                              (item) =>
-                                item.school ===
-                                schoolName
-                            )
-                            .map(
-                              (item) =>
-                                item.grade
-                            )
-                        )
-                      );
-
-                    return (
-                      <div
-                        key={schoolName}
-                        className="formCard"
-                        style={{
-                          marginBottom:
-                            12,
-                        }}
-                      >
-                        <strong>
-                          {schoolName}
-                        </strong>
-
-                        <div
-                          className="actionBar"
-                          style={{
-                            marginTop:
-                              10,
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="secondaryButton"
-                            onClick={() =>
-                              selectSchool(
-                                schoolName
-                              )
-                            }
-                          >
-                            {schoolName}
-                            全体
-                          </button>
-
-                          {grades.map(
-                            (gradeName) => (
-                              <button
-                                key={
-                                  gradeName
-                                }
-                                type="button"
-                                className="secondaryButton"
-                                onClick={() =>
-                                  selectGrade(
-                                    schoolName,
-                                    gradeName
-                                  )
-                                }
-                              >
-                                {schoolName}
-                                {" "}
-                                {gradeName}
-                              </button>
-                            )
-                          )}
-                        </div>
-
-                        <div>
-                          {availableClasses
-                            .filter(
-                              (item) =>
-                                item.school ===
-                                schoolName
-                            )
-                            .map(
-                              (item) => (
-                                <label
-                                  key={
-                                    item.id
-                                  }
-                                  style={{
-                                    display:
-                                      "flex",
-                                    alignItems:
-                                      "center",
-                                    gap: 8,
-                                    marginBottom:
-                                      8,
-                                    cursor:
-                                      "pointer",
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedClasses.includes(
-                                      item.id
-                                    )}
-                                    onChange={() =>
-                                      toggleClass(
-                                        item.id
-                                      )
-                                    }
-                                  />
-
-                                  <span>
-                                    {item.school}
-                                    {" "}
-                                    {item.grade}
-                                    {" "}
-                                    {item.className}
-                                  </span>
-                                </label>
-                              )
-                            )}
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
-              </div>
-            )}
-
-            <h3>
-              教科
-            </h3>
-
-            <div className="actionBar">
-              {subjects.map(
-                (subject) => (
-                  <button
-                    key={subject}
-                    type="button"
-                    className={
-                      selectedSubjects.includes(
-                        subject
-                      )
-                        ? "primaryButton"
-                        : "secondaryButton"
-                    }
-                    onClick={() =>
-                      toggleSubject(
-                        subject
-                      )
-                    }
-                  >
-                    {selectedSubjects.includes(
-                      subject
-                    )
-                      ? "✓ "
-                      : ""}
-                    {subject}
-                  </button>
-                )
-              )}
-            </div>
-
-            <div className="actionBar">
+            {editingId && (
               <button
                 type="button"
-                className="secondaryButton"
-                onClick={() =>
-                  setShowCreate(false)
+                onClick={
+                  resetForm
+                }
+                style={
+                  secondaryButton
                 }
               >
                 キャンセル
               </button>
+            )}
+          </div>
+        </section>
 
-              <button
-                type="button"
-                className="primaryButton"
-                onClick={
-                  handleCreate
+        {/* ==================================================
+            テスト一覧
+            ================================================== */}
+
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <div
+            style={{
+              display:
+                "flex",
+              alignItems:
+                "center",
+              justifyContent:
+                "space-between",
+              gap:
+                16,
+            }}
+          >
+            <div>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                テスト一覧
+              </h2>
+
+              <p
+                style={{
+                  margin:
+                    "6px 0 0",
+                  color:
+                    "#777",
+                  fontSize:
+                    13,
+                }}
+              >
+                {tests.length}
+                件
+              </p>
+            </div>
+
+            <input
+              value={
+                search
+              }
+              onChange={(
+                event
+              ) =>
+                setSearch(
+                  event.target.value
+                )
+              }
+              placeholder="テストID・名称・教科・クラス"
+              style={{
+                ...inputStyle,
+                maxWidth:
+                  320,
+                marginTop:
+                  0,
+              }}
+            />
+          </div>
+
+          {loading ? (
+            <p
+              style={{
+                marginTop:
+                  24,
+              }}
+            >
+              読み込み中...
+            </p>
+          ) : (
+            <div
+              style={{
+                overflowX:
+                  "auto",
+                marginTop:
+                  20,
+              }}
+            >
+              <table
+                style={
+                  tableStyle
                 }
               >
-                テストを作成
-              </button>
-            </div>
-          </section>
-        )}
+                <thead>
+                  <tr>
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      テストID
+                    </th>
 
-        <section className="listCard">
-          {loading ? (
-            <div className="emptyState">
-              読み込み中...
-            </div>
-          ) : tests.length === 0 ? (
-            <div className="emptyState">
-              テストがありません。
-            </div>
-          ) : (
-            tests.map((test) => (
-              <div
-                key={test.id}
-                className="listRow"
-              >
-                <strong>
-                  {test.name}
-                </strong>
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      テスト名
+                    </th>
 
-                <span>
-                  {test.date}
-                </span>
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      教科
+                    </th>
 
-                <span>
-                  {test.status}
-                </span>
-              </div>
-            ))
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      学年
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      実施日
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      満点
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      状態
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredTests.map(
+                    (
+                      test
+                    ) => (
+                      <tr
+                        key={
+                          test.id
+                        }
+                      >
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          <strong>
+                            {
+                              test.testId
+                            }
+                          </strong>
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            test.name
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            test.subject
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            test.grade
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {test.examDate ||
+                            "—"}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            test.totalScore
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {test.active
+                            ? "有効"
+                            : "停止"}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          <div
+                            style={{
+                              display:
+                                "flex",
+                              gap:
+                                8,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                startEdit(
+                                  test
+                                )
+                              }
+                              style={
+                                smallButton
+                              }
+                            >
+                              編集
+                            </button>
+
+                            <Link
+                              href={`/test-qr?testId=${encodeURIComponent(
+                                test.testId
+                              )}`}
+                              style={
+                                smallLink
+                              }
+                            >
+                              テストQR
+                            </Link>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                toggleTest(
+                                  test
+                                )
+                              }
+                              style={
+                                dangerButton
+                              }
+                            >
+                              {test.active
+                                ? "停止"
+                                : "有効化"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  )}
+
+                  {filteredTests.length ===
+                    0 && (
+                    <tr>
+                      <td
+                        colSpan={
+                          8
+                        }
+                        style={{
+                          ...tdStyle,
+                          textAlign:
+                            "center",
+                          padding:
+                            40,
+                          color:
+                            "#777",
+                        }}
+                      >
+                        テストがありません。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
-      </section>
+      </div>
     </main>
   );
 }
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function getAvailableSchools(
+  schools: School[],
+  user: CurrentUser | null
+) {
+  if (!user) {
+    return [];
+  }
+
+  const activeSchools =
+    schools.filter(
+      (
+        school
+      ) =>
+        school.active
+    );
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return activeSchools;
+  }
+
+  return activeSchools.filter(
+    (
+      school
+    ) =>
+      user.schoolIds.includes(
+        school.id
+      )
+  );
+}
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+function isFirebaseError(
+  error: unknown
+) {
+  const value =
+    error as {
+      code?: string;
+    };
+
+  return Boolean(
+    value?.code
+  );
+}
+
+function getSafeErrorMessage(
+  error: unknown
+) {
+  const value =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    value?.code
+  ) {
+    case "permission-denied":
+      return "この操作を行う権限がありません。";
+
+    case "unauthenticated":
+      return "ログイン状態を確認できません。";
+
+    case "already-exists":
+      return "同じデータがすでに登録されています。";
+
+    case "failed-precondition":
+      return "現在この操作を実行できません。";
+
+    case "unavailable":
+      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
+
+    default:
+      return "テスト情報を処理できませんでした。";
+  }
+}
+
+/* =========================================================
+   Message
+   ========================================================= */
+
+function Message({
+  type,
+  message,
+}: {
+  type:
+    | "error"
+    | "success";
+
+  message: string;
+}) {
+  return (
+    <div
+      style={{
+        marginBottom:
+          16,
+
+        padding:
+          14,
+
+        border:
+          "1px solid",
+
+        borderColor:
+          type ===
+          "error"
+            ? "#efb5b5"
+            : "#b8d9c0",
+
+        borderRadius:
+          8,
+
+        background:
+          type ===
+          "error"
+            ? "#fff4f4"
+            : "#f2faf4",
+
+        color:
+          type ===
+          "error"
+            ? "#9b1c1c"
+            : "#25633a",
+
+        lineHeight:
+          1.6,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+/* =========================================================
+   Styles
+   ========================================================= */
+
+const pageStyle:
+  React.CSSProperties = {
+    minHeight:
+      "100vh",
+
+    padding:
+      32,
+
+    background:
+      "#f5f6f8",
+  };
+
+const cardStyle:
+  React.CSSProperties = {
+    padding:
+      24,
+
+    background:
+      "#fff",
+
+    border:
+      "1px solid #e1e4e8",
+
+    borderRadius:
+      12,
+  };
+
+const inputStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    width:
+      "100%",
+
+    marginTop:
+      7,
+
+    padding:
+      "11px 12px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      7,
+
+    background:
+      "#fff",
+  };
+
+const primaryButton:
+  React.CSSProperties = {
+    padding:
+      "11px 22px",
+
+    border:
+      "none",
+
+    borderRadius:
+      7,
+
+    background:
+      "#111",
+
+    color:
+      "#fff",
+
+    fontWeight:
+      600,
+
+    cursor:
+      "pointer",
+  };
+
+const secondaryButton:
+  React.CSSProperties = {
+    padding:
+      "10px 16px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      7,
+
+    background:
+      "#fff",
+
+    cursor:
+      "pointer",
+  };
+
+const smallButton:
+  React.CSSProperties = {
+    padding:
+      "7px 10px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      6,
+
+    background:
+      "#fff",
+
+    cursor:
+      "pointer",
+  };
+
+const smallLink:
+  React.CSSProperties = {
+    display:
+      "inline-flex",
+
+    alignItems:
+      "center",
+
+    padding:
+      "7px 10px",
+
+    border:
+      "1px solid #ccc",
+
+    borderRadius:
+      6,
+
+    background:
+      "#fff",
+
+    color:
+      "#333",
+
+    textDecoration:
+      "none",
+
+    fontSize:
+      13,
+  };
+
+const dangerButton:
+  React.CSSProperties = {
+    padding:
+      "7px 10px",
+
+    border:
+      "1px solid #d99",
+
+    borderRadius:
+      6,
+
+    background:
+      "#fff",
+
+    color:
+      "#a00000",
+
+    cursor:
+      "pointer",
+  };
+
+const tableStyle:
+  React.CSSProperties = {
+    width:
+      "100%",
+
+    borderCollapse:
+      "collapse",
+  };
+
+const thStyle:
+  React.CSSProperties = {
+    padding:
+      "11px 12px",
+
+    textAlign:
+      "left",
+
+    borderBottom:
+      "2px solid #ddd",
+
+    whiteSpace:
+      "nowrap",
+  };
+
+const tdStyle:
+  React.CSSProperties = {
+    padding:
+      "12px",
+
+    borderBottom:
+      "1px solid #eee",
+
+    fontSize:
+      14,
+
+    whiteSpace:
+      "nowrap",
+  };
