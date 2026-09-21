@@ -1,8 +1,10 @@
+
 "use client";
 
 import {
   ReactNode,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -30,27 +32,41 @@ import {
 
 import type {
   UserRole,
-} from "@/lib/types";
+} from "@/types";
+
+/* =========================================================
+   Types
+   ========================================================= */
+
+type AppUser = {
+  uid: string;
+
+  role: UserRole | null;
+
+  organizationId:
+    | string
+    | null;
+
+  schoolIds: string[];
+
+  studentId:
+    | string
+    | null;
+};
 
 type AppShellProps = {
   children: ReactNode;
 };
 
-type AppUser = {
-  uid: string;
-  role: UserRole | null;
-  organizationId: string | null;
-  schoolIds: string[];
-  studentId: string | null;
-};
-
 type MenuItem = {
   label: string;
+
   href: string;
 };
 
 type MenuSection = {
   label: string;
+
   items: MenuItem[];
 };
 
@@ -61,6 +77,7 @@ type MenuSection = {
 const HEAD_OFFICE_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -71,11 +88,13 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "生徒・テスト",
+
     items: [
       {
         label: "生徒管理",
         href: "/students",
       },
+
       {
         label: "テスト管理",
         href: "/tests",
@@ -85,23 +104,28 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/answers",
       },
+
       {
         label: "採点管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
       },
+
       {
         label: "採点確定",
         href: "/grading/confirm",
@@ -111,15 +135,18 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/results",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -129,6 +156,7 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -139,19 +167,18 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "本部管理",
+
     items: [
       {
         label: "校舎管理",
         href: "/schools",
       },
+
       {
-        label: "講師・ユーザー管理",
+        label: "ユーザー管理",
         href: "/users",
       },
-      {
-        label: "利用状況",
-        href: "/dashboard",
-      },
+
       {
         label: "システム設定",
         href: "/settings",
@@ -167,6 +194,7 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 const SCHOOL_ADMIN_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -177,11 +205,13 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "生徒・テスト",
+
     items: [
       {
         label: "生徒管理",
         href: "/students",
       },
+
       {
         label: "テスト管理",
         href: "/tests",
@@ -191,23 +221,28 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/answers",
       },
+
       {
         label: "採点管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
       },
+
       {
         label: "採点確定",
         href: "/grading/confirm",
@@ -217,15 +252,18 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/results",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -235,6 +273,7 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -245,13 +284,15 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "校舎運用",
+
     items: [
       {
         label: "ユーザー管理",
         href: "/users",
       },
+
       {
-        label: "校舎設定",
+        label: "設定",
         href: "/settings",
       },
     ],
@@ -265,6 +306,7 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 const TEACHER_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -275,6 +317,7 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "授業・テスト",
+
     items: [
       {
         label: "テスト",
@@ -285,23 +328,28 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/answers",
       },
+
       {
         label: "採点管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
       },
+
       {
         label: "採点確定",
         href: "/grading/confirm",
@@ -311,15 +359,18 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/results",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -329,6 +380,7 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -345,6 +397,7 @@ const TEACHER_MENU: MenuSection[] = [
 const STUDENT_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -355,11 +408,13 @@ const STUDENT_MENU: MenuSection[] = [
 
   {
     label: "学習",
+
     items: [
       {
         label: "成績",
         href: "/results",
       },
+
       {
         label: "成績表",
         href: "/reports",
@@ -375,11 +430,11 @@ const STUDENT_MENU: MenuSection[] = [
 export default function AppShell({
   children,
 }: AppShellProps) {
-  const router =
-    useRouter();
-
   const pathname =
     usePathname();
+
+  const router =
+    useRouter();
 
   const [
     user,
@@ -396,8 +451,8 @@ export default function AppShell({
     useState(true);
 
   const [
-    error,
-    setError,
+    authError,
+    setAuthError,
   ] =
     useState("");
 
@@ -408,10 +463,13 @@ export default function AppShell({
     useState(false);
 
   /* =======================================================
-     Authentication
+     Firebase Authentication
      ======================================================= */
 
   useEffect(() => {
+    let disposed =
+      false;
+
     const unsubscribe =
       onAuthStateChanged(
         auth,
@@ -419,10 +477,22 @@ export default function AppShell({
           firebaseUser
         ) => {
           if (
+            disposed
+          ) {
+            return;
+          }
+
+          if (
             !firebaseUser
           ) {
-            setUser(null);
-            setLoading(false);
+            setUser(
+              null
+            );
+
+            setLoading(
+              false
+            );
+
             return;
           }
 
@@ -437,15 +507,25 @@ export default function AppShell({
               );
 
             if (
+              disposed
+            ) {
+              return;
+            }
+
+            if (
               !snapshot.exists()
             ) {
-              setUser(null);
+              setUser(
+                null
+              );
 
-              setError(
+              setAuthError(
                 "ユーザー情報が登録されていません。"
               );
 
-              setLoading(false);
+              setLoading(
+                false
+              );
 
               return;
             }
@@ -463,10 +543,9 @@ export default function AppShell({
                 ),
 
               organizationId:
-                typeof data.organizationId ===
-                "string"
-                  ? data.organizationId
-                  : null,
+                stringOrNull(
+                  data.organizationId
+                ),
 
               schoolIds:
                 Array.isArray(
@@ -482,45 +561,66 @@ export default function AppShell({
                   : [],
 
               studentId:
-                typeof data.studentId ===
-                "string"
-                  ? data.studentId
-                  : null,
+                stringOrNull(
+                  data.studentId
+                ),
             });
 
-            setError("");
+            setAuthError("");
           } catch (
             error
           ) {
             console.error(
+              "Authentication error:",
               error
             );
 
-            setUser(null);
+            if (
+              disposed
+            ) {
+              return;
+            }
 
-            setError(
+            setUser(
+              null
+            );
+
+            setAuthError(
               "ユーザー情報を取得できませんでした。"
             );
           } finally {
-            setLoading(false);
+            if (
+              !disposed
+            ) {
+              setLoading(
+                false
+              );
+            }
           }
         }
       );
 
     return () => {
+      disposed =
+        true;
+
       unsubscribe();
     };
   }, []);
 
   /* =======================================================
-     Login page
+     Public routes
      ======================================================= */
 
-  if (
-    pathname === "/login" ||
+  const isLoginPage =
+    pathname ===
+      "/login" ||
     pathname.startsWith(
       "/login/"
-    )
+    );
+
+  if (
+    isLoginPage
   ) {
     return (
       <>
@@ -538,14 +638,14 @@ export default function AppShell({
   ) {
     return (
       <div className="ts-loading">
-        <div>
+        <div className="ts-loading-inner">
           <div className="ts-brand">
-            Tsystem
+            テストシステム
           </div>
 
-          <p className="ts-loading-text">
-            読み込み中...
-          </p>
+          <div className="ts-loading-text">
+            認証情報を確認しています...
+          </div>
         </div>
       </div>
     );
@@ -560,9 +660,9 @@ export default function AppShell({
   ) {
     return (
       <div className="ts-center">
-        <div className="ts-error-card">
+        <section className="ts-error-card">
           <div className="ts-brand">
-            Tsystem
+            テストシステム
           </div>
 
           <h1>
@@ -570,7 +670,7 @@ export default function AppShell({
           </h1>
 
           <p>
-            {error ||
+            {authError ||
               "この画面を利用するにはログインしてください。"}
           </p>
 
@@ -578,20 +678,20 @@ export default function AppShell({
             type="button"
             className="ts-primary"
             onClick={() =>
-              router.push(
+              router.replace(
                 "/login"
               )
             }
           >
             ログイン画面へ
           </button>
-        </div>
+        </section>
       </div>
     );
   }
 
   /* =======================================================
-     Role missing
+     Invalid role
      ======================================================= */
 
   if (
@@ -599,30 +699,36 @@ export default function AppShell({
   ) {
     return (
       <div className="ts-center">
-        <div className="ts-error-card">
+        <section className="ts-error-card">
           <div className="ts-brand">
-            Tsystem
+            テストシステム
           </div>
 
           <h1>
-            権限がありません
+            権限が設定されていません
           </h1>
 
           <p>
-            管理者に権限設定を確認してください。
+            管理者にアカウントの権限設定を確認してください。
           </p>
-        </div>
+        </section>
       </div>
     );
   }
 
   /* =======================================================
-     Menu
+     Role menu
      ======================================================= */
 
   const menu =
-    getMenuForRole(
-      user.role
+    useMemo(
+      () =>
+        getMenuForRole(
+          user.role
+        ),
+      [
+        user.role,
+      ]
     );
 
   /* =======================================================
@@ -637,7 +743,9 @@ export default function AppShell({
     }
 
     try {
-      setLoggingOut(true);
+      setLoggingOut(
+        true
+      );
 
       await signOut(
         auth
@@ -650,14 +758,17 @@ export default function AppShell({
       error
     ) {
       console.error(
+        "Logout error:",
         error
       );
 
-      setError(
+      setAuthError(
         "ログアウトできませんでした。"
       );
 
-      setLoggingOut(false);
+      setLoggingOut(
+        false
+      );
     }
   }
 
@@ -668,13 +779,24 @@ export default function AppShell({
   return (
     <div className="ts-shell">
       <aside className="ts-sidebar">
+
+        {/* Logo */}
+
         <div className="ts-logo">
-          <Link href="/dashboard">
-            Tsystem
+          <Link
+            href="/dashboard"
+            className="ts-logo-link"
+          >
+            テストシステム
           </Link>
         </div>
 
-        <nav className="ts-menu">
+        {/* Menu */}
+
+        <nav
+          className="ts-menu"
+          aria-label="メインメニュー"
+        >
           {menu.map(
             (
               section
@@ -727,6 +849,8 @@ export default function AppShell({
           )}
         </nav>
 
+        {/* Footer */}
+
         <div className="ts-sidebar-bottom">
           <button
             type="button"
@@ -765,10 +889,12 @@ function normalizeRole(
     case "本部管理者":
     case "hq":
     case "head_office":
+    case "headOfficeAdmin":
       return "本部管理者";
 
     case "校舎管理者":
     case "school_admin":
+    case "schoolAdmin":
       return "校舎管理者";
 
     case "講師":
@@ -786,7 +912,7 @@ function normalizeRole(
 
 function getMenuForRole(
   role: UserRole
-) {
+): MenuSection[] {
   switch (
     role
   ) {
@@ -811,10 +937,30 @@ function isActivePath(
   pathname: string,
   href: string
 ) {
+  if (
+    href ===
+    "/dashboard"
+  ) {
+    return (
+      pathname ===
+      "/dashboard"
+    );
+  }
+
   return (
-    pathname === href ||
+    pathname ===
+      href ||
     pathname.startsWith(
       `${href}/`
     )
   );
+}
+
+function stringOrNull(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : null;
 }
