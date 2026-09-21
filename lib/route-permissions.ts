@@ -1,9 +1,6 @@
 import {
   getPermissions,
-} from "@/lib/permissions";
-
-import type {
-  Permission,
+  type Permission,
 } from "@/lib/permissions";
 
 import type {
@@ -12,6 +9,7 @@ import type {
 
 type RoutePermission = {
   path: string;
+
   permission: Permission;
 };
 
@@ -63,6 +61,12 @@ export const ROUTE_PERMISSIONS: RoutePermission[] =
       path: "/report-cards",
       permission:
         "reportCards.view",
+    },
+
+    {
+      path: "/learning",
+      permission:
+        "learning.view",
     },
 
     {
@@ -126,9 +130,7 @@ export function getRoutePermission(
         route.path
     );
 
-  if (
-    exact
-  ) {
+  if (exact) {
     return exact.permission;
   }
 
@@ -169,15 +171,11 @@ export function canAccessRoute(
       pathname
     );
 
-  if (
-    !permission
-  ) {
+  if (!permission) {
     return true;
   }
 
-  if (
-    !role
-  ) {
+  if (!role) {
     return false;
   }
 
