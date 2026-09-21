@@ -71,13 +71,13 @@ export function isUserRole(
 }
 
 /* =========================================================
-   Current app user
+   Get Tsystem user
    ========================================================= */
 
 export async function getCurrentUserProfile(
-  user: User | null
+  firebaseUser: User | null
 ): Promise<UserProfile | null> {
-  if (!user) {
+  if (!firebaseUser) {
     return null;
   }
 
@@ -87,7 +87,7 @@ export async function getCurrentUserProfile(
         doc(
           db,
           "users",
-          user.uid
+          firebaseUser.uid
         )
       );
 
@@ -102,7 +102,7 @@ export async function getCurrentUserProfile(
 
     return {
       uid:
-        user.uid,
+        firebaseUser.uid,
 
       organizationId:
         typeof data.organizationId ===
@@ -141,7 +141,10 @@ export async function getCurrentUserProfile(
           : "",
 
       email:
-        user.email,
+        typeof data.email ===
+        "string"
+          ? data.email
+          : firebaseUser.email,
 
       active:
         data.active !==
@@ -151,7 +154,7 @@ export async function getCurrentUserProfile(
     error
   ) {
     console.error(
-      "Tsystem user profile error:",
+      "getCurrentUserProfile error:",
       error
     );
 
@@ -160,14 +163,29 @@ export async function getCurrentUserProfile(
 }
 
 /* =========================================================
-   Alias
+   getAppUser
    =========================================================
-   既存ページとの互換用
+   引数あり・なし両対応。
+   
+   getAppUser()
+   getAppUser(firebaseUser)
+   
+   どちらでも使える。
    ========================================================= */
 
-export async function getAppUser() {
+export async function getAppUser(
+  firebaseUser?: User | null
+) {
+  const user =
+    firebaseUser ??
+    auth.currentUser;
+
+  if (!user) {
+    return null;
+  }
+
   return getCurrentUserProfile(
-    auth.currentUser
+    user
   );
 }
 
@@ -184,34 +202,96 @@ export async function login(
       .trim()
       .toLowerCase();
 
-  const credential =
-    await signInWithEmailAndPassword(
-      auth,
-      normalizedEmail,
-      password
-    );
-
-  const profile =
-    await getCurrentUserProfile(
-      credential.user
-    );
-
   if (
-    !profile ||
-    !profile.active ||
-    !profile.role ||
-    !profile.organizationId
+    !normalizedEmail
   ) {
-    await signOut(
-      auth
-    );
-
     throw new Error(
-      "このアカウントはTsystemで利用できません。"
+      "メールアドレスを入力してください。"
     );
   }
 
-  return profile;
+  if (
+    !password
+  ) {
+    throw new Error(
+      "パスワードを入力してください。"
+    );
+  }
+
+  try {
+    const credential =
+      await signInWithEmailAndPassword(
+        auth,
+        normalizedEmail,
+        password
+      );
+
+    const profile =
+      await getCurrentUserProfile(
+        credential.user
+      );
+
+    if (
+      !profile
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "Tsystemのユーザー情報が登録されていません。"
+      );
+    }
+
+    if (
+      !profile.active
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "このアカウントは現在利用できません。"
+      );
+    }
+
+    if (
+      !profile.organizationId
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "所属組織が設定されていません。"
+      );
+    }
+
+    if (
+      !profile.role
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "権限が設定されていません。"
+      );
+    }
+
+    return profile;
+  } catch (
+    error
+  ) {
+    console.error(
+      "Email login error:",
+      error
+    );
+
+    throw normalizeAuthError(
+      error
+    );
+  }
 }
 
 /* =========================================================
@@ -227,75 +307,93 @@ export async function loginWithGoogle() {
       "select_account",
   });
 
-  const credential =
-    await signInWithPopup(
-      auth,
-      provider
-    );
+  try {
+    const credential =
+      await signInWithPopup(
+        auth,
+        provider
+      );
 
-  const profile =
-    await getCurrentUserProfile(
-      credential.user
-    );
+    const profile =
+      await getCurrentUserProfile(
+        credential.user
+      );
 
-  if (
-    !profile ||
-    !profile.active ||
-    !profile.role ||
-    !profile.organizationId
+    if (
+      !profile
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "このGoogleアカウントはTsystemに登録されていません。"
+      );
+    }
+
+    if (
+      !profile.active
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "このアカウントは現在利用できません。"
+      );
+    }
+
+    if (
+      !profile.organizationId
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "所属組織が設定されていません。"
+      );
+    }
+
+    if (
+      !profile.role
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw new Error(
+        "権限が設定されていません。"
+      );
+    }
+
+    return profile;
+  } catch (
+    error
   ) {
-    await signOut(
-      auth
+    console.error(
+      "Google login error:",
+      error
     );
 
-    throw new Error(
-      "このGoogleアカウントはTsystemに登録されていません。"
+    throw normalizeAuthError(
+      error
     );
   }
-
-  return profile;
 }
 
 /* =========================================================
    Logout
    ========================================================= */
 
-export function logout() {
-  return signOut(
+export async function logout() {
+  await signOut(
     auth
   );
 }
 
 /* =========================================================
-   Auth subscription
-   ========================================================= */
-
-export function subscribeAuth(
-  callback: (
-    user: User | null,
-    profile: UserProfile | null
-  ) => void
-) {
-  return onAuthStateChanged(
-    auth,
-    async (
-      user
-    ) => {
-      const profile =
-        await getCurrentUserProfile(
-          user
-        );
-
-      callback(
-        user,
-        profile
-      );
-    }
-  );
-}
-
-/* =========================================================
-   Current Firebase user
+   Firebase current user
    ========================================================= */
 
 export function getFirebaseCurrentUser() {
@@ -303,11 +401,85 @@ export function getFirebaseCurrentUser() {
 }
 
 /* =========================================================
+   Auth state
+   ========================================================= */
+
+export function subscribeAuth(
+  callback: (
+    firebaseUser: User | null,
+    appUser: UserProfile | null
+  ) => void,
+  onError?: (
+    error: unknown
+  ) => void
+) {
+  let disposed =
+    false;
+
+  const unsubscribe =
+    onAuthStateChanged(
+      auth,
+      async (
+        firebaseUser
+      ) => {
+        if (
+          disposed
+        ) {
+          return;
+        }
+
+        try {
+          const appUser =
+            await getAppUser(
+              firebaseUser
+            );
+
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          callback(
+            firebaseUser,
+            appUser
+          );
+        } catch (
+          error
+        ) {
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          if (
+            onError
+          ) {
+            onError(
+              error
+            );
+          }
+        }
+      }
+    );
+
+  return () => {
+    disposed =
+      true;
+
+    unsubscribe();
+  };
+}
+
+/* =========================================================
    Role helpers
    ========================================================= */
 
 export function isHeadOfficeAdmin(
-  user: UserProfile | null
+  user:
+    | UserProfile
+    | null
 ) {
   return (
     user?.role ===
@@ -316,7 +488,9 @@ export function isHeadOfficeAdmin(
 }
 
 export function isSchoolAdmin(
-  user: UserProfile | null
+  user:
+    | UserProfile
+    | null
 ) {
   return (
     user?.role ===
@@ -325,7 +499,9 @@ export function isSchoolAdmin(
 }
 
 export function isTeacher(
-  user: UserProfile | null
+  user:
+    | UserProfile
+    | null
 ) {
   return (
     user?.role ===
@@ -334,11 +510,42 @@ export function isTeacher(
 }
 
 export function isStudent(
-  user: UserProfile | null
+  user:
+    | UserProfile
+    | null
 ) {
   return (
     user?.role ===
     "生徒"
+  );
+}
+
+export function isStaff(
+  user:
+    | UserProfile
+    | null
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Organization
+   ========================================================= */
+
+export function hasOrganization(
+  user:
+    | UserProfile
+    | null
+) {
+  return Boolean(
+    user?.organizationId
   );
 }
 
@@ -347,7 +554,9 @@ export function isStudent(
    ========================================================= */
 
 export function canAccessSchool(
-  user: UserProfile | null,
+  user:
+    | UserProfile
+    | null,
   schoolId: string
 ) {
   if (
@@ -374,7 +583,9 @@ export function canAccessSchool(
    ========================================================= */
 
 export function canAccessStudent(
-  user: UserProfile | null,
+  user:
+    | UserProfile
+    | null,
   studentId: string,
   schoolId?: string
 ) {
@@ -385,6 +596,9 @@ export function canAccessStudent(
     return false;
   }
 
+  /*
+   * 本部管理者
+   */
   if (
     user.role ===
     "本部管理者"
@@ -392,20 +606,29 @@ export function canAccessStudent(
     return true;
   }
 
+  /*
+   * 校舎管理者・講師
+   */
   if (
     user.role ===
       "校舎管理者" ||
     user.role ===
       "講師"
   ) {
-    return (
-      !!schoolId &&
-      user.schoolIds.includes(
-        schoolId
-      )
+    if (
+      !schoolId
+    ) {
+      return false;
+    }
+
+    return user.schoolIds.includes(
+      schoolId
     );
   }
 
+  /*
+   * 生徒
+   */
   if (
     user.role ===
     "生徒"
@@ -417,4 +640,82 @@ export function canAccessStudent(
   }
 
   return false;
+}
+
+/* =========================================================
+   Own student
+   ========================================================= */
+
+export function isOwnStudent(
+  user:
+    | UserProfile
+    | null,
+  studentId: string
+) {
+  return (
+    user?.role ===
+      "生徒" &&
+    user.studentId ===
+      studentId
+  );
+}
+
+/* =========================================================
+   Auth error normalization
+   ========================================================= */
+
+function normalizeAuthError(
+  error: unknown
+) {
+  if (
+    error instanceof Error
+  ) {
+    return error;
+  }
+
+  const firebaseError =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    firebaseError?.code
+  ) {
+    case "auth/invalid-email":
+      return new Error(
+        "メールアドレスの形式が正しくありません。"
+      );
+
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+      return new Error(
+        "メールアドレスまたはパスワードが正しくありません。"
+      );
+
+    case "auth/user-disabled":
+      return new Error(
+        "このアカウントは利用停止されています。"
+      );
+
+    case "auth/too-many-requests":
+      return new Error(
+        "ログイン試行が多すぎます。しばらくしてから再度お試しください。"
+      );
+
+    case "auth/network-request-failed":
+      return new Error(
+        "ネットワークに接続できませんでした。"
+      );
+
+    case "auth/popup-closed-by-user":
+      return new Error(
+        "Googleログインがキャンセルされました。"
+      );
+
+    default:
+      return new Error(
+        "ログインできませんでした。"
+      );
+  }
 }
