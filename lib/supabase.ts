@@ -5,10 +5,6 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
-/* =========================================================
-   Supabase設定
-   ========================================================= */
-
 const supabaseUrl =
   process.env
     .NEXT_PUBLIC_SUPABASE_URL;
@@ -17,29 +13,17 @@ const supabasePublishableKey =
   process.env
     .NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-/* =========================================================
-   設定チェック
-   ========================================================= */
-
-if (
-  typeof window !== "undefined" &&
-  (!supabaseUrl ||
-    !supabasePublishableKey)
-) {
-  console.error(
-    "Supabaseの環境変数が設定されていません。"
-  );
-}
-
-/* =========================================================
-   Client
-   ========================================================= */
-
 let client:
   | SupabaseClient
   | null = null;
 
-export function getSupabase(): SupabaseClient {
+export const ANSWERS_BUCKET =
+  "answers";
+
+export const SCHOOL_ASSETS_BUCKET =
+  "school-assets";
+
+export function getSupabase() {
   if (client) {
     return client;
   }
@@ -49,7 +33,7 @@ export function getSupabase(): SupabaseClient {
     !supabasePublishableKey
   ) {
     throw new Error(
-      "Supabaseの接続設定がありません。"
+      "Supabaseの環境変数が設定されていません。"
     );
   }
 
@@ -59,9 +43,14 @@ export function getSupabase(): SupabaseClient {
       supabasePublishableKey,
       {
         auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
+          persistSession:
+            false,
+
+          autoRefreshToken:
+            false,
+
+          detectSessionInUrl:
+            false,
         },
       }
     );
@@ -69,18 +58,135 @@ export function getSupabase(): SupabaseClient {
   return client;
 }
 
-export const supabase =
-  typeof window !==
-    "undefined"
-    ? getSupabase()
-    : null;
-
 /* =========================================================
-   Storage Buckets
+   Answer path
    ========================================================= */
 
-export const ANSWERS_BUCKET =
-  "answers";
+export function createAnswerStoragePath(
+  organizationId: string,
+  testId: string,
+  subjectId: string,
+  answerId: string,
+  extension: string
+) {
+  const safeExtension =
+    extension
+      .replace(
+        /[^a-zA-Z0-9]/g,
+        ""
+      )
+      .toLowerCase();
 
-export const SCHOOL_ASSETS_BUCKET =
-  "school-assets";
+  return [
+    organizationId,
+    testId,
+    subjectId,
+    `${answerId}.${safeExtension}`,
+  ].join("/");
+}
+
+/* =========================================================
+   Upload
+   ========================================================= */
+
+export async function uploadAnswerImage(
+  file: File,
+  storagePath: string
+) {
+  const supabase =
+    getSupabase();
+
+  const result =
+    await supabase.storage
+      .from(
+        ANSWERS_BUCKET
+      )
+      .upload(
+        storagePath,
+        file,
+        {
+          contentType:
+            file.type ||
+            "application/octet-stream",
+
+          upsert:
+            false,
+
+          cacheControl:
+            "3600",
+        }
+      );
+
+  if (
+    result.error
+  ) {
+    throw new Error(
+      `答案画像の保存に失敗しました: ${result.error.message}`
+    );
+  }
+
+  return result.data;
+}
+
+/* =========================================================
+   Delete
+   ========================================================= */
+
+export async function deleteAnswerImage(
+  storagePath: string
+) {
+  const supabase =
+    getSupabase();
+
+  const result =
+    await supabase.storage
+      .from(
+        ANSWERS_BUCKET
+      )
+      .remove([
+        storagePath,
+      ]);
+
+  if (
+    result.error
+  ) {
+    throw new Error(
+      `答案画像の削除に失敗しました: ${result.error.message}`
+    );
+  }
+
+  return result.data;
+}
+
+/* =========================================================
+   Signed URL
+   ========================================================= */
+
+export async function createAnswerSignedUrl(
+  storagePath: string,
+  expiresIn = 3600
+) {
+  const supabase =
+    getSupabase();
+
+  const result =
+    await supabase.storage
+      .from(
+        ANSWERS_BUCKET
+      )
+      .createSignedUrl(
+        storagePath,
+        expiresIn
+      );
+
+  if (
+    result.error
+  ) {
+    throw new Error(
+      `答案画像URLの生成に失敗しました: ${result.error.message}`
+    );
+  }
+
+  return result.data
+    .signedUrl;
+}
