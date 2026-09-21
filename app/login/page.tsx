@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useState,
 } from "react";
 
@@ -10,6 +11,7 @@ import {
 
 import {
   loginWithGoogle,
+  getAppUser,
 } from "@/lib/auth";
 
 export default function LoginPage() {
@@ -19,65 +21,160 @@ export default function LoginPage() {
   const [
     loading,
     setLoading,
-  ] =
-    useState(false);
+  ] = useState(true);
+
+  const [
+    loggingIn,
+    setLoggingIn,
+  ] = useState(false);
 
   const [
     error,
     setError,
-  ] =
-    useState("");
+  ] = useState("");
+
+  /* =======================================================
+     すでにログイン済みなら
+     ログイン画面を表示しない
+     ======================================================= */
+
+  useEffect(() => {
+    let disposed =
+      false;
+
+    async function checkSession() {
+      try {
+        const user =
+          await getAppUser();
+
+        if (
+          disposed
+        ) {
+          return;
+        }
+
+        if (
+          user
+        ) {
+          router.replace(
+            getDashboardPath(
+              user.role
+            )
+          );
+
+          return;
+        }
+      } catch (
+        error
+      ) {
+        console.error(
+          "Login session check error:",
+          error
+        );
+      } finally {
+        if (
+          !disposed
+        ) {
+          setLoading(
+            false
+          );
+        }
+      }
+    }
+
+    void checkSession();
+
+    return () => {
+      disposed =
+        true;
+    };
+  }, [
+    router,
+  ]);
+
+  /* =======================================================
+     Google Login
+     ======================================================= */
 
   async function handleGoogleLogin() {
     if (
-      loading
+      loggingIn
     ) {
       return;
     }
 
     try {
-      setLoading(true);
+      setLoggingIn(
+        true
+      );
+
       setError("");
 
-      await loginWithGoogle();
+      const user =
+        await loginWithGoogle();
 
       router.replace(
-        "/dashboard"
+        getDashboardPath(
+          user.role
+        )
       );
     } catch (
       error
     ) {
       console.error(
+        "Google login error:",
         error
       );
 
       setError(
-        getErrorMessage(
+        getLoginErrorMessage(
           error
         )
       );
 
-      setLoading(false);
+      setLoggingIn(
+        false
+      );
     }
   }
+
+  /* =======================================================
+     Session checking
+     ======================================================= */
+
+  if (
+    loading
+  ) {
+    return (
+      <main className="loginPage">
+        <section className="loginCard">
+          <div
+            className="loginSystemName"
+          >
+            テストシステム
+          </div>
+
+          <div
+            className="loginLoading"
+          >
+            ログイン状態を確認しています...
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  /* =======================================================
+     Login
+     ======================================================= */
 
   return (
     <main className="loginPage">
       <section className="loginCard">
+
         <div className="loginHeader">
-          <div
-            style={{
-              fontSize:
-                32,
-
-              fontWeight:
-                800,
-
-              marginBottom:
-                20,
-            }}
-          >
-            Tsystem
+          <div className="loginSystemName">
+            テストシステム
           </div>
 
           <h1>
@@ -95,21 +192,24 @@ export default function LoginPage() {
           type="button"
           className="googleLoginButton"
           disabled={
-            loading
+            loggingIn
           }
           onClick={
             handleGoogleLogin
           }
+          aria-busy={
+            loggingIn
+          }
         >
           <img
             src="/google-logo.svg"
-            alt="Google"
+            alt=""
             width={20}
             height={20}
           />
 
           <span>
-            {loading
+            {loggingIn
               ? "ログインしています..."
               : "Googleでログイン"}
           </span>
@@ -129,19 +229,90 @@ export default function LoginPage() {
         <p className="loginNotice">
           登録済みユーザーのみ利用できます。
         </p>
+
       </section>
     </main>
   );
 }
 
-function getErrorMessage(
-  error: unknown
+/* =========================================================
+   Dashboard by role
+   ========================================================= */
+
+function getDashboardPath(
+  role:
+    | string
+    | null
 ) {
+  switch (
+    role
+  ) {
+    case "本部管理者":
+      return "/dashboard/head-office";
+
+    case "校舎管理者":
+      return "/dashboard/school";
+
+    case "講師":
+      return "/dashboard/teacher";
+
+    case "生徒":
+      return "/dashboard/student";
+
+    default:
+      return "/dashboard";
+  }
+}
+
+/* =========================================================
+   Login error
+   ========================================================= */
+
+function getLoginErrorMessage(
+  error: unknown
+): string {
   if (
     error instanceof Error
   ) {
     return error.message;
   }
 
-  return "ログインできませんでした。";
+  if (
+    error &&
+    typeof error ===
+      "object"
+  ) {
+    const value =
+      error as {
+        code?: string;
+        message?: string;
+      };
+
+    switch (
+      value.code
+    ) {
+      case "auth/popup-closed-by-user":
+        return "Googleログインをキャンセルしました。";
+
+      case "auth/popup-blocked":
+        return "Googleログイン画面がブロックされました。ポップアップを許可してください。";
+
+      case "auth/unauthorized-domain":
+        return "現在のサイトがFirebase Authenticationの承認済みドメインに登録されていません。";
+
+      case "auth/operation-not-allowed":
+        return "FirebaseでGoogleログインが有効になっていません。";
+
+      case "auth/network-request-failed":
+        return "ネットワーク通信に失敗しました。";
+
+      default:
+        return (
+          value.message ??
+          "Googleログインに失敗しました。"
+        );
+    }
+  }
+
+  return "Googleログインに失敗しました。";
 }
