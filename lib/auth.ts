@@ -56,9 +56,12 @@ export type AppUser = {
 
 /* =========================================================
    Googleログイン
+   =========================================================
+   ここではFirestoreを読まない。
+   Firebase Authenticationの成功だけを確認する。
    ========================================================= */
 
-export async function loginWithGoogle(): Promise<AppUser> {
+export async function loginWithGoogle(): Promise<User> {
   await setPersistence(
     auth,
     browserLocalPersistence
@@ -77,40 +80,30 @@ export async function loginWithGoogle(): Promise<AppUser> {
       provider
     );
 
-  /*
-   * Google Authentication自体は
-   * 成功している。
-   *
-   * ここでは勝手にsignOutしない。
-   */
-  return getAppUser(
-    result.user
-  );
+  return result.user;
 }
 
 /* =========================================================
    ログアウト
    ========================================================= */
 
-export async function logout() {
+export async function logout(): Promise<void> {
   await signOut(auth);
 }
 
 /* =========================================================
-   Firebase User取得
+   Firebase Authenticationユーザー
    ========================================================= */
 
-export function getFirebaseUser():
-  User | null {
+export function getFirebaseUser(): User | null {
   return auth.currentUser;
 }
 
 /* =========================================================
-   現在のユーザー
+   現在のアプリユーザー
    ========================================================= */
 
-export async function getCurrentUser():
-  Promise<AppUser | null> {
+export async function getCurrentUser(): Promise<AppUser | null> {
   const firebaseUser =
     auth.currentUser;
 
@@ -143,13 +136,10 @@ export async function getAppUser(
     );
 
   /*
-   * Firestoreにユーザーが存在しない。
+   * Firebase Authenticationには存在するが、
+   * Firestore users/{uid}にはまだ存在しない。
    *
-   * Google Authenticationには
-   * 正常にログインしている。
-   *
-   * ここでFirebaseからログアウト
-   * させない。
+   * この場合もFirebaseからはログアウトしない。
    */
   if (
     !snapshot.exists()
@@ -226,12 +216,93 @@ export async function getAppUser(
         ? data.studentNumber
         : undefined,
 
-    /*
-     * active=falseでも
-     * signOutしない。
-     */
     active:
       data.active !== false,
+
+    photoURL:
+      firebaseUser.photoURL,
+  };
+}
+
+/* =========================================================
+   Googleログイン後のユーザープロフィール確認
+   ========================================================= */
+
+export async function ensureUserProfile(
+  firebaseUser: User
+): Promise<AppUser> {
+  const userRef =
+    doc(
+      db,
+      "users",
+      firebaseUser.uid
+    );
+
+  const snapshot =
+    await getDoc(
+      userRef
+    );
+
+  if (
+    snapshot.exists()
+  ) {
+    return getAppUser(
+      firebaseUser
+    );
+  }
+
+  /*
+   * 初回Googleログイン。
+   *
+   * 自動的に本部管理者にはしない。
+   * 権限なし・停止状態でプロフィールだけ作る。
+   */
+  await setDoc(
+    userRef,
+    {
+      name:
+        firebaseUser.displayName ??
+        "",
+
+      email:
+        firebaseUser.email,
+
+      role:
+        null,
+
+      schoolIds:
+        [],
+
+      active:
+        false,
+
+      createdAt:
+        serverTimestamp(),
+
+      updatedAt:
+        serverTimestamp(),
+    }
+  );
+
+  return {
+    uid:
+      firebaseUser.uid,
+
+    email:
+      firebaseUser.email,
+
+    name:
+      firebaseUser.displayName ??
+      "",
+
+    role:
+      null,
+
+    schoolIds:
+      [],
+
+    active:
+      false,
 
     photoURL:
       firebaseUser.photoURL,
@@ -291,90 +362,6 @@ export function observeAuth(
 }
 
 /* =========================================================
-   初回Googleユーザー登録
-   ========================================================= */
-
-export async function ensureUserProfile(
-  firebaseUser: User
-): Promise<AppUser> {
-  const userRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid
-    );
-
-  const snapshot =
-    await getDoc(
-      userRef
-    );
-
-  if (
-    snapshot.exists()
-  ) {
-    return getAppUser(
-      firebaseUser
-    );
-  }
-
-  /*
-   * 初回ログインしたGoogleアカウント。
-   *
-   * 自動で管理者権限は与えない。
-   */
-  await setDoc(
-    userRef,
-    {
-      name:
-        firebaseUser.displayName ??
-        "",
-
-      email:
-        firebaseUser.email,
-
-      role:
-        null,
-
-      schoolIds:
-        [],
-
-      active:
-        false,
-
-      createdAt:
-        serverTimestamp(),
-
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
-
-  return {
-    uid:
-      firebaseUser.uid,
-
-    email:
-      firebaseUser.email,
-
-    name:
-      firebaseUser.displayName ??
-      "",
-
-    role:
-      null,
-
-    schoolIds:
-      [],
-
-    active:
-      false,
-
-    photoURL:
-      firebaseUser.photoURL,
-  };
-}
-
-/* =========================================================
    権限確認
    ========================================================= */
 
@@ -384,14 +371,17 @@ export async function hasRole(
   const user =
     await getCurrentUser();
 
-  if (!user) {
+  if (
+    !user ||
+    !user.active ||
+    !user.role
+  ) {
     return false;
   }
 
   return (
-    user.active &&
     user.role ===
-      role
+    role
   );
 }
 
@@ -430,7 +420,8 @@ export async function canAccessSchool(
 
   if (
     !user ||
-    !user.active
+    !user.active ||
+    !user.role
   ) {
     return false;
   }
