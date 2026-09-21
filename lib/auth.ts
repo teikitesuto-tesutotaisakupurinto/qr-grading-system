@@ -1,22 +1,13 @@
-"use client";
-
 import {
-  browserLocalPersistence,
-  GoogleAuthProvider,
   onAuthStateChanged,
-  setPersistence,
-  signInWithPopup,
+  signInWithEmailAndPassword,
   signOut,
   type User,
 } from "firebase/auth";
 
 import {
-  collection,
   doc,
-  getDocs,
   getDoc,
-  query,
-  where,
 } from "firebase/firestore";
 
 import {
@@ -24,540 +15,324 @@ import {
   db,
 } from "@/lib/firebase";
 
-/* =========================================================
-   権限
-   ========================================================= */
-
-export type UserRole =
-  | "本部管理者"
-  | "校舎管理者"
-  | "講師"
-  | "生徒";
+import type {
+  UserProfile,
+  UserRole,
+} from "@/lib/types";
 
 /* =========================================================
-   アプリユーザー
+   Firebase User → Tsystem User
    ========================================================= */
 
-export type AppUser = {
-  uid: string;
-
-  email: string | null;
-
-  name: string;
-
-  photoURL: string | null;
-
-  organizationId: string | null;
-
-  role: UserRole | null;
-
-  schoolIds: string[];
-
-  studentNumber?: string;
-
-  active: boolean;
-};
-
-/* =========================================================
-   Googleログイン
-   ========================================================= */
-
-export async function loginWithGoogle(): Promise<User> {
-  await setPersistence(
-    auth,
-    browserLocalPersistence
-  );
-
-  const provider =
-    new GoogleAuthProvider();
-
-  provider.addScope(
-    "email"
-  );
-
-  provider.addScope(
-    "profile"
-  );
-
-  const result =
-    await signInWithPopup(
-      auth,
-      provider
-    );
-
-  return result.user;
-}
-
-/* =========================================================
-   ログアウト
-   ========================================================= */
-
-export async function logout(): Promise<void> {
-  await signOut(auth);
-}
-
-/* =========================================================
-   Firebase Authenticationユーザー
-   ========================================================= */
-
-export function getFirebaseUser(): User | null {
-  return auth.currentUser;
-}
-
-/* =========================================================
-   Firestore users/{uid} 取得
-   ========================================================= */
-
-export async function getAppUser(
-  firebaseUser: User
-): Promise<AppUser> {
-  const userRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid
-    );
+export async function getCurrentUserProfile(
+  firebaseUser: User | null
+): Promise<UserProfile | null> {
+  if (!firebaseUser) {
+    return null;
+  }
 
   const snapshot =
     await getDoc(
-      userRef
+      doc(
+        db,
+        "users",
+        firebaseUser.uid
+      )
     );
-
-  /*
-   * Firebase Authenticationには
-   * 存在するが、Firestoreにはまだ
-   * 登録されていない。
-   *
-   * ここではログアウトしない。
-   */
 
   if (
     !snapshot.exists()
   ) {
-    return {
-      uid:
-        firebaseUser.uid,
-
-      email:
-        firebaseUser.email,
-
-      name:
-        firebaseUser.displayName ??
-        "",
-
-      photoURL:
-        firebaseUser.photoURL,
-
-      organizationId:
-        null,
-
-      role:
-        null,
-
-      schoolIds:
-        [],
-
-      active:
-        false,
-    };
+    return null;
   }
 
   const data =
     snapshot.data();
 
-  const role =
-    isUserRole(
-      data.role
-    )
-      ? data.role
-      : null;
-
-  const organizationId =
-    typeof data.organizationId ===
-    "string"
-      ? data.organizationId
-      : null;
-
-  const schoolIds =
-    Array.isArray(
-      data.schoolIds
-    )
-      ? data.schoolIds.filter(
-          (
-            value
-          ): value is string =>
-            typeof value ===
-            "string"
-        )
-      : [];
-
   return {
     uid:
       firebaseUser.uid,
 
-    email:
-      firebaseUser.email,
+    organizationId:
+      typeof data.organizationId ===
+      "string"
+        ? data.organizationId
+        : null,
+
+    role:
+      isUserRole(
+        data.role
+      )
+        ? data.role
+        : null,
+
+    schoolIds:
+      Array.isArray(
+        data.schoolIds
+      )
+        ? data.schoolIds.filter(
+            (
+              value
+            ): value is string =>
+              typeof value ===
+              "string"
+          )
+        : [],
 
     name:
       typeof data.name ===
       "string"
         ? data.name
-        : firebaseUser.displayName ??
-          "",
+        : "",
 
-    photoURL:
-      firebaseUser.photoURL,
-
-    organizationId,
-
-    role,
-
-    schoolIds,
-
-    studentNumber:
-      typeof data.studentNumber ===
+    studentId:
+      typeof data.studentId ===
       "string"
-        ? data.studentNumber
-        : undefined,
+        ? data.studentId
+        : null,
+
+    email:
+      typeof data.email ===
+      "string"
+        ? data.email
+        : firebaseUser.email,
 
     active:
-      data.active !== false,
+      data.active !==
+      false,
   };
 }
 
 /* =========================================================
-   現在のユーザー
+   Current Firebase User
    ========================================================= */
 
-export async function getCurrentUser(): Promise<AppUser | null> {
-  const firebaseUser =
-    auth.currentUser;
-
-  if (
-    !firebaseUser
-  ) {
-    return null;
-  }
-
-  return getAppUser(
-    firebaseUser
-  );
+export function getFirebaseCurrentUser() {
+  return auth.currentUser;
 }
 
 /* =========================================================
-   認証状態監視
+   Login
    ========================================================= */
 
-export function observeAuth(
-  callback: (
-    user: AppUser | null
-  ) => void,
-
-  onError?: (
-    error: Error
-  ) => void
+export async function login(
+  email: string,
+  password: string
 ) {
-  return onAuthStateChanged(
-    auth,
-    async (
-      firebaseUser
-    ) => {
-      try {
-        if (
-          !firebaseUser
-        ) {
-          callback(null);
-          return;
-        }
-
-        const appUser =
-          await getAppUser(
-            firebaseUser
-          );
-
-        callback(
-          appUser
-        );
-      } catch (
-        error
-      ) {
-        if (
-          onError
-        ) {
-          onError(
-            error instanceof Error
-              ? error
-              : new Error(
-                  "認証情報の取得に失敗しました。"
-                )
-          );
-        }
-      }
-    }
-  );
-}
-
-/* =========================================================
-   Googleアカウントに対応する招待を検索
-   ========================================================= */
-
-export async function findInvitationForGoogleUser(
-  firebaseUser: User
-) {
-  const email =
-    firebaseUser.email
-      ?.trim()
+  const normalizedEmail =
+    email
+      .trim()
       .toLowerCase();
 
   if (
-    !email
+    !normalizedEmail
   ) {
-    return null;
+    throw createAuthError(
+      "メールアドレスを入力してください。",
+      "auth/invalid-email"
+    );
   }
-
-  const invitationQuery =
-    query(
-      collection(
-        db,
-        "userInvitations"
-      ),
-      where(
-        "email",
-        "==",
-        email
-      ),
-      where(
-        "active",
-        "==",
-        true
-      )
-    );
-
-  const snapshot =
-    await getDocs(
-      invitationQuery
-    );
 
   if (
-    snapshot.empty
+    !password
   ) {
-    return null;
+    throw createAuthError(
+      "パスワードを入力してください。",
+      "auth/missing-password"
+    );
   }
 
-  const invitation =
-    snapshot.docs[0];
+  try {
+    const credential =
+      await signInWithEmailAndPassword(
+        auth,
+        normalizedEmail,
+        password
+      );
 
-  return {
-    id:
-      invitation.id,
+    /*
+     * Authentication成功後、
+     * Firestoreのusers/{uid}を確認する。
+     */
+    const profile =
+      await getCurrentUserProfile(
+        credential.user
+      );
 
-    ...invitation.data(),
+    if (!profile) {
+      /*
+       * Firebase Authenticationには
+       * ログインできても、
+       * Tsystemユーザーとして登録されていない
+       * 場合はログアウトする。
+       */
+      await signOut(
+        auth
+      );
+
+      throw createAuthError(
+        "このアカウントはTsystemに登録されていません。",
+        "auth/user-profile-not-found"
+      );
+    }
+
+    if (
+      !profile.active
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw createAuthError(
+        "このアカウントは現在利用できません。",
+        "auth/user-disabled"
+      );
+    }
+
+    if (
+      !profile.organizationId
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw createAuthError(
+        "所属組織が設定されていません。管理者に確認してください。",
+        "auth/organization-not-found"
+      );
+    }
+
+    if (
+      !profile.role
+    ) {
+      await signOut(
+        auth
+      );
+
+      throw createAuthError(
+        "権限が設定されていません。管理者に確認してください。",
+        "auth/role-not-found"
+      );
+    }
+
+    return {
+      user:
+        credential.user,
+
+      profile,
+    };
+  } catch (
+    error
+  ) {
+    /*
+     * 自分で作ったエラーは
+     * そのまま返す。
+     */
+    if (
+      isTsystemAuthError(
+        error
+      )
+    ) {
+      throw error;
+    }
+
+    throw normalizeFirebaseAuthError(
+      error
+    );
+  }
+}
+
+/* =========================================================
+   Logout
+   ========================================================= */
+
+export async function logout() {
+  await signOut(
+    auth
+  );
+}
+
+/* =========================================================
+   Auth state listener
+   ========================================================= */
+
+export function subscribeAuth(
+  callback: (
+    user: User | null,
+    profile: UserProfile | null
+  ) => void,
+  onError?: (
+    error: unknown
+  ) => void
+) {
+  let cancelled =
+    false;
+
+  const unsubscribe =
+    onAuthStateChanged(
+      auth,
+      async (
+        firebaseUser
+      ) => {
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        try {
+          if (
+            !firebaseUser
+          ) {
+            callback(
+              null,
+              null
+            );
+
+            return;
+          }
+
+          const profile =
+            await getCurrentUserProfile(
+              firebaseUser
+            );
+
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          callback(
+            firebaseUser,
+            profile
+          );
+        } catch (
+          error
+        ) {
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          onError?.(
+            error
+          );
+        }
+      }
+    );
+
+  return () => {
+    cancelled =
+      true;
+
+    unsubscribe();
   };
 }
 
 /* =========================================================
-   Google初回ログイン時のユーザー確認
-   ========================================================= */
-
-export async function resolveGoogleUser(
-  firebaseUser: User
-): Promise<AppUser> {
-  /*
-   * ① 既存ユーザーを確認
-   */
-
-  const existingUser =
-    await getAppUser(
-      firebaseUser
-    );
-
-  if (
-    existingUser.organizationId &&
-    existingUser.role
-  ) {
-    return existingUser;
-  }
-
-  /*
-   * ② 招待を確認
-   */
-
-  const invitation =
-    await findInvitationForGoogleUser(
-      firebaseUser
-    );
-
-  if (
-    !invitation
-  ) {
-    return existingUser;
-  }
-
-  /*
-   * 招待がある場合でも、
-   * クライアント側から勝手に
-   * users/{uid}を書き換える処理は
-   * ここでは行わない。
-   *
-   * 本番では管理権限を持つ
-   * サーバー処理で確定する。
-   */
-
-  return existingUser;
-}
-
-/* =========================================================
-   権限確認
-   ========================================================= */
-
-export async function hasRole(
-  role: UserRole
-): Promise<boolean> {
-  const user =
-    await getCurrentUser();
-
-  if (
-    !user ||
-    !user.active ||
-    !user.role
-  ) {
-    return false;
-  }
-
-  return (
-    user.role ===
-    role
-  );
-}
-
-/* =========================================================
-   複数権限確認
-   ========================================================= */
-
-export async function hasAnyRole(
-  roles: UserRole[]
-): Promise<boolean> {
-  const user =
-    await getCurrentUser();
-
-  if (
-    !user ||
-    !user.active ||
-    !user.role
-  ) {
-    return false;
-  }
-
-  return roles.includes(
-    user.role
-  );
-}
-
-/* =========================================================
-   本部管理者確認
-   ========================================================= */
-
-export async function isHeadOfficeAdmin(): Promise<boolean> {
-  return hasRole(
-    "本部管理者"
-  );
-}
-
-/* =========================================================
-   校舎管理者確認
-   ========================================================= */
-
-export async function isSchoolAdmin(): Promise<boolean> {
-  return hasRole(
-    "校舎管理者"
-  );
-}
-
-/* =========================================================
-   講師確認
-   ========================================================= */
-
-export async function isTeacher(): Promise<boolean> {
-  return hasRole(
-    "講師"
-  );
-}
-
-/* =========================================================
-   生徒確認
-   ========================================================= */
-
-export async function isStudent(): Promise<boolean> {
-  return hasRole(
-    "生徒"
-  );
-}
-
-/* =========================================================
-   校舎アクセス確認
-   ========================================================= */
-
-export async function canAccessSchool(
-  schoolId: string
-): Promise<boolean> {
-  const user =
-    await getCurrentUser();
-
-  if (
-    !user ||
-    !user.active ||
-    !user.role
-  ) {
-    return false;
-  }
-
-  /*
-   * 本部管理者は全校舎へアクセス可能
-   */
-
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  return user.schoolIds.includes(
-    schoolId
-  );
-}
-
-/* =========================================================
-   組織登録済み確認
-   ========================================================= */
-
-export async function hasOrganization(): Promise<boolean> {
-  const user =
-    await getCurrentUser();
-
-  return Boolean(
-    user?.organizationId
-  );
-}
-
-/* =========================================================
-   正式ユーザー確認
-   ========================================================= */
-
-export async function isActiveUser(): Promise<boolean> {
-  const user =
-    await getCurrentUser();
-
-  return Boolean(
-    user &&
-      user.active &&
-      user.role &&
-      user.organizationId
-  );
-}
-
-/* =========================================================
-   UserRole検証
+   Role
    ========================================================= */
 
 export function isUserRole(
@@ -573,4 +348,334 @@ export function isUserRole(
     value ===
       "生徒"
   );
+}
+
+/* =========================================================
+   Role helpers
+   ========================================================= */
+
+export function isHeadOfficeAdmin(
+  user: UserProfile | null
+) {
+  return (
+    user?.role ===
+    "本部管理者"
+  );
+}
+
+export function isSchoolAdmin(
+  user: UserProfile | null
+) {
+  return (
+    user?.role ===
+    "校舎管理者"
+  );
+}
+
+export function isTeacher(
+  user: UserProfile | null
+) {
+  return (
+    user?.role ===
+    "講師"
+  );
+}
+
+export function isStudent(
+  user: UserProfile | null
+) {
+  return (
+    user?.role ===
+    "生徒"
+  );
+}
+
+export function isStaff(
+  user: UserProfile | null
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Organization
+   ========================================================= */
+
+export function hasOrganization(
+  user: UserProfile | null
+) {
+  return Boolean(
+    user?.organizationId
+  );
+}
+
+/* =========================================================
+   School access
+   ========================================================= */
+
+export function canAccessSchool(
+  user: UserProfile | null,
+  schoolId: string
+) {
+  if (
+    !user ||
+    !schoolId
+  ) {
+    return false;
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  return user.schoolIds.includes(
+    schoolId
+  );
+}
+
+/* =========================================================
+   Student access
+   ========================================================= */
+
+export function canAccessStudent(
+  user: UserProfile | null,
+  studentId: string,
+  studentSchoolId?: string
+) {
+  if (
+    !user ||
+    !studentId
+  ) {
+    return false;
+  }
+
+  /*
+   * 本部管理者
+   */
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  /*
+   * 校舎管理者・講師
+   */
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    if (
+      !studentSchoolId
+    ) {
+      return false;
+    }
+
+    return user.schoolIds.includes(
+      studentSchoolId
+    );
+  }
+
+  /*
+   * 生徒
+   */
+  if (
+    user.role ===
+    "生徒"
+  ) {
+    return (
+      user.studentId ===
+      studentId
+    );
+  }
+
+  return false;
+}
+
+/* =========================================================
+   Own student check
+   ========================================================= */
+
+export function isOwnStudent(
+  user: UserProfile | null,
+  studentId: string
+) {
+  return (
+    user?.role ===
+      "生徒" &&
+    user.studentId ===
+      studentId
+  );
+}
+
+/* =========================================================
+   Auth error
+   ========================================================= */
+
+export type TsystemAuthError =
+  Error & {
+    code: string;
+  };
+
+function createAuthError(
+  message: string,
+  code: string
+): TsystemAuthError {
+  const error =
+    new Error(
+      message
+    ) as TsystemAuthError;
+
+  error.code =
+    code;
+
+  return error;
+}
+
+function isTsystemAuthError(
+  error: unknown
+): error is TsystemAuthError {
+  return (
+    error instanceof Error &&
+    typeof (
+      error as {
+        code?: unknown;
+      }
+    ).code ===
+      "string" &&
+    (
+      error as {
+        code: string;
+      }
+    ).code.startsWith(
+      "auth/"
+    )
+  );
+}
+
+/* =========================================================
+   Firebase Auth error normalization
+   ========================================================= */
+
+function normalizeFirebaseAuthError(
+  error: unknown
+): TsystemAuthError {
+  const code =
+    getErrorCode(
+      error
+    );
+
+  switch (
+    code
+  ) {
+    case "auth/invalid-email":
+      return createAuthError(
+        "メールアドレスの形式が正しくありません。",
+        code
+      );
+
+    case "auth/user-disabled":
+      return createAuthError(
+        "このアカウントは利用停止されています。",
+        code
+      );
+
+    case "auth/user-not-found":
+      return createAuthError(
+        "メールアドレスまたはパスワードが正しくありません。",
+        code
+      );
+
+    case "auth/wrong-password":
+      return createAuthError(
+        "メールアドレスまたはパスワードが正しくありません。",
+        code
+      );
+
+    case "auth/invalid-credential":
+      return createAuthError(
+        "メールアドレスまたはパスワードが正しくありません。",
+        code
+      );
+
+    case "auth/too-many-requests":
+      return createAuthError(
+        "ログイン試行が多すぎます。しばらくしてから再度お試しください。",
+        code
+      );
+
+    case "auth/network-request-failed":
+      return createAuthError(
+        "ネットワークに接続できませんでした。",
+        code
+      );
+
+    case "auth/operation-not-allowed":
+      return createAuthError(
+        "このログイン方法は現在利用できません。",
+        code
+      );
+
+    case "auth/invalid-api-key":
+      return createAuthError(
+        "Firebaseの設定を確認してください。",
+        code
+      );
+
+    case "auth/app-deleted":
+      return createAuthError(
+        "Firebaseアプリの設定を確認してください。",
+        code
+      );
+
+    default:
+      return createAuthError(
+        "ログインできませんでした。設定を確認してください。",
+        code ||
+          "auth/unknown"
+      );
+  }
+}
+
+/* =========================================================
+   Error code
+   ========================================================= */
+
+function getErrorCode(
+  error: unknown
+) {
+  if (
+    typeof error ===
+      "object" &&
+    error !== null &&
+    "code" in error
+  ) {
+    const code =
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code;
+
+    if (
+      typeof code ===
+      "string"
+    ) {
+      return code;
+    }
+  }
+
+  return "auth/unknown";
 }
