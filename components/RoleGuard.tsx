@@ -6,9 +6,7 @@ import {
   useState,
 } from "react";
 
-import {
-  useRouter,
-} from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import {
   getCurrentUser,
@@ -17,7 +15,6 @@ import {
 
 type RoleGuardProps = {
   children: ReactNode;
-
   allowedRoles: UserRole[];
 };
 
@@ -25,8 +22,7 @@ export default function RoleGuard({
   children,
   allowedRoles,
 }: RoleGuardProps) {
-  const router =
-    useRouter();
+  const router = useRouter();
 
   const [checking, setChecking] =
     useState(true);
@@ -35,10 +31,9 @@ export default function RoleGuard({
     useState(false);
 
   useEffect(() => {
-    let cancelled =
-      false;
+    let cancelled = false;
 
-    async function check() {
+    async function checkRole() {
       try {
         const user =
           await getCurrentUser();
@@ -47,13 +42,44 @@ export default function RoleGuard({
           return;
         }
 
+        /*
+         * 未ログイン
+         */
         if (!user) {
-          router.replace(
-            "/login"
-          );
+          setAllowed(false);
+          setChecking(false);
+
+          router.replace("/login");
+
           return;
         }
 
+        /*
+         * Firebase Authenticationには
+         * ログインしているが、
+         * Firestore側のユーザー登録が
+         * 完了していない場合。
+         */
+        if (!user.active) {
+          setAllowed(false);
+          setChecking(false);
+
+          return;
+        }
+
+        /*
+         * roleが未設定の場合。
+         */
+        if (!user.role) {
+          setAllowed(false);
+          setChecking(false);
+
+          return;
+        }
+
+        /*
+         * 権限確認
+         */
         if (
           !allowedRoles.includes(
             user.role
@@ -62,25 +88,30 @@ export default function RoleGuard({
           setAllowed(false);
           setChecking(false);
 
-          router.replace(
-            "/dashboard"
-          );
-
           return;
         }
 
+        /*
+         * 正式に許可
+         */
         setAllowed(true);
         setChecking(false);
-      } catch {
-        if (!cancelled) {
-          router.replace(
-            "/login"
-          );
+      } catch (error) {
+        if (cancelled) {
+          return;
         }
+
+        console.error(
+          "RoleGuard error:",
+          error
+        );
+
+        setAllowed(false);
+        setChecking(false);
       }
     }
 
-    void check();
+    void checkRole();
 
     return () => {
       cancelled = true;
@@ -90,23 +121,16 @@ export default function RoleGuard({
     router,
   ]);
 
+  /*
+   * 認証・権限確認中は何も表示しない
+   */
   if (checking) {
-    return (
-      <main
-        style={{
-          minHeight:
-            "100vh",
-          display:
-            "grid",
-          placeItems:
-            "center",
-        }}
-      >
-        認証情報を確認しています...
-      </main>
-    );
+    return null;
   }
 
+  /*
+   * 権限なし
+   */
   if (!allowed) {
     return null;
   }
