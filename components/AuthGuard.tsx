@@ -18,54 +18,104 @@ import {
 
 type AuthGuardProps = {
   children: ReactNode;
+
+  /*
+   * 認証必須がデフォルト。
+   * loginなど公開ページではfalseにできる。
+   */
+  requireAuth?: boolean;
+
+  /*
+   * 指定した権限だけ許可。
+   * 未指定ならログイン済みユーザー全員。
+   */
+  allowedRoles?: Array<
+    NonNullable<AppUser["role"]>
+  >;
 };
 
 export default function AuthGuard({
   children,
+  requireAuth = true,
+  allowedRoles,
 }: AuthGuardProps) {
-  const router = useRouter();
+  const router =
+    useRouter();
 
-  const pathname = usePathname();
+  const pathname =
+    usePathname();
 
-  const [user, setUser] =
-    useState<AppUser | null>(null);
+  const [
+    user,
+    setUser,
+  ] =
+    useState<AppUser | null>(
+      null
+    );
 
-  const [checking, setChecking] =
+  const [
+    checking,
+    setChecking,
+  ] =
     useState(true);
 
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  /* =======================================================
+     Authentication
+     ======================================================= */
+
   useEffect(() => {
-    /*
-     * ログイン画面は認証チェック対象外
-     */
-    if (pathname === "/login") {
-      setChecking(false);
+    if (
+      !requireAuth
+    ) {
+      setChecking(
+        false
+      );
+
       return;
     }
 
+    setChecking(
+      true
+    );
+
     const unsubscribe =
       observeAuth(
-        (appUser) => {
-          if (!appUser) {
-            setUser(null);
-            setChecking(false);
+        (
+          appUser
+        ) => {
+          setUser(
+            appUser
+          );
 
-            router.replace(
-              `/login?next=${encodeURIComponent(
-                pathname
-              )}`
-            );
-
-            return;
-          }
-
-          setUser(appUser);
-          setChecking(false);
+          setChecking(
+            false
+          );
         },
-        () => {
-          setUser(null);
-          setChecking(false);
+        (
+          authError
+        ) => {
+          console.error(
+            "AuthGuard error:",
+            authError
+          );
 
-          router.replace("/login");
+          setUser(
+            null
+          );
+
+          setError(
+            "認証情報を確認できませんでした。"
+          );
+
+          setChecking(
+            false
+          );
         }
       );
 
@@ -73,34 +123,173 @@ export default function AuthGuard({
       unsubscribe();
     };
   }, [
-    pathname,
-    router,
+    requireAuth,
   ]);
 
-  /*
-   * ログインページはそのまま表示
-   */
-  if (pathname === "/login") {
-    return <>{children}</>;
+  /* =======================================================
+     Public page
+     ======================================================= */
+
+  if (
+    !requireAuth
+  ) {
+    return (
+      <>
+        {children}
+      </>
+    );
   }
 
-  /*
-   * 認証確認中は何も表示しない
-   */
-  if (checking) {
-    return null;
+  /* =======================================================
+     Checking
+     ======================================================= */
+
+  if (
+    checking
+  ) {
+    return (
+      <div className="ts-loading">
+        <div className="ts-loading-inner">
+          <div className="ts-brand">
+            テストシステム
+          </div>
+
+          <div className="ts-loading-text">
+            認証情報を確認しています...
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  /*
-   * 未ログインなら何も表示しない。
-   * router.replace()で/loginへ移動する。
-   */
-  if (!user) {
-    return null;
+  /* =======================================================
+     Not authenticated
+     ======================================================= */
+
+  if (
+    !user
+  ) {
+    return (
+      <div className="ts-center">
+        <section className="ts-error-card">
+          <div className="ts-brand">
+            テストシステム
+          </div>
+
+          <h1>
+            ログインが必要です
+          </h1>
+
+          <p>
+            {error ||
+              "このページを利用するにはログインしてください。"}
+          </p>
+
+          <button
+            type="button"
+            className="ts-primary"
+            onClick={() =>
+              router.replace(
+                `/login?returnTo=${encodeURIComponent(
+                  pathname
+                )}`
+              )
+            }
+          >
+            ログイン画面へ
+          </button>
+        </section>
+      </div>
+    );
   }
 
-  /*
-   * ログイン済み
-   */
-  return <>{children}</>;
+  /* =======================================================
+     Role missing
+     ======================================================= */
+
+  if (
+    !user.role
+  ) {
+    return (
+      <div className="ts-center">
+        <section className="ts-error-card">
+          <div className="ts-brand">
+            テストシステム
+          </div>
+
+          <h1>
+            権限が設定されていません
+          </h1>
+
+          <p>
+            管理者にアカウントの権限設定を確認してください。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  /* =======================================================
+     Role restriction
+     ======================================================= */
+
+  if (
+    allowedRoles &&
+    !allowedRoles.includes(
+      user.role
+    )
+  ) {
+    return (
+      <ForbiddenScreen />
+    );
+  }
+
+  /* =======================================================
+     Authorized
+     ======================================================= */
+
+  return (
+    <>
+      {children}
+    </>
+  );
+}
+
+/* =========================================================
+   Forbidden
+   ========================================================= */
+
+function ForbiddenScreen() {
+  const router =
+    useRouter();
+
+  return (
+    <div className="ts-center">
+      <section className="ts-error-card">
+        <div className="ts-brand">
+          テストシステム
+        </div>
+
+        <h1>
+          権限がありません
+        </h1>
+
+        <p>
+          このページを利用する権限がありません。
+        </p>
+
+        <button
+          type="button"
+          className="ts-primary"
+          onClick={() =>
+            router.replace(
+              "/dashboard"
+            )
+          }
+        >
+          ダッシュボードへ戻る
+        </button>
+      </section>
+    </div>
+  );
 }
