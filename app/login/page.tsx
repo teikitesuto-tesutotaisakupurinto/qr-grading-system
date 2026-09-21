@@ -1,8 +1,6 @@
 "use client";
 
-import {
-  useState,
-} from "react";
+import { useState } from "react";
 
 import {
   loginWithGoogle,
@@ -28,30 +26,16 @@ export default function LoginPage() {
       setLoading(true);
       setError("");
 
-      /*
-       * Google Authenticationだけを実行。
-       *
-       * Firestoreのusers/{uid}確認は
-       * Dashboard側で行う。
-       */
       await loginWithGoogle();
 
       /*
-       * フルページ遷移。
-       *
-       * Firebase Authenticationの
-       * 永続セッションを利用する。
+       * Google認証成功。
+       * ここではFirestoreを確認しない。
        */
-      window.location.assign(
-        "/dashboard"
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Google login error:",
-        error
-      );
+      window.location.href =
+        "/dashboard";
+    } catch (error) {
+      console.error(error);
 
       setLoading(false);
 
@@ -81,16 +65,14 @@ export default function LoginPage() {
         <button
           type="button"
           className="googleLoginButton"
-          disabled={
-            loading
-          }
+          disabled={loading}
           onClick={
             handleGoogleLogin
           }
         >
           <img
             src="/google-logo.svg"
-            alt="Google"
+            alt=""
             width={20}
             height={20}
           />
@@ -103,10 +85,7 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <div
-            className="loginError"
-            role="alert"
-          >
+          <div className="loginError">
             {error}
           </div>
         )}
