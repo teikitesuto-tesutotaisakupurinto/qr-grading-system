@@ -7,13 +7,19 @@ export type UserRole =
 export type UserProfile = {
   uid: string;
 
-  organizationId: string;
+  organizationId:
+    | string
+    | null;
 
-  role: UserRole;
+  role:
+    | UserRole
+    | null;
 
   schoolIds: string[];
 
   name: string;
 
-  studentId?: string | null;
+  studentId:
+    | string
+    | null;
 };
