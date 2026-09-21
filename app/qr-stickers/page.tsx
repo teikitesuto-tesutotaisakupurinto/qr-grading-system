@@ -6,101 +6,436 @@ import {
   useState,
 } from "react";
 
-import QRCode from "qrcode";
+import {
+  useSearchParams,
+} from "next/navigation";
 
 import {
-  getStudents,
-  type Student,
-} from "@/lib/students";
+  onAuthStateChanged,
+} from "firebase/auth";
 
-type StickerStudent = Student & {
-  qrDataUrl?: string;
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+
+import {
+  auth,
+  db,
+} from "@/lib/firebase";
+
+type UserRole =
+  | "本部管理者"
+  | "校舎管理者"
+  | "講師"
+  | "生徒";
+
+type CurrentUser = {
+  uid: string;
+  organizationId: string | null;
+  role: UserRole | null;
+  schoolIds: string[];
 };
 
-const STICKER_WIDTH_MM = 30;
-const STICKER_HEIGHT_MM = 20;
+type School = {
+  id: string;
+  name: string;
+  active: boolean;
+};
 
-const COLUMNS = 6;
-const ROWS = 3;
+type Student = {
+  id: string;
+  organizationId: string;
+  schoolId: string;
+  studentNumber: string;
+  name: string;
+  grade: string;
+  className: string;
+  active: boolean;
+};
 
-const STICKERS_PER_STUDENT =
-  COLUMNS * ROWS;
+export default function QRStickersPage() {
+  const searchParams =
+    useSearchParams();
 
-const STUDENTS_PER_PAGE = 2;
+  const initialStudentId =
+    searchParams.get(
+      "studentId"
+    );
 
-export default function QrStickersPage() {
+  const [
+    currentUser,
+    setCurrentUser,
+  ] =
+    useState<CurrentUser | null>(
+      null
+    );
+
   const [
     students,
     setStudents,
-  ] = useState<Student[]>([]);
+  ] =
+    useState<Student[]>([]);
 
   const [
-    selectedIds,
-    setSelectedIds,
-  ] = useState<string[]>([]);
+    schools,
+    setSchools,
+  ] =
+    useState<School[]>([]);
 
   const [
-    search,
-    setSearch,
-  ] = useState("");
+    selectedStudentIds,
+    setSelectedStudentIds,
+  ] =
+    useState<string[]>(
+      initialStudentId
+        ? [initialStudentId]
+        : []
+    );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
-
-  const [
-    generating,
-    setGenerating,
-  ] = useState(false);
+  ] =
+    useState(true);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
-    logoUrl,
-    setLogoUrl,
-  ] = useState("");
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+  const [
+    selectedClass,
+    setSelectedClass,
+  ] =
+    useState("");
+
+  const [
+    selectedSchool,
+    setSelectedSchool,
+  ] =
+    useState("");
+
+  /*
+   * ========================================================
+   * 認証
+   * ========================================================
+   */
 
   useEffect(() => {
-    let cancelled = false;
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (firebaseUser) => {
+          if (!firebaseUser) {
+            setLoading(false);
 
-    async function load() {
-      try {
-        setLoading(true);
-        setError("");
+            setError(
+              "ログイン状態を確認できません。"
+            );
 
-        const data =
-          await getStudents({
-            status: "在籍",
-          });
+            return;
+          }
 
-        if (!cancelled) {
-          setStudents(data);
+          try {
+            const snapshot =
+              await getDocs(
+                query(
+                  collection(
+                    db,
+                    "users"
+                  ),
+                  where(
+                    "__name__",
+                    "==",
+                    firebaseUser.uid
+                  )
+                )
+              );
+
+            if (
+              snapshot.empty
+            ) {
+              setLoading(false);
+
+              setError(
+                "システムのユーザー情報が登録されていません。"
+              );
+
+              return;
+            }
+
+            const data =
+              snapshot.docs[0].data();
+
+            const role =
+              isUserRole(
+                data.role
+              )
+                ? data.role
+                : null;
+
+            setCurrentUser({
+              uid:
+                firebaseUser.uid,
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
+
+              role,
+
+              schoolIds:
+                Array.isArray(
+                  data.schoolIds
+                )
+                  ? data.schoolIds.filter(
+                      (
+                        value
+                      ): value is string =>
+                        typeof value ===
+                        "string"
+                    )
+                  : [],
+            });
+          } catch (err) {
+            console.error(
+              err
+            );
+
+            setError(
+              getSafeErrorMessage(
+                err
+              )
+            );
+
+            setLoading(false);
+          }
         }
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "生徒一覧を取得できませんでした。"
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void load();
+      );
 
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, []);
+
+  /*
+   * ========================================================
+   * 生徒・校舎取得
+   * ========================================================
+   */
+
+  useEffect(() => {
+    if (
+      !currentUser?.organizationId
+    ) {
+      return;
+    }
+
+    void loadData(
+      currentUser.organizationId
+    );
+  }, [
+    currentUser?.organizationId,
+  ]);
+
+  async function loadData(
+    organizationId: string
+  ) {
+    try {
+      setLoading(true);
+
+      setError("");
+
+      const [
+        studentSnapshot,
+        schoolSnapshot,
+      ] = await Promise.all([
+        getDocs(
+          query(
+            collection(
+              db,
+              "students"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        ),
+
+        getDocs(
+          query(
+            collection(
+              db,
+              "schools"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        ),
+      ]);
+
+      const loadedStudents =
+        studentSnapshot.docs.map(
+          (
+            item
+          ): Student => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              organizationId,
+
+              schoolId:
+                typeof data.schoolId ===
+                "string"
+                  ? data.schoolId
+                  : "",
+
+              studentNumber:
+                typeof data.studentNumber ===
+                "string"
+                  ? data.studentNumber
+                  : "",
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              grade:
+                typeof data.grade ===
+                "string"
+                  ? data.grade
+                  : "未設定",
+
+              className:
+                typeof data.className ===
+                "string"
+                  ? data.className
+                  : "",
+
+              active:
+                data.active !==
+                false,
+            };
+          }
+        );
+
+      const loadedSchools =
+        schoolSnapshot.docs.map(
+          (
+            item
+          ): School => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : "",
+
+              active:
+                data.active !==
+                false,
+            };
+          }
+        );
+
+      setStudents(
+        loadedStudents
+      );
+
+      setSchools(
+        loadedSchools
+      );
+
+      /*
+       * URLから指定された生徒が
+       * 実際に存在する場合だけ選択。
+       */
+      if (
+        initialStudentId &&
+        loadedStudents.some(
+          (
+            student
+          ) =>
+            student.id ===
+            initialStudentId
+        )
+      ) {
+        setSelectedStudentIds(
+          [
+            initialStudentId,
+          ]
+        );
+      }
+    } catch (err) {
+      console.error(
+        err
+      );
+
+      setError(
+        getSafeErrorMessage(
+          err
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * 絞り込み
+   * ========================================================
+   */
+
+  const classNames =
+    useMemo(() => {
+      const values =
+        students
+          .map(
+            (
+              student
+            ) =>
+              student.className
+          )
+          .filter(
+            Boolean
+          );
+
+      return Array.from(
+        new Set(values)
+      ).sort();
+    }, [
+      students,
+    ]);
 
   const filteredStudents =
     useMemo(() => {
@@ -109,57 +444,68 @@ export default function QrStickersPage() {
           .trim()
           .toLowerCase();
 
-      if (!keyword) {
-        return students;
-      }
-
       return students.filter(
-        (student) =>
-          student.id
-            .toLowerCase()
-            .includes(keyword) ||
-          student.name
-            .toLowerCase()
-            .includes(keyword) ||
-          student.className
-            .toLowerCase()
-            .includes(keyword) ||
-          student.grade
-            .toLowerCase()
-            .includes(keyword)
+        (student) => {
+          if (
+            !student.active
+          ) {
+            return false;
+          }
+
+          if (
+            selectedSchool &&
+            student.schoolId !==
+              selectedSchool
+          ) {
+            return false;
+          }
+
+          if (
+            selectedClass &&
+            student.className !==
+              selectedClass
+          ) {
+            return false;
+          }
+
+          if (!keyword) {
+            return true;
+          }
+
+          return (
+            student.name
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            student.studentNumber.includes(
+              keyword
+            ) ||
+            student.className
+              .toLowerCase()
+              .includes(
+                keyword
+              )
+          );
+        }
       );
     }, [
       students,
       search,
+      selectedSchool,
+      selectedClass,
     ]);
 
-  const selectedStudents =
-    useMemo(
-      () =>
-        selectedIds
-          .map((id) =>
-            students.find(
-              (student) =>
-                student.id ===
-                id
-            )
-          )
-          .filter(
-            (
-              student
-            ): student is Student =>
-              Boolean(student)
-          ),
-      [
-        selectedIds,
-        students,
-      ]
-    );
+  /*
+   * ========================================================
+   * 選択
+   * ========================================================
+   */
 
   function toggleStudent(
     studentId: string
   ) {
-    setSelectedIds(
+    setSelectedStudentIds(
       (current) =>
         current.includes(
           studentId
@@ -176,515 +522,710 @@ export default function QrStickersPage() {
     );
   }
 
-  function toggleAllVisible() {
-    const visibleIds =
+  function selectAllFiltered() {
+    const ids =
       filteredStudents.map(
-        (student) =>
+        (
+          student
+        ) =>
           student.id
       );
 
-    const allSelected =
-      visibleIds.length > 0 &&
-      visibleIds.every(
-        (id) =>
-          selectedIds.includes(
-            id
-          )
-      );
-
-    if (allSelected) {
-      setSelectedIds(
-        (current) =>
-          current.filter(
-            (id) =>
-              !visibleIds.includes(
-                id
-              )
-          )
-      );
-      return;
-    }
-
-    setSelectedIds(
+    setSelectedStudentIds(
       (current) =>
         Array.from(
           new Set([
             ...current,
-            ...visibleIds,
+            ...ids,
           ])
         )
     );
   }
 
-  async function generateQr(
-    studentNumber: string
-  ) {
-    return QRCode.toDataURL(
-      studentNumber,
-      {
-        errorCorrectionLevel:
-          "H",
-
-        margin: 0,
-
-        width: 180,
-
-        color: {
-          dark: "#000000",
-
-          light: "#ffffff",
-        },
-      }
+  function clearSelection() {
+    setSelectedStudentIds(
+      []
     );
   }
 
-  async function printStickers() {
+  /*
+   * ========================================================
+   * 印刷
+   * ========================================================
+   */
+
+  function handlePrint() {
     if (
-      selectedStudents.length ===
+      selectedStudentIds.length ===
       0
     ) {
       setError(
-        "生徒を1人以上選択してください。"
+        "印刷する生徒を1人以上選択してください。"
       );
 
       return;
     }
 
-    try {
-      setGenerating(true);
-      setError("");
+    setError("");
 
-      const studentsWithQr: StickerStudent[] =
-        await Promise.all(
-          selectedStudents.map(
-            async (
-              student
-            ) => ({
-              ...student,
-
-              qrDataUrl:
-                await generateQr(
-                  student.id
-                ),
-            })
-          )
-        );
-
-      /*
-       * 生成済みQRをDOMへ反映する。
-       */
-      setPrintStudents(
-        studentsWithQr
-      );
-
-      /*
-       * Reactの描画完了後に印刷。
-       */
-      window.setTimeout(
-        () => {
-          window.print();
-
-          setGenerating(
-            false
-          );
-        },
-        300
-      );
-    } catch (err) {
-      setGenerating(false);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "QRコードの生成に失敗しました。"
-      );
-    }
+    window.print();
   }
 
-  const [
-    printStudents,
-    setPrintStudents,
-  ] = useState<
-    StickerStudent[]
-  >([]);
+  /*
+   * ========================================================
+   * 印刷対象
+   * ========================================================
+   */
+
+  const selectedStudents =
+    selectedStudentIds
+      .map(
+        (id) =>
+          students.find(
+            (
+              student
+            ) =>
+              student.id ===
+              id
+          )
+      )
+      .filter(
+        (
+          student
+        ): student is Student =>
+          Boolean(student)
+      );
 
   /*
-   * 2人ずつA4ページに配置。
+   * ========================================================
+   * 権限
+   * ========================================================
    */
-  const pages =
-    useMemo(() => {
-      const result: StickerStudent[][] =
-        [];
 
-      for (
-        let i = 0;
-        i <
-        printStudents.length;
-        i +=
-          STUDENTS_PER_PAGE
-      ) {
-        result.push(
-          printStudents.slice(
-            i,
-            i +
-              STUDENTS_PER_PAGE
-          )
-        );
-      }
-
-      return result;
-    }, [
-      printStudents,
-    ]);
-
-  return (
-    <>
-      <main className="screenOnly">
-        <header
-          style={{
-            padding:
-              "24px 32px",
-
-            borderBottom:
-              "1px solid #ddd",
-          }}
+  if (
+    currentUser &&
+    currentUser.role !==
+      "本部管理者" &&
+    currentUser.role !==
+      "校舎管理者" &&
+    currentUser.role !==
+      "講師"
+  ) {
+    return (
+      <main
+        style={pageStyle}
+      >
+        <section
+          style={cardStyle}
         >
-          <h1
-            style={{
-              margin: 0,
-            }}
-          >
-            生徒QRシール発行
+          <h1>
+            QRシール
           </h1>
 
-          <p
-            style={{
-              marginBottom: 0,
-              color: "#666",
-            }}
-          >
-            A4横・1ページ2人・
-            1人18枚・1枚30mm×20mm
+          <p>
+            この機能を利用する権限がありません。
           </p>
-        </header>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main
+      style={pageStyle}
+    >
+      <div
+        className="qrStickerPage"
+        style={{
+          maxWidth:
+            1400,
+          margin:
+            "0 auto",
+        }}
+      >
+        {/* ==================================================
+            画面側
+            ================================================== */}
 
         <section
-          style={{
-            padding: 32,
-          }}
+          className="noPrint"
         >
-          <div
+          <header
             style={{
-              display: "flex",
-              gap: 12,
-              alignItems:
-                "center",
-              marginBottom: 20,
+              marginBottom:
+                24,
             }}
           >
-            <input
-              type="text"
-              value={search}
-              onChange={(event) =>
-                setSearch(
-                  event.target.value
-                )
-              }
-              placeholder="氏名・生徒番号・クラスで検索"
+            <h1
               style={{
-                width: 360,
-                padding:
-                  "10px 12px",
-                border:
-                  "1px solid #ccc",
-                borderRadius: 6,
+                margin:
+                  "0 0 8px",
               }}
-            />
-
-            <button
-              type="button"
-              onClick={
-                toggleAllVisible
-              }
             >
-              表示中を全選択
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedIds(
-                  []
-                )
-              }
-            >
-              選択解除
-            </button>
-          </div>
-
-          <div
-            style={{
-              marginBottom: 20,
-            }}
-          >
-            <label>
-              塾ロゴURL
-              <input
-                type="text"
-                value={logoUrl}
-                onChange={(
-                  event
-                ) =>
-                  setLogoUrl(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder="https://..."
-                style={{
-                  display:
-                    "block",
-
-                  width: 500,
-
-                  marginTop: 6,
-
-                  padding:
-                    "10px 12px",
-
-                  border:
-                    "1px solid #ccc",
-
-                  borderRadius: 6,
-                }}
-              />
-            </label>
+              QRシール発行
+            </h1>
 
             <p
               style={{
-                color: "#777",
-                fontSize: 13,
+                margin: 0,
+                color:
+                  "#666",
+                lineHeight:
+                  1.7,
               }}
             >
-              後で管理者設定の塾ロゴに接続します。
+              生徒番号だけをQRに埋め込んだ生徒用QRシールを発行します。
             </p>
-          </div>
+          </header>
 
           {error && (
             <div
-              style={{
-                marginBottom: 16,
-
-                padding: 12,
-
-                background:
-                  "#fff1f1",
-
-                border:
-                  "1px solid #e0aaaa",
-
-                borderRadius: 6,
-              }}
+              style={
+                errorStyle
+              }
             >
               {error}
             </div>
           )}
 
-          <div
+          {/* ================================================
+              仕様表示
+              ================================================ */}
+
+          <section
             style={{
-              marginBottom: 16,
+              ...cardStyle,
+              marginBottom:
+                20,
             }}
           >
-            選択：
-            <strong>
-              {
-                selectedIds.length
-              }
-            </strong>
-            人
-          </div>
+            <h2>
+              シール仕様
+            </h2>
 
-          {loading ? (
-            <p>
-              生徒を読み込んでいます...
-            </p>
-          ) : (
             <div
               style={{
-                border:
-                  "1px solid #ddd",
-
-                borderRadius: 8,
-
-                overflow:
-                  "hidden",
+                display:
+                  "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(180px, 1fr))",
+                gap:
+                  12,
+                marginTop:
+                  16,
               }}
             >
-              {filteredStudents.map(
-                (
-                  student
-                ) => {
-                  const selected =
-                    selectedIds.includes(
-                      student.id
-                    );
+              <Spec
+                label="シールサイズ"
+                value="横3cm × 縦2cm"
+              />
 
-                  return (
-                    <label
-                      key={
-                        student.id
-                      }
-                      style={{
-                        display:
-                          "grid",
+              <Spec
+                label="配置"
+                value="横6 × 縦3"
+              />
 
-                        gridTemplateColumns:
-                          "40px 110px 1fr 120px 120px",
+              <Spec
+                label="1人あたり"
+                value="18枚"
+              />
 
-                        alignItems:
-                          "center",
+              <Spec
+                label="A4"
+                value="横向き・2人分"
+              />
 
-                        gap: 12,
+              <Spec
+                label="QR内容"
+                value="生徒番号のみ"
+              />
 
-                        padding:
-                          "12px 16px",
-
-                        borderBottom:
-                          "1px solid #eee",
-
-                        background:
-                          selected
-                            ? "#f5f8ff"
-                            : "#fff",
-
-                        cursor:
-                          "pointer",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={
-                          selected
-                        }
-                        onChange={() =>
-                          toggleStudent(
-                            student.id
-                          )
-                        }
-                      />
-
-                      <strong>
-                        {
-                          student.id
-                        }
-                      </strong>
-
-                      <span>
-                        {
-                          student.name
-                        }
-                      </span>
-
-                      <span>
-                        {
-                          student.grade
-                        }
-                      </span>
-
-                      <span>
-                        {
-                          student.className
-                        }
-                      </span>
-                    </label>
-                  );
-                }
-              )}
+              <Spec
+                label="シール表示"
+                value="氏名・生徒番号"
+              />
             </div>
-          )}
+          </section>
 
-          <div
+          {/* ================================================
+              絞り込み
+              ================================================ */}
+
+          <section
             style={{
-              marginTop: 24,
+              ...cardStyle,
+              marginBottom:
+                20,
             }}
           >
-            <button
-              type="button"
-              disabled={
-                generating ||
-                selectedStudents.length ===
-                  0
-              }
-              onClick={
-                printStickers
-              }
+            <h2>
+              生徒を選択
+            </h2>
+
+            <div
               style={{
-                padding:
-                  "14px 28px",
-
-                border: "none",
-
-                borderRadius: 7,
-
-                background:
-                  "#111",
-
-                color:
-                  "#fff",
-
-                fontSize: 16,
-
-                cursor:
-                  "pointer",
+                display:
+                  "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(200px, 1fr))",
+                gap:
+                  12,
+                marginTop:
+                  16,
               }}
             >
-              {generating
-                ? "印刷データを作成中..."
-                : "QRシールを印刷"}
-            </button>
-          </div>
-        </section>
-      </main>
+              <input
+                value={
+                  search
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSearch(
+                    event.target
+                      .value
+                  )
+                }
+                placeholder="氏名・生徒番号・クラス"
+                style={
+                  inputStyle
+                }
+              />
 
-      <main className="printArea">
-        {pages.map(
-          (
-            pageStudents,
-            pageIndex
-          ) => (
-            <section
-              className="stickerPage"
-              key={
-                pageIndex
-              }
+              <select
+                value={
+                  selectedSchool
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSelectedSchool(
+                    event.target
+                      .value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                <option value="">
+                  すべての校舎
+                </option>
+
+                {schools.map(
+                  (
+                    school
+                  ) => (
+                    <option
+                      key={
+                        school.id
+                      }
+                      value={
+                        school.id
+                      }
+                    >
+                      {
+                        school.name
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+
+              <select
+                value={
+                  selectedClass
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSelectedClass(
+                    event.target
+                      .value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                <option value="">
+                  すべてのクラス
+                </option>
+
+                {classNames.map(
+                  (
+                    className
+                  ) => (
+                    <option
+                      key={
+                        className
+                      }
+                      value={
+                        className
+                      }
+                    >
+                      {
+                        className
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+            </div>
+
+            <div
+              style={{
+                display:
+                  "flex",
+                gap:
+                  8,
+                flexWrap:
+                  "wrap",
+                marginTop:
+                  16,
+              }}
             >
-              {pageStudents.map(
-                (
-                  student
-                ) => (
-                  <StudentStickerSheet
-                    key={
-                      student.id
-                    }
-                    student={
-                      student
-                    }
-                    logoUrl={
-                      logoUrl
-                    }
-                  />
-                )
-              )}
-            </section>
-          )
-        )}
-      </main>
+              <button
+                type="button"
+                onClick={
+                  selectAllFiltered
+                }
+                style={
+                  secondaryButton
+                }
+              >
+                表示中をすべて選択
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  clearSelection
+                }
+                style={
+                  secondaryButton
+                }
+              >
+                選択解除
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  handlePrint
+                }
+                style={
+                  primaryButton
+                }
+              >
+                選択した生徒を印刷
+              </button>
+            </div>
+
+            <p
+              style={{
+                margin:
+                  "14px 0 0",
+                color:
+                  "#666",
+                fontSize:
+                  13,
+              }}
+            >
+              選択中：
+              {
+                selectedStudentIds.length
+              }
+              人
+            </p>
+          </section>
+
+          {/* ================================================
+              Student list
+              ================================================ */}
+
+          <section
+            style={
+              cardStyle
+            }
+          >
+            {loading ? (
+              <p>
+                読み込み中...
+              </p>
+            ) : (
+              <div
+                style={{
+                  overflowX:
+                    "auto",
+                }}
+              >
+                <table
+                  style={
+                    tableStyle
+                  }
+                >
+                  <thead>
+                    <tr>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        選択
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        生徒番号
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        氏名
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        学年
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        クラス
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        校舎
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredStudents.map(
+                      (
+                        student
+                      ) => {
+                        const checked =
+                          selectedStudentIds.includes(
+                            student.id
+                          );
+
+                        return (
+                          <tr
+                            key={
+                              student.id
+                            }
+                          >
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={
+                                  checked
+                                }
+                                onChange={() =>
+                                  toggleStudent(
+                                    student.id
+                                  )
+                                }
+                              />
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {
+                                student.studentNumber
+                              }
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {
+                                student.name
+                              }
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {
+                                student.grade
+                              }
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {student.className ||
+                                "—"}
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {getSchoolName(
+                                student.schoolId,
+                                schools
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }
+                    )}
+
+                    {filteredStudents.length ===
+                      0 && (
+                      <tr>
+                        <td
+                          colSpan={
+                            6
+                          }
+                          style={{
+                            ...tdStyle,
+                            textAlign:
+                              "center",
+                            padding:
+                              40,
+                            color:
+                              "#777",
+                          }}
+                        >
+                          対象の生徒がありません。
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </section>
+
+        {/* ==================================================
+            印刷ページ
+            ================================================== */}
+
+        <section className="printArea">
+          {selectedStudents.map(
+            (
+              student,
+              studentIndex
+            ) => (
+              <div
+                className="studentSheet"
+                key={
+                  student.id
+                }
+              >
+                <div className="sheetHeader">
+                  <div className="schoolLogo">
+                    塾ロゴ
+                  </div>
+
+                  <div className="studentHeader">
+                    <strong>
+                      {student.className ||
+                        student.grade}
+                    </strong>
+
+                    <span>
+                      {
+                        student.name
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <div className="stickerGrid">
+                  {Array.from(
+                    {
+                      length: 18,
+                    },
+                    (
+                      _,
+                      index
+                    ) => (
+                      <div
+                        className="sticker"
+                        key={
+                          `${student.id}-${index}`
+                        }
+                      >
+                        <div className="stickerQr">
+                          <div className="qrPlaceholder">
+                            QR
+                          </div>
+                        </div>
+
+                        <div className="stickerText">
+                          <div className="stickerName">
+                            {
+                              student.name
+                            }
+                          </div>
+
+                          <div className="stickerNumber">
+                            {
+                              student.studentNumber
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+
+                <div
+                  className="sheetSpacer"
+                />
+
+                <div
+                  className="printStudentNumber"
+                >
+                  {studentIndex +
+                    1}
+                </div>
+              </div>
+            )
+          )}
+        </section>
+      </div>
 
       <style jsx global>{`
-        @media screen {
-          .printArea {
-            display: none;
-          }
+        .printArea {
+          display: none;
         }
 
         @media print {
@@ -693,14 +1234,13 @@ export default function QrStickersPage() {
             margin: 0;
           }
 
-          html,
           body {
             margin: 0 !important;
             padding: 0 !important;
-            background: white !important;
+            background: #fff !important;
           }
 
-          .screenOnly {
+          .noPrint {
             display: none !important;
           }
 
@@ -708,251 +1248,344 @@ export default function QrStickersPage() {
             display: block !important;
           }
 
-          .stickerPage {
+          .studentSheet {
             width: 297mm;
             height: 210mm;
-
             box-sizing: border-box;
-
-            padding: 10mm 12mm;
-
+            padding: 8mm;
             page-break-after: always;
-
-            display: flex;
-
-            flex-direction: column;
-
-            gap: 10mm;
-
-            overflow: hidden;
+            background: #fff;
           }
 
-          .stickerPage:last-child {
+          .studentSheet:last-child {
             page-break-after: auto;
           }
 
-          .studentStickerSheet {
-            width: 100%;
-
-            height: 90mm;
-
+          .sheetHeader {
+            height: 16mm;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
             box-sizing: border-box;
+          }
 
-            position: relative;
-
-            overflow: hidden;
+          .schoolLogo {
+            font-size: 11pt;
+            font-weight: 700;
           }
 
           .studentHeader {
-            height: 15mm;
-
             display: flex;
-
-            align-items: flex-start;
-
-            justify-content: space-between;
-
-            box-sizing: border-box;
-
-            padding:
-              0 2mm 2mm 2mm;
-          }
-
-          .studentHeaderLogo {
-            width: 42mm;
-
-            height: 10mm;
-
-            object-fit: contain;
-
-            object-position: left
-              center;
-          }
-
-          .studentHeaderText {
-            font-size: 12pt;
-
-            font-weight: 700;
-
-            white-space: nowrap;
-
-            padding-top: 1mm;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 1mm;
+            font-size: 11pt;
           }
 
           .stickerGrid {
-            width: 180mm;
-
-            height: 60mm;
-
-            margin-left: auto;
-
-            margin-right: auto;
-
             display: grid;
-
-            grid-template-columns:
-              repeat(6, 30mm);
-
-            grid-template-rows:
-              repeat(3, 20mm);
+            grid-template-columns: repeat(6, 30mm);
+            grid-template-rows: repeat(3, 20mm);
+            column-gap: 4mm;
+            row-gap: 4mm;
+            justify-content: center;
+            align-content: start;
           }
 
           .sticker {
             width: 30mm;
-
             height: 20mm;
-
             box-sizing: border-box;
-
-            border: 0.25mm solid #999;
-
+            border: 0.3mm solid #000;
             display: flex;
-
             align-items: center;
-
-            padding:
-              1.5mm;
-
+            padding: 2mm;
+            background: #fff;
             overflow: hidden;
-
-            break-inside: avoid;
           }
 
           .stickerQr {
-            width: 16mm;
-
+            width: 14mm;
             height: 16mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+          }
 
-            flex: 0 0 16mm;
-
-            object-fit: contain;
+          .qrPlaceholder {
+            width: 13mm;
+            height: 13mm;
+            border: 0.3mm solid #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 7pt;
           }
 
           .stickerText {
-            min-width: 0;
-
             flex: 1;
-
-            height: 17mm;
-
-            display: flex;
-
-            flex-direction: column;
-
-            justify-content: center;
-
-            padding-left: 1.5mm;
-
+            min-width: 0;
+            margin-left: 2mm;
+            text-align: left;
             overflow: hidden;
           }
 
           .stickerName {
-            font-size: 8pt;
-
-            line-height: 1.25;
-
+            font-size: 7pt;
             font-weight: 700;
-
             white-space: nowrap;
-
             overflow: hidden;
-
             text-overflow: ellipsis;
           }
 
           .stickerNumber {
-            font-size: 8pt;
-
-            line-height: 1.25;
-
-            font-weight: 600;
-
             margin-top: 1mm;
-
+            font-size: 7pt;
             white-space: nowrap;
+          }
+
+          .sheetSpacer {
+            height: 15mm;
+          }
+
+          .printStudentNumber {
+            display: none;
           }
         }
       `}</style>
-    </>
+    </main>
   );
 }
 
 /* =========================================================
-   1人分のシート
+   Components
    ========================================================= */
 
-function StudentStickerSheet({
-  student,
-  logoUrl,
+function Spec({
+  label,
+  value,
 }: {
-  student: StickerStudent;
-
-  logoUrl: string;
+  label: string;
+  value: string;
 }) {
   return (
-    <div className="studentStickerSheet">
-      <div className="studentHeader">
-        {logoUrl ? (
-          <img
-            className="studentHeaderLogo"
-            src={logoUrl}
-            alt=""
-          />
-        ) : (
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: 12,
-            }}
-          >
-            塾ロゴ
-          </div>
-        )}
-
-        <div className="studentHeaderText">
-          {student.grade}{" "}
-          {student.className}{" "}
-          {student.name}
-        </div>
+    <div
+      style={{
+        padding:
+          14,
+        border:
+          "1px solid #eee",
+        borderRadius:
+          8,
+      }}
+    >
+      <div
+        style={{
+          color:
+            "#777",
+          fontSize:
+            12,
+        }}
+      >
+        {label}
       </div>
 
-      <div className="stickerGrid">
-        {Array.from({
-          length:
-            STICKERS_PER_STUDENT,
-        }).map(
-          (_, index) => (
-            <div
-              className="sticker"
-              key={index}
-            >
-              {student.qrDataUrl && (
-                <img
-                  className="stickerQr"
-                  src={
-                    student.qrDataUrl
-                  }
-                  alt=""
-                />
-              )}
-
-              <div className="stickerText">
-                <div className="stickerName">
-                  {
-                    student.name
-                  }
-                </div>
-
-                <div className="stickerNumber">
-                  {
-                    student.id
-                  }
-                </div>
-              </div>
-            </div>
-          )
-        )}
-      </div>
+      <strong
+        style={{
+          display:
+            "block",
+          marginTop:
+            5,
+          fontSize:
+            14,
+        }}
+      >
+        {value}
+      </strong>
     </div>
   );
 }
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+function getSchoolName(
+  schoolId: string,
+  schools: School[]
+) {
+  return (
+    schools.find(
+      (
+        school
+      ) =>
+        school.id ===
+        schoolId
+    )?.name ??
+    "不明"
+  );
+}
+
+function getSafeErrorMessage(
+  error: unknown
+): string {
+  const firebaseError =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    firebaseError?.code
+  ) {
+    case "permission-denied":
+      return "この操作を行う権限がありません。";
+
+    case "unauthenticated":
+      return "ログイン状態を確認できません。";
+
+    case "failed-precondition":
+      return "現在この操作を実行できません。";
+
+    case "unavailable":
+      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
+
+    default:
+      return "生徒情報を取得できませんでした。";
+  }
+}
+
+/* =========================================================
+   Styles
+   ========================================================= */
+
+const pageStyle:
+  React.CSSProperties = {
+    minHeight:
+      "100vh",
+    padding:
+      32,
+    background:
+      "#f5f6f8",
+  };
+
+const cardStyle:
+  React.CSSProperties = {
+    padding:
+      24,
+    background:
+      "#fff",
+    border:
+      "1px solid #e1e4e8",
+    borderRadius:
+      12,
+  };
+
+const inputStyle:
+  React.CSSProperties = {
+    width:
+      "100%",
+    padding:
+      "11px 12px",
+    border:
+      "1px solid #ccc",
+    borderRadius:
+      7,
+    background:
+      "#fff",
+  };
+
+const primaryButton:
+  React.CSSProperties = {
+    padding:
+      "11px 20px",
+    border:
+      "none",
+    borderRadius:
+      7,
+    background:
+      "#111",
+    color:
+      "#fff",
+    fontWeight:
+      600,
+    cursor:
+      "pointer",
+  };
+
+const secondaryButton:
+  React.CSSProperties = {
+    padding:
+      "9px 14px",
+    border:
+      "1px solid #ccc",
+    borderRadius:
+      7,
+    background:
+      "#fff",
+    cursor:
+      "pointer",
+  };
+
+const errorStyle:
+  React.CSSProperties = {
+    marginBottom:
+      16,
+    padding:
+      14,
+    border:
+      "1px solid #efb5b5",
+    borderRadius:
+      8,
+    background:
+      "#fff4f4",
+    color:
+      "#9b1c1c",
+  };
+
+const tableStyle:
+  React.CSSProperties = {
+    width:
+      "100%",
+    borderCollapse:
+      "collapse",
+  };
+
+const thStyle:
+  React.CSSProperties = {
+    padding:
+      "11px 12px",
+    textAlign:
+      "left",
+    borderBottom:
+      "2px solid #ddd",
+    whiteSpace:
+      "nowrap",
+  };
+
+const tdStyle:
+  React.CSSProperties = {
+    padding:
+      "12px",
+    borderBottom:
+      "1px solid #eee",
+    fontSize:
+      14,
+    whiteSpace:
+      "nowrap",
+  };
