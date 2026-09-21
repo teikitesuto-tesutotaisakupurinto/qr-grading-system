@@ -15,11 +15,11 @@ import {
 import {
   addDoc,
   collection,
+  doc,
   getDocs,
   query,
   serverTimestamp,
   updateDoc,
-  doc,
   where,
 } from "firebase/firestore";
 
@@ -34,6 +34,13 @@ type UserRole =
   | "講師"
   | "生徒";
 
+type GradingMethod =
+  | "選択式"
+  | "数値"
+  | "短答"
+  | "記述"
+  | "手動";
+
 type CurrentUser = {
   uid: string;
   organizationId: string | null;
@@ -47,6 +54,14 @@ type School = {
   active: boolean;
 };
 
+type GradingSettings = {
+  automaticGrading: boolean;
+  aiGrading: boolean;
+  firstReviewRequired: boolean;
+  secondReviewRequired: boolean;
+  allowManualCorrection: boolean;
+};
+
 type Test = {
   id: string;
   organizationId: string;
@@ -58,6 +73,8 @@ type Test = {
   className: string;
   examDate: string;
   totalScore: number;
+  gradingMethod: GradingMethod;
+  gradingSettings: GradingSettings;
   active: boolean;
 };
 
@@ -87,13 +104,27 @@ const GRADES = [
   "高校3年",
 ];
 
+const GRADING_METHODS: GradingMethod[] = [
+  "選択式",
+  "数値",
+  "短答",
+  "記述",
+  "手動",
+];
+
+const DEFAULT_GRADING_SETTINGS: GradingSettings = {
+  automaticGrading: true,
+  aiGrading: false,
+  firstReviewRequired: true,
+  secondReviewRequired: true,
+  allowManualCorrection: true,
+};
+
 export default function TestsPage() {
   const [
     currentUser,
     setCurrentUser,
-  ] = useState<CurrentUser | null>(
-    null
-  );
+  ] = useState<CurrentUser | null>(null);
 
   const [
     tests,
@@ -133,9 +164,7 @@ export default function TestsPage() {
   const [
     editingId,
     setEditingId,
-  ] = useState<string | null>(
-    null
-  );
+  ] = useState<string | null>(null);
 
   const [
     testId,
@@ -177,6 +206,22 @@ export default function TestsPage() {
     setTotalScore,
   ] = useState("100");
 
+  const [
+    gradingMethod,
+    setGradingMethod,
+  ] =
+    useState<GradingMethod>(
+      "選択式"
+    );
+
+  const [
+    gradingSettings,
+    setGradingSettings,
+  ] =
+    useState<GradingSettings>(
+      DEFAULT_GRADING_SETTINGS
+    );
+
   /*
    * ========================================================
    * 認証
@@ -188,6 +233,10 @@ export default function TestsPage() {
       onAuthStateChanged(
         auth,
         async (firebaseUser) => {
+          /*
+           * エラーで勝手に
+           * /loginへ戻さない。
+           */
           if (!firebaseUser) {
             setLoading(false);
 
@@ -236,6 +285,19 @@ export default function TestsPage() {
                 ? data.role
                 : null;
 
+            const schoolIds =
+              Array.isArray(
+                data.schoolIds
+              )
+                ? data.schoolIds.filter(
+                    (
+                      value
+                    ): value is string =>
+                      typeof value ===
+                      "string"
+                  )
+                : [];
+
             setCurrentUser({
               uid:
                 firebaseUser.uid,
@@ -248,21 +310,11 @@ export default function TestsPage() {
 
               role,
 
-              schoolIds:
-                Array.isArray(
-                  data.schoolIds
-                )
-                  ? data.schoolIds.filter(
-                      (
-                        value
-                      ): value is string =>
-                        typeof value ===
-                        "string"
-                    )
-                  : [],
+              schoolIds,
             });
           } catch (err) {
             console.error(
+              "Test authentication error:",
               err
             );
 
@@ -312,35 +364,36 @@ export default function TestsPage() {
       const [
         testSnapshot,
         schoolSnapshot,
-      ] = await Promise.all([
-        getDocs(
-          query(
-            collection(
-              db,
-              "tests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
+      ] =
+        await Promise.all([
+          getDocs(
+            query(
+              collection(
+                db,
+                "tests"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "schools"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
+          getDocs(
+            query(
+              collection(
+                db,
+                "schools"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
             )
-          )
-        ),
-      ]);
+          ),
+        ]);
 
       const loadedTests =
         testSnapshot.docs.map(
@@ -349,6 +402,18 @@ export default function TestsPage() {
           ): Test => {
             const data =
               item.data();
+
+            const rawSettings =
+              data.gradingSettings;
+
+            const settings: GradingSettings =
+              isGradingSettings(
+                rawSettings
+              )
+                ? rawSettings
+                : {
+                    ...DEFAULT_GRADING_SETTINGS,
+                  };
 
             return {
               id:
@@ -403,6 +468,16 @@ export default function TestsPage() {
                 "number"
                   ? data.totalScore
                   : 0,
+
+              gradingMethod:
+                isGradingMethod(
+                  data.gradingMethod
+                )
+                  ? data.gradingMethod
+                  : "選択式",
+
+              gradingSettings:
+                settings,
 
               active:
                 data.active !==
@@ -464,6 +539,7 @@ export default function TestsPage() {
       }
     } catch (err) {
       console.error(
+        "Test loading error:",
         err
       );
 
@@ -522,11 +598,114 @@ export default function TestsPage() {
           .toUpperCase()
           .slice(-7)}`;
     } while (
-      existing.has(value)
+      existing.has(
+        value
+      )
     );
 
     setTestId(
       value
+    );
+  }
+
+  /*
+   * ========================================================
+   * 採点設定更新
+   * ========================================================
+   */
+
+  function updateGradingSetting<
+    K extends keyof GradingSettings
+  >(
+    key: K,
+    value: GradingSettings[K]
+  ) {
+    setGradingSettings(
+      (
+        current
+      ) => ({
+        ...current,
+
+        [key]:
+          value,
+      })
+    );
+
+    setMessage("");
+  }
+
+  /*
+   * ========================================================
+   * 採点方式変更
+   * ========================================================
+   */
+
+  function handleGradingMethodChange(
+    value: GradingMethod
+  ) {
+    setGradingMethod(
+      value
+    );
+
+    /*
+     * 手動採点の場合、
+     * 自動採点とAI採点はOFF。
+     */
+    if (
+      value ===
+      "手動"
+    ) {
+      setGradingSettings(
+        (
+          current
+        ) => ({
+          ...current,
+
+          automaticGrading:
+            false,
+
+          aiGrading:
+            false,
+        })
+      );
+
+      return;
+    }
+
+    /*
+     * 記述の場合はAI採点を
+     * 利用できる状態にする。
+     */
+    if (
+      value ===
+      "記述"
+    ) {
+      setGradingSettings(
+        (
+          current
+        ) => ({
+          ...current,
+
+          automaticGrading:
+            true,
+
+          aiGrading:
+            true,
+        })
+      );
+
+      return;
+    }
+
+    setGradingSettings(
+      (
+        current
+      ) => ({
+        ...current,
+
+        automaticGrading:
+          true,
+      })
     );
   }
 
@@ -537,7 +716,9 @@ export default function TestsPage() {
    */
 
   async function saveTest() {
-    if (saving) {
+    if (
+      saving
+    ) {
       return;
     }
 
@@ -590,8 +771,11 @@ export default function TestsPage() {
       );
 
     if (
-      !Number.isFinite(score) ||
-      score <= 0
+      !Number.isFinite(
+        score
+      ) ||
+      score <=
+        0
     ) {
       setError(
         "満点は1以上の数字で入力してください。"
@@ -600,9 +784,12 @@ export default function TestsPage() {
       return;
     }
 
+    /*
+     * 校舎権限
+     */
     if (
       currentUser.role !==
-        "本部管理者" &&
+      "本部管理者" &&
       !currentUser.schoolIds.includes(
         schoolId
       )
@@ -614,11 +801,26 @@ export default function TestsPage() {
       return;
     }
 
+    /*
+     * 手動採点なら自動採点OFF
+     */
+    if (
+      gradingMethod ===
+      "手動" &&
+      gradingSettings.automaticGrading
+    ) {
+      setError(
+        "手動採点では自動採点を有効にできません。"
+      );
+
+      return;
+    }
+
     try {
       setSaving(true);
 
       /*
-       * テストIDは組織内で一意。
+       * テストID重複確認
        */
 
       const duplicateSnapshot =
@@ -636,7 +838,9 @@ export default function TestsPage() {
             where(
               "testId",
               "==",
-              testId.trim()
+              testId
+                .trim()
+                .toUpperCase()
             )
           )
         );
@@ -683,6 +887,28 @@ export default function TestsPage() {
 
         totalScore:
           score,
+
+        gradingMethod,
+
+        gradingSettings: {
+          ...gradingSettings,
+
+          /*
+           * 手動採点なら
+           * 自動採点を強制OFF。
+           */
+          automaticGrading:
+            gradingMethod ===
+            "手動"
+              ? false
+              : gradingSettings.automaticGrading,
+
+          aiGrading:
+            gradingMethod ===
+            "手動"
+              ? false
+              : gradingSettings.aiGrading,
+        },
 
         active:
           true,
@@ -732,6 +958,7 @@ export default function TestsPage() {
       );
     } catch (err) {
       console.error(
+        "Test save error:",
         err
       );
 
@@ -801,6 +1028,16 @@ export default function TestsPage() {
       test.totalScore.toString()
     );
 
+    setGradingMethod(
+      test.gradingMethod
+    );
+
+    setGradingSettings(
+      {
+        ...test.gradingSettings,
+      }
+    );
+
     setError("");
     setMessage("");
 
@@ -828,7 +1065,7 @@ export default function TestsPage() {
 
     if (
       currentUser.role !==
-        "本部管理者" &&
+      "本部管理者" &&
       !currentUser.schoolIds.includes(
         test.schoolId
       )
@@ -874,6 +1111,7 @@ export default function TestsPage() {
       }
     } catch (err) {
       console.error(
+        "Test status error:",
         err
       );
 
@@ -916,6 +1154,16 @@ export default function TestsPage() {
       "100"
     );
 
+    setGradingMethod(
+      "選択式"
+    );
+
+    setGradingSettings(
+      {
+        ...DEFAULT_GRADING_SETTINGS,
+      }
+    );
+
     const first =
       availableSchools[0];
 
@@ -938,7 +1186,9 @@ export default function TestsPage() {
           .trim()
           .toLowerCase();
 
-      if (!keyword) {
+      if (
+        !keyword
+      ) {
         return tests;
       }
 
@@ -1048,7 +1298,7 @@ export default function TestsPage() {
                 1.7,
             }}
           >
-            テストID・教科・学年・配点を管理します。
+            テスト情報と採点方法を管理します。
           </p>
         </header>
 
@@ -1067,7 +1317,7 @@ export default function TestsPage() {
         )}
 
         {/* ==================================================
-            登録
+            テスト登録
             ================================================== */}
 
         <section
@@ -1111,7 +1361,7 @@ export default function TestsPage() {
                     13,
                 }}
               >
-                テストIDは答案用紙のテストID QRと一致させます。
+                問題文や問題データは登録せず、答案画像から解析します。
               </p>
             </div>
 
@@ -1130,6 +1380,23 @@ export default function TestsPage() {
             )}
           </div>
 
+          {/* ================================================
+              基本情報
+              ================================================ */}
+
+          <h3
+            style={{
+              marginTop:
+                24,
+              marginBottom:
+                0,
+              fontSize:
+                15,
+            }}
+          >
+            基本情報
+          </h3>
+
           <div
             style={{
               display:
@@ -1139,7 +1406,7 @@ export default function TestsPage() {
               gap:
                 16,
               marginTop:
-                20,
+                16,
             }}
           >
             <label>
@@ -1393,6 +1660,231 @@ export default function TestsPage() {
             </label>
           </div>
 
+          {/* ================================================
+              採点設定
+              ================================================ */}
+
+          <h3
+            style={{
+              marginTop:
+                30,
+              marginBottom:
+                0,
+              fontSize:
+                15,
+            }}
+          >
+            採点設定
+          </h3>
+
+          <div
+            style={{
+              marginTop:
+                16,
+            }}
+          >
+            <label>
+              採点方式
+
+              <select
+                value={
+                  gradingMethod
+                }
+                onChange={(
+                  event
+                ) =>
+                  handleGradingMethodChange(
+                    event.target
+                      .value as GradingMethod
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                {GRADING_METHODS.map(
+                  (
+                    method
+                  ) => (
+                    <option
+                      key={
+                        method
+                      }
+                      value={
+                        method
+                      }
+                    >
+                      {
+                        method
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <div
+              style={{
+                marginTop:
+                  18,
+
+                border:
+                  "1px solid #eee",
+
+                borderRadius:
+                  10,
+
+                overflow:
+                  "hidden",
+              }}
+            >
+              <SettingToggle
+                label="自動採点を使用する"
+                description="OCR・答案解析後に採点処理を自動で実行します。"
+                checked={
+                  gradingSettings.automaticGrading
+                }
+                disabled={
+                  gradingMethod ===
+                  "手動"
+                }
+                onChange={(
+                  value
+                ) =>
+                  updateGradingSetting(
+                    "automaticGrading",
+                    value
+                  )
+                }
+              />
+
+              <SettingToggle
+                label="AI採点を使用する"
+                description="記述式など、単純な正誤比較が難しい答案の採点候補をAIで作成します。"
+                checked={
+                  gradingSettings.aiGrading
+                }
+                disabled={
+                  gradingMethod ===
+                    "手動" ||
+                  gradingMethod !==
+                    "記述"
+                }
+                onChange={(
+                  value
+                ) =>
+                  updateGradingSetting(
+                    "aiGrading",
+                    value
+                  )
+                }
+              />
+
+              <SettingToggle
+                label="一次確認を必須にする"
+                description="自動採点後、講師などによる一次確認を必須にします。"
+                checked={
+                  gradingSettings.firstReviewRequired
+                }
+                onChange={(
+                  value
+                ) =>
+                  updateGradingSetting(
+                    "firstReviewRequired",
+                    value
+                  )
+                }
+              />
+
+              <SettingToggle
+                label="二次確認を必須にする"
+                description="一次確認後、別の確認者による二次確認を必須にします。"
+                checked={
+                  gradingSettings.secondReviewRequired
+                }
+                onChange={(
+                  value
+                ) =>
+                  updateGradingSetting(
+                    "secondReviewRequired",
+                    value
+                  )
+                }
+              />
+
+              <SettingToggle
+                label="手動修正を許可する"
+                description="自動採点結果を確認者が修正できるようにします。"
+                checked={
+                  gradingSettings.allowManualCorrection
+                }
+                onChange={(
+                  value
+                ) =>
+                  updateGradingSetting(
+                    "allowManualCorrection",
+                    value
+                  )
+                }
+              />
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop:
+                18,
+
+              padding:
+                14,
+
+              background:
+                "#f7f7f7",
+
+              borderRadius:
+                8,
+
+              color:
+                "#555",
+
+              fontSize:
+                13,
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            <strong>
+              現在の設定：
+            </strong>
+
+            {" "}
+
+            {gradingMethod}
+
+            {" / "}
+
+            {gradingSettings.automaticGrading
+              ? "自動採点"
+              : "手動採点"}
+
+            {" / "}
+
+            {gradingSettings.firstReviewRequired
+              ? "一次確認あり"
+              : "一次確認なし"}
+
+            {" / "}
+
+            {gradingSettings.secondReviewRequired
+              ? "二次確認あり"
+              : "二次確認なし"}
+          </div>
+
+          {/* ================================================
+              保存
+              ================================================ */}
+
           <div
             style={{
               display:
@@ -1568,7 +2060,7 @@ export default function TestsPage() {
                         thStyle
                       }
                     >
-                      実施日
+                      採点方式
                     </th>
 
                     <th
@@ -1576,7 +2068,7 @@ export default function TestsPage() {
                         thStyle
                       }
                     >
-                      満点
+                      実施日
                     </th>
 
                     <th
@@ -1654,8 +2146,9 @@ export default function TestsPage() {
                             tdStyle
                           }
                         >
-                          {test.examDate ||
-                            "—"}
+                          {
+                            test.gradingMethod
+                          }
                         </td>
 
                         <td
@@ -1663,9 +2156,8 @@ export default function TestsPage() {
                             tdStyle
                           }
                         >
-                          {
-                            test.totalScore
-                          }
+                          {test.examDate ||
+                            "—"}
                         </td>
 
                         <td
@@ -1689,6 +2181,8 @@ export default function TestsPage() {
                                 "flex",
                               gap:
                                 8,
+                              flexWrap:
+                                "wrap",
                             }}
                           >
                             <button
@@ -1746,10 +2240,10 @@ export default function TestsPage() {
                         }
                         style={{
                           ...tdStyle,
-                          textAlign:
-                            "center",
                           padding:
                             40,
+                          textAlign:
+                            "center",
                           color:
                             "#777",
                         }}
@@ -1769,99 +2263,109 @@ export default function TestsPage() {
 }
 
 /* =========================================================
-   Helpers
+   SettingToggle
    ========================================================= */
 
-function getAvailableSchools(
-  schools: School[],
-  user: CurrentUser | null
-) {
-  if (!user) {
-    return [];
-  }
+function SettingToggle({
+  label,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
 
-  const activeSchools =
-    schools.filter(
-      (
-        school
-      ) =>
-        school.active
-    );
+  description: string;
 
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return activeSchools;
-  }
+  checked: boolean;
 
-  return activeSchools.filter(
-    (
-      school
-    ) =>
-      user.schoolIds.includes(
-        school.id
-      )
-  );
-}
+  disabled?: boolean;
 
-function isUserRole(
-  value: unknown
-): value is UserRole {
+  onChange: (
+    value: boolean
+  ) => void;
+}) {
   return (
-    value ===
-      "本部管理者" ||
-    value ===
-      "校舎管理者" ||
-    value ===
-      "講師" ||
-    value ===
-      "生徒"
+    <label
+      style={{
+        display:
+          "flex",
+
+        alignItems:
+          "flex-start",
+
+        gap:
+          12,
+
+        padding:
+          15,
+
+        borderBottom:
+          "1px solid #eee",
+
+        cursor:
+          disabled
+            ? "default"
+            : "pointer",
+
+        opacity:
+          disabled
+            ? 0.5
+            : 1,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={
+          checked
+        }
+        disabled={
+          disabled
+        }
+        onChange={(
+          event
+        ) =>
+          onChange(
+            event.target
+              .checked
+          )
+        }
+        style={{
+          marginTop:
+            3,
+        }}
+      />
+
+      <span>
+        <strong>
+          {label}
+        </strong>
+
+        <span
+          style={{
+            display:
+              "block",
+
+            marginTop:
+              4,
+
+            color:
+              "#777",
+
+            fontSize:
+              12,
+
+            lineHeight:
+              1.6,
+          }}
+        >
+          {
+            description
+          }
+        </span>
+      </span>
+    </label>
   );
-}
-
-function isFirebaseError(
-  error: unknown
-) {
-  const value =
-    error as {
-      code?: string;
-    };
-
-  return Boolean(
-    value?.code
-  );
-}
-
-function getSafeErrorMessage(
-  error: unknown
-) {
-  const value =
-    error as {
-      code?: string;
-    };
-
-  switch (
-    value?.code
-  ) {
-    case "permission-denied":
-      return "この操作を行う権限がありません。";
-
-    case "unauthenticated":
-      return "ログイン状態を確認できません。";
-
-    case "already-exists":
-      return "同じデータがすでに登録されています。";
-
-    case "failed-precondition":
-      return "現在この操作を実行できません。";
-
-    case "unavailable":
-      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
-
-    default:
-      return "テスト情報を処理できませんでした。";
-  }
 }
 
 /* =========================================================
@@ -1918,6 +2422,150 @@ function Message({
       {message}
     </div>
   );
+}
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+function isGradingMethod(
+  value: unknown
+): value is GradingMethod {
+  return (
+    value ===
+      "選択式" ||
+    value ===
+      "数値" ||
+    value ===
+      "短答" ||
+    value ===
+      "記述" ||
+    value ===
+      "手動"
+  );
+}
+
+function isGradingSettings(
+  value: unknown
+): value is GradingSettings {
+  if (
+    !value ||
+    typeof value !==
+      "object"
+  ) {
+    return false;
+  }
+
+  const data =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  return (
+    typeof data.automaticGrading ===
+      "boolean" &&
+    typeof data.aiGrading ===
+      "boolean" &&
+    typeof data.firstReviewRequired ===
+      "boolean" &&
+    typeof data.secondReviewRequired ===
+      "boolean" &&
+    typeof data.allowManualCorrection ===
+      "boolean"
+  );
+}
+
+function getAvailableSchools(
+  schools: School[],
+  user: CurrentUser | null
+) {
+  if (!user) {
+    return [];
+  }
+
+  const activeSchools =
+    schools.filter(
+      (
+        school
+      ) =>
+        school.active
+    );
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return activeSchools;
+  }
+
+  return activeSchools.filter(
+    (
+      school
+    ) =>
+      user.schoolIds.includes(
+        school.id
+      )
+  );
+}
+
+function isFirebaseError(
+  error: unknown
+) {
+  const value =
+    error as {
+      code?: string;
+    };
+
+  return Boolean(
+    value?.code
+  );
+}
+
+function getSafeErrorMessage(
+  error: unknown
+) {
+  const value =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    value?.code
+  ) {
+    case "permission-denied":
+      return "この操作を行う権限がありません。";
+
+    case "unauthenticated":
+      return "ログイン状態を確認できません。";
+
+    case "already-exists":
+      return "同じデータがすでに登録されています。";
+
+    case "failed-precondition":
+      return "現在この操作を実行できません。";
+
+    case "unavailable":
+      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
+
+    default:
+      return "テスト情報を処理できませんでした。";
+  }
 }
 
 /* =========================================================
@@ -2015,6 +2663,9 @@ const secondaryButton:
 
     cursor:
       "pointer",
+
+    whiteSpace:
+      "nowrap",
   };
 
 const smallButton:
