@@ -28,32 +28,42 @@ import {
   db,
 } from "@/lib/firebase";
 
-type UserRole =
-  | "本部管理者"
-  | "校舎管理者"
-  | "講師"
-  | "生徒";
+import type {
+  UserRole,
+} from "@/lib/types";
+
+type AppShellProps = {
+  children: ReactNode;
+};
 
 type UserProfile = {
   uid: string;
-  role: UserRole | null;
-  organizationId: string | null;
+
+  role:
+    | UserRole
+    | null;
+
+  organizationId:
+    | string
+    | null;
+
   schoolIds: string[];
-  studentId: string | null;
+
+  studentId:
+    | string
+    | null;
 };
 
 type MenuItem = {
   label: string;
+
   href: string;
 };
 
 type MenuSection = {
   label: string;
-  items: MenuItem[];
-};
 
-type AppShellProps = {
-  children: ReactNode;
+  items: MenuItem[];
 };
 
 /* =========================================================
@@ -63,6 +73,7 @@ type AppShellProps = {
 const HEAD_OFFICE_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -73,11 +84,13 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "生徒・テスト",
+
     items: [
       {
         label: "生徒管理",
         href: "/students",
       },
+
       {
         label: "テスト管理",
         href: "/tests",
@@ -87,15 +100,18 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
@@ -105,15 +121,18 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/grades",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -123,6 +142,7 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -133,27 +153,33 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 
   {
     label: "本部管理",
+
     items: [
       {
         label: "校舎管理",
         href: "/schools",
       },
+
       {
         label: "講師管理",
         href: "/teachers",
       },
+
       {
         label: "権限管理",
         href: "/roles",
       },
+
       {
         label: "利用状況",
         href: "/usage",
       },
+
       {
         label: "システムログ",
         href: "/logs",
       },
+
       {
         label: "システム設定",
         href: "/settings",
@@ -169,6 +195,7 @@ const HEAD_OFFICE_MENU: MenuSection[] = [
 const SCHOOL_ADMIN_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -179,11 +206,13 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "生徒・テスト",
+
     items: [
       {
         label: "生徒管理",
         href: "/students",
       },
+
       {
         label: "テスト管理",
         href: "/tests",
@@ -193,15 +222,18 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
@@ -211,15 +243,18 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/grades",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -229,6 +264,7 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -239,11 +275,13 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 
   {
     label: "校舎運用",
+
     items: [
       {
         label: "利用状況",
         href: "/usage",
       },
+
       {
         label: "システムログ",
         href: "/logs",
@@ -259,6 +297,7 @@ const SCHOOL_ADMIN_MENU: MenuSection[] = [
 const TEACHER_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -269,6 +308,7 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "授業",
+
     items: [
       {
         label: "テスト",
@@ -279,15 +319,18 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "答案・採点",
+
     items: [
       {
         label: "答案管理",
         href: "/grading",
       },
+
       {
         label: "一次確認",
         href: "/grading/review",
       },
+
       {
         label: "二次確認",
         href: "/grading/second-review",
@@ -297,15 +340,18 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "成績",
+
     items: [
       {
         label: "成績",
         href: "/grades",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "追試",
         href: "/retests",
@@ -315,6 +361,7 @@ const TEACHER_MENU: MenuSection[] = [
 
   {
     label: "QR",
+
     items: [
       {
         label: "QRシール発行",
@@ -331,6 +378,7 @@ const TEACHER_MENU: MenuSection[] = [
 const STUDENT_MENU: MenuSection[] = [
   {
     label: "メイン",
+
     items: [
       {
         label: "ダッシュボード",
@@ -341,15 +389,18 @@ const STUDENT_MENU: MenuSection[] = [
 
   {
     label: "学習",
+
     items: [
       {
         label: "成績",
         href: "/grades",
       },
+
       {
         label: "成績表",
         href: "/reports",
       },
+
       {
         label: "学習履歴",
         href: "/learning",
@@ -365,35 +416,60 @@ const STUDENT_MENU: MenuSection[] = [
 export default function AppShell({
   children,
 }: AppShellProps) {
-  const router = useRouter();
-  const pathname = usePathname();
+  const router =
+    useRouter();
 
-  const [user, setUser] =
+  const pathname =
+    usePathname();
+
+  const [
+    user,
+    setUser,
+  ] =
     useState<UserProfile | null>(
       null
     );
 
-  const [loading, setLoading] =
+  const [
+    loading,
+    setLoading,
+  ] =
     useState(true);
 
-  const [error, setError] =
+  const [
+    error,
+    setError,
+  ] =
     useState("");
 
-  const [loggingOut, setLoggingOut] =
+  const [
+    loggingOut,
+    setLoggingOut,
+  ] =
     useState(false);
 
   /* =======================================================
-     Firebase認証
+     Firebase Authentication
      ======================================================= */
 
   useEffect(() => {
     const unsubscribe =
       onAuthStateChanged(
         auth,
-        async (firebaseUser) => {
-          if (!firebaseUser) {
-            setUser(null);
-            setLoading(false);
+        async (
+          firebaseUser
+        ) => {
+          if (
+            !firebaseUser
+          ) {
+            setUser(
+              null
+            );
+
+            setLoading(
+              false
+            );
+
             return;
           }
 
@@ -407,13 +483,20 @@ export default function AppShell({
                 )
               );
 
-            if (!snapshot.exists()) {
+            if (
+              !snapshot.exists()
+            ) {
+              setUser(
+                null
+              );
+
               setError(
                 "ユーザー情報が登録されていません。"
               );
 
-              setUser(null);
-              setLoading(false);
+              setLoading(
+                false
+              );
 
               return;
             }
@@ -459,16 +542,25 @@ export default function AppShell({
             });
 
             setError("");
-          } catch (err) {
-            console.error(err);
+          } catch (
+            err
+          ) {
+            console.error(
+              "Tsystem authentication error:",
+              err
+            );
+
+            setUser(
+              null
+            );
 
             setError(
               "ユーザー情報を取得できませんでした。"
             );
-
-            setUser(null);
           } finally {
-            setLoading(false);
+            setLoading(
+              false
+            );
           }
         }
       );
@@ -479,23 +571,30 @@ export default function AppShell({
   }, []);
 
   /* =======================================================
-     ログイン画面はShellを付けない
+     Login page
      ======================================================= */
 
   if (
-    pathname === "/login" ||
+    pathname ===
+      "/login" ||
     pathname.startsWith(
       "/login/"
     )
   ) {
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+      </>
+    );
   }
 
   /* =======================================================
      Loading
      ======================================================= */
 
-  if (loading) {
+  if (
+    loading
+  ) {
     return (
       <div className="ts-loading">
         <div>
@@ -512,10 +611,12 @@ export default function AppShell({
   }
 
   /* =======================================================
-     未ログイン
+     Unauthenticated
      ======================================================= */
 
-  if (!user) {
+  if (
+    !user
+  ) {
     return (
       <div className="ts-center">
         <div className="ts-error-card">
@@ -533,6 +634,7 @@ export default function AppShell({
           </p>
 
           <button
+            type="button"
             onClick={() =>
               router.push(
                 "/login"
@@ -548,10 +650,12 @@ export default function AppShell({
   }
 
   /* =======================================================
-     権限なし
+     Role missing
      ======================================================= */
 
-  if (!user.role) {
+  if (
+    !user.role
+  ) {
     return (
       <div className="ts-center">
         <div className="ts-error-card">
@@ -568,6 +672,7 @@ export default function AppShell({
           </p>
 
           <button
+            type="button"
             onClick={() =>
               router.push("/")
             }
@@ -581,7 +686,7 @@ export default function AppShell({
   }
 
   /* =======================================================
-     権限別メニュー
+     Role menu
      ======================================================= */
 
   const menu =
@@ -594,26 +699,39 @@ export default function AppShell({
      ======================================================= */
 
   async function handleLogout() {
-    if (loggingOut) {
+    if (
+      loggingOut
+    ) {
       return;
     }
 
     try {
-      setLoggingOut(true);
+      setLoggingOut(
+        true
+      );
 
-      await signOut(auth);
+      await signOut(
+        auth
+      );
 
       router.replace(
         "/login"
       );
-    } catch (err) {
-      console.error(err);
+    } catch (
+      err
+    ) {
+      console.error(
+        "Tsystem logout error:",
+        err
+      );
 
       setError(
         "ログアウトできませんでした。"
       );
 
-      setLoggingOut(false);
+      setLoggingOut(
+        false
+      );
     }
   }
 
@@ -624,21 +742,17 @@ export default function AppShell({
   return (
     <div className="ts-shell">
 
-      {/* ================================================
+      {/* ==================================================
           Sidebar
-          ================================================ */}
+          ================================================== */}
 
       <aside className="ts-sidebar">
-
-        {/* Logo */}
 
         <div className="ts-logo">
           <Link href="/">
             Tsystem
           </Link>
         </div>
-
-        {/* Menu */}
 
         <nav className="ts-menu">
 
@@ -652,7 +766,6 @@ export default function AppShell({
                 }
                 className="ts-menu-section"
               >
-
                 <div className="ts-section-title">
                   {
                     section.label
@@ -696,13 +809,9 @@ export default function AppShell({
 
         </nav>
 
-        {/* ==============================================
-            下部
-            アカウント情報は一切表示しない
-            ============================================== */}
+        {/* アカウント情報は一切表示しない */}
 
         <div className="ts-sidebar-bottom">
-
           <button
             type="button"
             onClick={
@@ -717,14 +826,13 @@ export default function AppShell({
               ? "ログアウト中..."
               : "ログアウト"}
           </button>
-
         </div>
 
       </aside>
 
-      {/* ================================================
+      {/* ==================================================
           Main
-          ================================================ */}
+          ================================================== */}
 
       <main className="ts-main">
         {children}
@@ -741,8 +849,9 @@ export default function AppShell({
 function getMenuForRole(
   role: UserRole
 ): MenuSection[] {
-  switch (role) {
-
+  switch (
+    role
+  ) {
     case "本部管理者":
       return HEAD_OFFICE_MENU;
 
@@ -761,15 +870,19 @@ function getMenuForRole(
 }
 
 /* =========================================================
-   Active
+   Active path
    ========================================================= */
 
 function isActive(
   pathname: string,
   href: string
 ) {
-  if (href === "/") {
-    return pathname === "/";
+  if (
+    href === "/"
+  ) {
+    return (
+      pathname === "/"
+    );
   }
 
   return (
