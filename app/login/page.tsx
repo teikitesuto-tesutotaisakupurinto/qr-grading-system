@@ -7,15 +7,11 @@ import {
 } from "@/lib/auth";
 
 export default function LoginPage() {
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [
-    error,
-    setError,
-  ] = useState("");
+  const [error, setError] =
+    useState("");
 
   async function handleGoogleLogin() {
     if (loading) {
@@ -29,13 +25,17 @@ export default function LoginPage() {
       await loginWithGoogle();
 
       /*
-       * Google認証成功。
-       * ここではFirestoreを確認しない。
+       * Google認証成功後は
+       * Dashboardへ直接移動。
        */
-      window.location.href =
-        "/dashboard";
+      window.location.assign(
+        "/dashboard"
+      );
     } catch (error) {
-      console.error(error);
+      console.error(
+        "Google login error:",
+        error
+      );
 
       setLoading(false);
 
@@ -72,7 +72,7 @@ export default function LoginPage() {
         >
           <img
             src="/google-logo.svg"
-            alt=""
+            alt="Google"
             width={20}
             height={20}
           />
@@ -85,7 +85,10 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <div className="loginError">
+          <div
+            className="loginError"
+            role="alert"
+          >
             {error}
           </div>
         )}
