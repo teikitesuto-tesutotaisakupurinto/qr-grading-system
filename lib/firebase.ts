@@ -7,8 +7,6 @@ import {
 
 import {
   getAuth,
-  initializeAuth,
-  browserLocalPersistence,
   type Auth,
 } from "firebase/auth";
 
@@ -18,33 +16,27 @@ import {
 } from "firebase/firestore";
 
 /* =========================================================
-   Firebase設定
+   Firebase Configuration
    ========================================================= */
 
 const firebaseConfig = {
   apiKey:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
 
   authDomain:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
 
   projectId:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
 
   storageBucket:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "",
 
   messagingSenderId:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
 
   appId:
-    process.env
-      .NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
+    process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
 };
 
 /* =========================================================
@@ -54,53 +46,14 @@ const firebaseConfig = {
 export const app: FirebaseApp =
   getApps().length > 0
     ? getApp()
-    : initializeApp(
-        firebaseConfig
-      );
+    : initializeApp(firebaseConfig);
 
 /* =========================================================
    Firebase Authentication
-   =========================================================
-   
-   ブラウザではLocal Persistenceを使用。
-
-   Googleログイン後も、
-   ブラウザを再読み込みしても
-   Firebase Authenticationのログイン状態を保持する。
    ========================================================= */
 
-function createAuth(): Auth {
-  /*
-   * ブラウザ
-   */
-  if (
-    typeof window !==
-    "undefined"
-  ) {
-    try {
-      return initializeAuth(
-        app,
-        {
-          persistence:
-            browserLocalPersistence,
-        }
-      );
-    } catch {
-      /*
-       * 既にAuthが初期化されている場合
-       */
-      return getAuth(app);
-    }
-  }
-
-  /*
-   * Next.jsのサーバー側
-   */
-  return getAuth(app);
-}
-
 export const auth: Auth =
-  createAuth();
+  getAuth(app);
 
 /* =========================================================
    Firestore
@@ -110,10 +63,16 @@ export const db: Firestore =
   getFirestore(app);
 
 /* =========================================================
-   Firebase設定確認
+   Browser configuration check
    ========================================================= */
 
 export function assertFirebaseConfig(): void {
+  if (
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
   const required = {
     NEXT_PUBLIC_FIREBASE_API_KEY:
       firebaseConfig.apiKey,
@@ -132,17 +91,14 @@ export function assertFirebaseConfig(): void {
   };
 
   const missing =
-    Object.entries(
-      required
-    )
+    Object.entries(required)
       .filter(
         ([, value]) =>
           !value ||
           value.trim() === ""
       )
       .map(
-        ([key]) =>
-          key
+        ([key]) => key
       );
 
   if (
@@ -155,24 +111,5 @@ export function assertFirebaseConfig(): void {
     );
   }
 }
-
-/* =========================================================
-   ブラウザ専用設定確認
-   ========================================================= */
-
-export function assertBrowserFirebaseConfig(): void {
-  if (
-    typeof window ===
-    "undefined"
-  ) {
-    return;
-  }
-
-  assertFirebaseConfig();
-}
-
-/* =========================================================
-   Firebase App
-   ========================================================= */
 
 export default app;
