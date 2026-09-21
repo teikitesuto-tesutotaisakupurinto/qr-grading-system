@@ -7,6 +7,8 @@ import {
 
 import {
   getAuth,
+  initializeAuth,
+  browserLocalPersistence,
   type Auth,
 } from "firebase/auth";
 
@@ -15,51 +17,34 @@ import {
   type Firestore,
 } from "firebase/firestore";
 
-/*
- * Next.jsの静的ビルド時にもモジュールが評価されます。
- *
- * そのときFirebaseの公開設定がGitHub Actionsから
- * 渡っていなくても、getAuth()で
- * auth/invalid-api-keyを発生させないようにします。
- *
- * ブラウザで実際にFirebaseを使う場合は、
- * NEXT_PUBLIC_FIREBASE_* の値が必要です。
- */
-
-const isBrowser =
-  typeof window !==
-  "undefined";
+/* =========================================================
+   Firebase設定
+   ========================================================= */
 
 const firebaseConfig = {
   apiKey:
     process.env
-      .NEXT_PUBLIC_FIREBASE_API_KEY ??
-    "build-only-placeholder",
+      .NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
 
   authDomain:
     process.env
-      .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
-    "build-only.firebaseapp.com",
+      .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
 
   projectId:
     process.env
-      .NEXT_PUBLIC_FIREBASE_PROJECT_ID ??
-    "build-only-project",
+      .NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
 
   storageBucket:
     process.env
-      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ??
-    "build-only-project.firebasestorage.app",
+      .NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "",
 
   messagingSenderId:
     process.env
-      .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ??
-    "000000000000",
+      .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
 
   appId:
     process.env
-      .NEXT_PUBLIC_FIREBASE_APP_ID ??
-    "1:000000000000:web:buildonly",
+      .NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
 };
 
 /* =========================================================
@@ -74,11 +59,48 @@ export const app: FirebaseApp =
       );
 
 /* =========================================================
-   Auth
+   Firebase Authentication
+   =========================================================
+   
+   ブラウザではLocal Persistenceを使用。
+
+   Googleログイン後も、
+   ブラウザを再読み込みしても
+   Firebase Authenticationのログイン状態を保持する。
    ========================================================= */
 
+function createAuth(): Auth {
+  /*
+   * ブラウザ
+   */
+  if (
+    typeof window !==
+    "undefined"
+  ) {
+    try {
+      return initializeAuth(
+        app,
+        {
+          persistence:
+            browserLocalPersistence,
+        }
+      );
+    } catch {
+      /*
+       * 既にAuthが初期化されている場合
+       */
+      return getAuth(app);
+    }
+  }
+
+  /*
+   * Next.jsのサーバー側
+   */
+  return getAuth(app);
+}
+
 export const auth: Auth =
-  getAuth(app);
+  createAuth();
 
 /* =========================================================
    Firestore
@@ -88,34 +110,25 @@ export const db: Firestore =
   getFirestore(app);
 
 /* =========================================================
-   Browser設定チェック
+   Firebase設定確認
    ========================================================= */
 
-export function assertFirebaseConfig() {
-  if (!isBrowser) {
-    return;
-  }
-
+export function assertFirebaseConfig(): void {
   const required = {
     NEXT_PUBLIC_FIREBASE_API_KEY:
-      process.env
-        .NEXT_PUBLIC_FIREBASE_API_KEY,
+      firebaseConfig.apiKey,
 
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:
-      process.env
-        .NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+      firebaseConfig.authDomain,
 
     NEXT_PUBLIC_FIREBASE_PROJECT_ID:
-      process.env
-        .NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      firebaseConfig.projectId,
 
     NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:
-      process.env
-        .NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+      firebaseConfig.messagingSenderId,
 
     NEXT_PUBLIC_FIREBASE_APP_ID:
-      process.env
-        .NEXT_PUBLIC_FIREBASE_APP_ID,
+      firebaseConfig.appId,
   };
 
   const missing =
@@ -123,12 +136,9 @@ export function assertFirebaseConfig() {
       required
     )
       .filter(
-        (
-          [, value]
-        ) =>
+        ([, value]) =>
           !value ||
-          value ===
-            "undefined"
+          value.trim() === ""
       )
       .map(
         ([key]) =>
@@ -139,9 +149,30 @@ export function assertFirebaseConfig() {
     missing.length > 0
   ) {
     throw new Error(
-      `Firebase設定が不足しています: ${missing.join(", ")}`
+      `Firebase設定が不足しています: ${missing.join(
+        ", "
+      )}`
     );
   }
 }
+
+/* =========================================================
+   ブラウザ専用設定確認
+   ========================================================= */
+
+export function assertBrowserFirebaseConfig(): void {
+  if (
+    typeof window ===
+    "undefined"
+  ) {
+    return;
+  }
+
+  assertFirebaseConfig();
+}
+
+/* =========================================================
+   Firebase App
+   ========================================================= */
 
 export default app;
