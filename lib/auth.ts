@@ -31,16 +31,20 @@ export type AppUser = {
   email: string | null;
   name: string;
   photoURL: string | null;
+
+  organizationId: string | null;
+
   role: UserRole | null;
+
   schoolIds: string[];
+
   studentNumber?: string;
+
   active: boolean;
 };
 
 /* =========================================================
    Googleログイン
-   Firebase Authenticationだけを実行する。
-   Firestoreはここでは読まない。
    ========================================================= */
 
 export async function loginWithGoogle(): Promise<User> {
@@ -74,7 +78,7 @@ export async function logout() {
 }
 
 /* =========================================================
-   Firebase Authenticationユーザー
+   Firebase User
    ========================================================= */
 
 export function getFirebaseUser(): User | null {
@@ -82,7 +86,7 @@ export function getFirebaseUser(): User | null {
 }
 
 /* =========================================================
-   Firestore users/{uid}
+   AppUser取得
    ========================================================= */
 
 export async function getAppUser(
@@ -100,14 +104,27 @@ export async function getAppUser(
   if (!snapshot.exists()) {
     return {
       uid: firebaseUser.uid,
-      email: firebaseUser.email,
+
+      email:
+        firebaseUser.email,
+
       name:
-        firebaseUser.displayName ?? "",
+        firebaseUser.displayName ??
+        "",
+
       photoURL:
         firebaseUser.photoURL,
-      role: null,
+
+      organizationId:
+        null,
+
+      role:
+        null,
+
       schoolIds: [],
-      active: false,
+
+      active:
+        false,
     };
   }
 
@@ -115,7 +132,9 @@ export async function getAppUser(
     snapshot.data();
 
   const role =
-    isUserRole(data.role)
+    isUserRole(
+      data.role
+    )
       ? data.role
       : null;
 
@@ -133,7 +152,8 @@ export async function getAppUser(
       : [];
 
   return {
-    uid: firebaseUser.uid,
+    uid:
+      firebaseUser.uid,
 
     email:
       firebaseUser.email,
@@ -147,6 +167,12 @@ export async function getAppUser(
 
     photoURL:
       firebaseUser.photoURL,
+
+    organizationId:
+      typeof data.organizationId ===
+      "string"
+        ? data.organizationId
+        : null,
 
     role,
 
@@ -164,7 +190,7 @@ export async function getAppUser(
 }
 
 /* =========================================================
-   現在のアプリユーザー
+   現在のユーザー
    ========================================================= */
 
 export async function getCurrentUser(): Promise<AppUser | null> {
@@ -181,13 +207,14 @@ export async function getCurrentUser(): Promise<AppUser | null> {
 }
 
 /* =========================================================
-   Firebase認証状態監視
+   認証状態監視
    ========================================================= */
 
 export function observeAuth(
   callback: (
     user: AppUser | null
   ) => void,
+
   onError?: (
     error: Error
   ) => void
@@ -211,7 +238,9 @@ export function observeAuth(
         callback(
           appUser
         );
-      } catch (error) {
+      } catch (
+        error
+      ) {
         onError?.(
           error instanceof Error
             ? error
@@ -232,10 +261,14 @@ export function isUserRole(
   value: unknown
 ): value is UserRole {
   return (
-    value === "本部管理者" ||
-    value === "校舎管理者" ||
-    value === "講師" ||
-    value === "生徒"
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
   );
 }
 
