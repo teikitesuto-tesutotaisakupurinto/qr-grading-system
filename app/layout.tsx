@@ -1,13 +1,17 @@
-import type { Metadata } from "next";
+import type {
+  Metadata,
+} from "next";
 
 import "./globals.css";
 
 import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "Tsystem",
+  title:
+    "テストシステム",
+
   description:
-    "Tsystem 学習・成績管理システム",
+    "テストシステム",
 };
 
 export default function RootLayout({
@@ -16,7 +20,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja">
+    <html
+      lang="ja"
+    >
       <body>
         <AppShell>
           {children}
