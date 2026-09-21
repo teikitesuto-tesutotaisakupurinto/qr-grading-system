@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 
-import {
-  loginWithGoogle,
-} from "@/lib/auth";
+import { loginWithGoogle } from "@/lib/auth";
 
 export default function LoginPage() {
   const [loading, setLoading] =
@@ -22,11 +20,18 @@ export default function LoginPage() {
       setLoading(true);
       setError("");
 
+      /*
+       * Firebase Authentication
+       * Googleログイン
+       *
+       * Firestoreのusers/{uid}確認は
+       * ここでは行わない。
+       */
       await loginWithGoogle();
 
       /*
-       * Google認証成功後は
-       * Dashboardへ直接移動。
+       * Authentication成功後、
+       * Dashboardへ移動。
        */
       window.location.assign(
         "/dashboard"
@@ -40,9 +45,9 @@ export default function LoginPage() {
       setLoading(false);
 
       setError(
-        error instanceof Error
-          ? error.message
-          : "Googleログインに失敗しました。"
+        getLoginErrorMessage(
+          error
+        )
       );
     }
   }
@@ -50,6 +55,10 @@ export default function LoginPage() {
   return (
     <main className="loginPage">
       <section className="loginCard">
+        {/* ================================================
+            Header
+            ================================================ */}
+
         <div className="loginHeader">
           <h1>
             答案採点システム
@@ -62,6 +71,10 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {/* ================================================
+            Google Login Button
+            ================================================ */}
+
         <button
           type="button"
           className="googleLoginButton"
@@ -69,6 +82,7 @@ export default function LoginPage() {
           onClick={
             handleGoogleLogin
           }
+          aria-busy={loading}
         >
           <img
             src="/google-logo.svg"
@@ -84,6 +98,10 @@ export default function LoginPage() {
           </span>
         </button>
 
+        {/* ================================================
+            Error
+            ================================================ */}
+
         {error && (
           <div
             className="loginError"
@@ -93,10 +111,77 @@ export default function LoginPage() {
           </div>
         )}
 
+        {/* ================================================
+            Notice
+            ================================================ */}
+
         <p className="loginNotice">
           登録済みユーザーのみ利用できます。
         </p>
       </section>
     </main>
   );
+}
+
+/* =========================================================
+   Login Error
+   ========================================================= */
+
+function getLoginErrorMessage(
+  error: unknown
+): string {
+  if (
+    !error ||
+    typeof error !==
+      "object"
+  ) {
+    return "Googleログインに失敗しました。";
+  }
+
+  const firebaseError =
+    error as {
+      code?: string;
+      message?: string;
+    };
+
+  switch (
+    firebaseError.code
+  ) {
+    case "auth/popup-closed-by-user":
+      return "Googleログインをキャンセルしました。";
+
+    case "auth/popup-blocked":
+      return "Googleログイン画面がブロックされました。ブラウザのポップアップを許可してください。";
+
+    case "auth/cancelled-popup-request":
+      return "Googleログイン処理がキャンセルされました。もう一度お試しください。";
+
+    case "auth/account-exists-with-different-credential":
+      return "このメールアドレスには別のログイン方法で登録されたアカウントがあります。";
+
+    case "auth/invalid-api-key":
+      return "FirebaseのAPIキー設定が正しくありません。";
+
+    case "auth/invalid-argument":
+    case "auth/argument-error":
+      return "Firebase Authenticationの設定を確認してください。";
+
+    case "auth/operation-not-allowed":
+      return "FirebaseでGoogleログインが有効になっていません。";
+
+    case "auth/unauthorized-domain":
+      return "この公開サイトのドメインがFirebase Authenticationの承認済みドメインに登録されていません。";
+
+    case "auth/network-request-failed":
+      return "ネットワーク通信に失敗しました。";
+
+    case "auth/internal-error":
+      return "Firebase Authenticationで内部エラーが発生しました。";
+
+    default:
+      return (
+        firebaseError.message ||
+        "Googleログインに失敗しました。"
+      );
+  }
 }
