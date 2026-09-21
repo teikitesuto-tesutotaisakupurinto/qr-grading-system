@@ -3,7 +3,6 @@
 import {
   ReactNode,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 
@@ -86,193 +85,146 @@ type MenuSection = {
 
 /* =========================================================
    Menu definition
-   =========================================================
-   権限のない項目は
-   getVisibleSections() で完全に除外する。
    ========================================================= */
 
-const MENU_SECTIONS: MenuSection[] =
-  [
-    {
-      label: "メイン",
+const MENU_SECTIONS: MenuSection[] = [
+  {
+    label: "メイン",
 
-      items: [
-        {
-          label: "ダッシュボード",
+    items: [
+      {
+        label: "ダッシュボード",
+        href: "/dashboard",
+        permission: "dashboard.view",
+      },
+    ],
+  },
 
-          href: "/dashboard",
+  {
+    label: "生徒・テスト",
 
-          permission:
-            "dashboard.view",
-        },
-      ],
-    },
+    items: [
+      {
+        label: "生徒管理",
+        href: "/students",
+        permission: "students.view",
+      },
 
-    {
-      label: "生徒・テスト",
+      {
+        label: "テスト管理",
+        href: "/tests",
+        permission: "tests.view",
+      },
+    ],
+  },
 
-      items: [
-        {
-          label: "生徒管理",
+  {
+    label: "答案・採点",
 
-          href: "/students",
+    items: [
+      {
+        label: "答案管理",
+        href: "/answers",
+        permission: "answers.view",
+      },
 
-          permission:
-            "students.view",
-        },
+      {
+        label: "一次確認",
+        href: "/grading/review",
+        permission:
+          "grading.firstReview",
+      },
 
-        {
-          label: "テスト管理",
+      {
+        label: "二次確認",
+        href: "/grading/second-review",
+        permission:
+          "grading.secondReview",
+      },
+    ],
+  },
 
-          href: "/tests",
+  {
+    label: "成績",
 
-          permission:
-            "tests.view",
-        },
-      ],
-    },
+    items: [
+      {
+        label: "成績管理",
+        href: "/results",
+        permission: "results.view",
+      },
 
-    {
-      label: "答案・採点",
+      {
+        label: "成績表",
+        href: "/report-cards",
+        permission:
+          "reportCards.view",
+      },
 
-      items: [
-        {
-          label: "答案管理",
+      {
+        label: "追試管理",
+        href: "/retests",
+        permission: "retests.view",
+      },
+    ],
+  },
 
-          href: "/answers",
+  {
+    label: "QR",
 
-          permission:
-            "answers.view",
-        },
+    items: [
+      {
+        label: "QRシール発行",
+        href: "/qr-stickers",
+        permission: "qr.view",
+      },
+    ],
+  },
 
-        {
-          label: "一次確認",
+  {
+    label: "管理",
 
-          href: "/grading/review",
+    items: [
+      {
+        label: "校舎管理",
+        href: "/schools",
+        permission: "schools.view",
+      },
 
-          permission:
-            "grading.firstReview",
-        },
+      {
+        label: "講師管理",
+        href: "/teachers",
+        permission:
+          "teachers.view",
+      },
 
-        {
-          label: "二次確認",
+      {
+        label: "権限管理",
+        href: "/roles",
+        permission: "roles.view",
+      },
 
-          href: "/grading/second-review",
+      {
+        label: "利用状況",
+        href: "/usage",
+        permission: "usage.view",
+      },
 
-          permission:
-            "grading.secondReview",
-        },
-      ],
-    },
+      {
+        label: "システムログ",
+        href: "/logs",
+        permission: "logs.view",
+      },
 
-    {
-      label: "成績",
-
-      items: [
-        {
-          label: "成績管理",
-
-          href: "/results",
-
-          permission:
-            "results.view",
-        },
-
-        {
-          label: "成績表",
-
-          href: "/report-cards",
-
-          permission:
-            "reportCards.view",
-        },
-
-        {
-          label: "追試管理",
-
-          href: "/retests",
-
-          permission:
-            "retests.view",
-        },
-      ],
-    },
-
-    {
-      label: "QR",
-
-      items: [
-        {
-          label: "QRシール発行",
-
-          href: "/qr-stickers",
-
-          permission:
-            "qr.view",
-        },
-      ],
-    },
-
-    {
-      label: "管理",
-
-      items: [
-        {
-          label: "校舎管理",
-
-          href: "/schools",
-
-          permission:
-            "schools.view",
-        },
-
-        {
-          label: "講師管理",
-
-          href: "/teachers",
-
-          permission:
-            "teachers.view",
-        },
-
-        {
-          label: "権限管理",
-
-          href: "/roles",
-
-          permission:
-            "roles.view",
-        },
-
-        {
-          label: "利用状況",
-
-          href: "/usage",
-
-          permission:
-            "usage.view",
-        },
-
-        {
-          label: "システムログ",
-
-          href: "/logs",
-
-          permission:
-            "logs.view",
-        },
-
-        {
-          label: "システム設定",
-
-          href: "/settings",
-
-          permission:
-            "settings.view",
-        },
-      ],
-    },
-  ];
+      {
+        label: "システム設定",
+        href: "/settings",
+        permission:
+          "settings.view",
+      },
+    ],
+  },
+];
 
 /* =========================================================
    AppShell
@@ -281,8 +233,7 @@ const MENU_SECTIONS: MenuSection[] =
 export default function AppShell({
   children,
 }: AppShellProps) {
-  const router =
-    useRouter();
+  const router = useRouter();
 
   const pathname =
     usePathname();
@@ -309,11 +260,9 @@ export default function AppShell({
     setLoggingOut,
   ] = useState(false);
 
-  /*
-   * =======================================================
-   * Firebase Auth
-   * =======================================================
-   */
+  /* =======================================================
+     Authentication
+     ======================================================= */
 
   useEffect(() => {
     let mounted = true;
@@ -329,36 +278,27 @@ export default function AppShell({
           }
 
           /*
-           * 未ログイン
+           * ログアウト状態。
            *
-           * ここでは即座に/loginへ飛ばさない。
-           * 画面側で状態を表示する。
+           * 勝手にログイン画面へ
+           * リダイレクトしない。
            */
-          if (
-            !firebaseUser
-          ) {
-            setUser(
-              null
-            );
+          if (!firebaseUser) {
+            setUser(null);
 
-            setLoading(
-              false
-            );
+            setLoading(false);
 
             return;
           }
 
           try {
-            const userRef =
-              doc(
-                db,
-                "users",
-                firebaseUser.uid
-              );
-
-            const snapshot =
+            const userSnapshot =
               await getDoc(
-                userRef
+                doc(
+                  db,
+                  "users",
+                  firebaseUser.uid
+                )
               );
 
             if (!mounted) {
@@ -366,25 +306,21 @@ export default function AppShell({
             }
 
             if (
-              !snapshot.exists()
+              !userSnapshot.exists()
             ) {
-              setUser(
-                null
-              );
+              setUser(null);
 
               setAuthError(
                 "システムのユーザー情報が登録されていません。"
               );
 
-              setLoading(
-                false
-              );
+              setLoading(false);
 
               return;
             }
 
             const data =
-              snapshot.data();
+              userSnapshot.data();
 
             const role =
               isUserRole(
@@ -437,14 +373,12 @@ export default function AppShell({
               profile
             );
 
-            setAuthError(
-              ""
-            );
+            setAuthError("");
           } catch (
             error
           ) {
             console.error(
-              "AppShell user loading error:",
+              "AppShell authentication error:",
               error
             );
 
@@ -452,9 +386,7 @@ export default function AppShell({
               return;
             }
 
-            setUser(
-              null
-            );
+            setUser(null);
 
             setAuthError(
               getSafeErrorMessage(
@@ -463,9 +395,7 @@ export default function AppShell({
             );
           } finally {
             if (mounted) {
-              setLoading(
-                false
-              );
+              setLoading(false);
             }
           }
         }
@@ -478,46 +408,23 @@ export default function AppShell({
     };
   }, []);
 
-  /*
-   * =======================================================
-   * Login page
-   * =======================================================
-   *
-   * loginページにはAppShellを付けない。
-   */
+  /* =======================================================
+     Special pages
+     ======================================================= */
 
   const isLoginPage =
-    pathname ===
-      "/login" ||
+    pathname === "/login" ||
     pathname.startsWith(
       "/login/"
     );
 
-  if (
-    isLoginPage
-  ) {
-    return (
-      <>
-        {children}
-      </>
-    );
-  }
-
-  /*
-   * =======================================================
-   * 403 page
-   * =======================================================
-   *
-   * 403自体には権限チェックをかけない。
-   */
-
   const isForbiddenPage =
-    pathname ===
-    "/403";
+    pathname === "/403";
 
-  if (
-    isForbiddenPage
-  ) {
+  /*
+   * Login pageはShellなし。
+   */
+  if (isLoginPage) {
     return (
       <>
         {children}
@@ -526,167 +433,69 @@ export default function AppShell({
   }
 
   /*
-   * =======================================================
-   * Loading
-   * =======================================================
+   * 403ページはShellなし。
    */
-
-  if (
-    loading
-  ) {
+  if (isForbiddenPage) {
     return (
-      <div
-        style={
-          loadingStyle
-        }
-      >
-        <div
-          style={
-            loadingCardStyle
-          }
-        >
-          <div
-            style={
-              loadingTitleStyle
-            }
-          >
-            QR採点システム
-          </div>
-
-          <div
-            style={
-              loadingTextStyle
-            }
-          >
-            認証情報を確認しています...
-          </div>
-        </div>
-      </div>
+      <>
+        {children}
+      </>
     );
   }
 
-  /*
-   * =======================================================
-   * Unauthenticated
-   * =======================================================
-   *
-   * 自動でloginへ戻さない。
-   */
+  /* =======================================================
+     Loading
+     ======================================================= */
 
-  if (
-    !user
-  ) {
+  if (loading) {
     return (
-      <div
-        style={
-          unauthorizedStyle
-        }
-      >
-        <div
-          style={
-            unauthorizedCardStyle
-          }
-        >
-          <div
-            style={{
-              fontSize:
-                28,
-
-              fontWeight:
-                800,
-
-              marginBottom:
-                16,
-            }}
-          >
-            QR採点システム
-          </div>
-
-          <h1
-            style={{
-              margin:
-                "0 0 10px",
-
-              fontSize:
-                22,
-            }}
-          >
-            ログインが必要です
-          </h1>
-
-          <p
-            style={{
-              margin:
-                "0 0 20px",
-
-              color:
-                "#666",
-
-              lineHeight:
-                1.8,
-            }}
-          >
-            {authError ||
-              "この画面を利用するにはログインしてください。"}
-          </p>
-
-          <button
-            type="button"
-            onClick={() =>
-              router.push(
-                "/login"
-              )
-            }
-            style={
-              primaryButton
-            }
-          >
-            ログイン画面へ
-          </button>
-        </div>
-      </div>
+      <LoadingScreen />
     );
   }
 
-  /*
-   * =======================================================
-   * Role missing
-   * =======================================================
-   */
+  /* =======================================================
+     Unauthenticated
+     ======================================================= */
 
-  if (
-    !user.role
-  ) {
+  if (!user) {
     return (
-      <ForbiddenScreen
-        message="アカウントの権限が設定されていません。管理者に確認してください。"
+      <UnauthorizedScreen
+        message={
+          authError ||
+          "この画面を利用するにはログインしてください。"
+        }
+        onLogin={() =>
+          router.push(
+            "/login"
+          )
+        }
       />
     );
   }
 
-  /*
-   * =======================================================
-   * Route permission
-   * =======================================================
-   *
-   * URL直打ち対策。
-   *
-   * 例:
-   * 講師 → /students
-   * 生徒 → /settings
-   *
-   * などを拒否。
-   */
+  /* =======================================================
+     Role missing
+     ======================================================= */
 
-  const canAccess =
+  if (!user.role) {
+    return (
+      <ForbiddenScreen
+        message="このアカウントには権限が設定されていません。管理者に確認してください。"
+      />
+    );
+  }
+
+  /* =======================================================
+     Route permission
+     ======================================================= */
+
+  const routeAllowed =
     canAccessRoute(
       user.role,
       pathname
     );
 
-  if (
-    !canAccess
-  ) {
+  if (!routeAllowed) {
     return (
       <ForbiddenScreen
         message="このページを利用する権限がありません。"
@@ -694,33 +503,21 @@ export default function AppShell({
     );
   }
 
-  /*
-   * =======================================================
-   * Visible navigation
-   * =======================================================
-   */
+  /* =======================================================
+     Visible menu
+     ======================================================= */
 
   const visibleSections =
-    useMemo(
-      () =>
-        getVisibleSections(
-          user.role
-        ),
-      [
-        user.role,
-      ]
+    getVisibleSections(
+      user.role
     );
 
-  /*
-   * =======================================================
-   * Logout
-   * =======================================================
-   */
+  /* =======================================================
+     Logout
+     ======================================================= */
 
   async function handleLogout() {
-    if (
-      loggingOut
-    ) {
+    if (loggingOut) {
       return;
     }
 
@@ -729,17 +526,15 @@ export default function AppShell({
         true
       );
 
-      setAuthError(
-        ""
-      );
+      setAuthError("");
 
       await signOut(
         auth
       );
 
       /*
-       * 明示的なログアウトだけ
-       * loginへ移動する。
+       * 明示的なログアウト時だけ
+       * loginへ移動。
        */
       router.replace(
         "/login"
@@ -762,11 +557,9 @@ export default function AppShell({
     }
   }
 
-  /*
-   * =======================================================
-   * Render
-   * =======================================================
-   */
+  /* =======================================================
+     Render
+     ======================================================= */
 
   return (
     <div
@@ -822,7 +615,9 @@ export default function AppShell({
             }
           >
             {
-              user.role
+              getRoleLabel(
+                user.role
+              )
             }
           </div>
         </div>
@@ -861,10 +656,11 @@ export default function AppShell({
                     item
                   ) => {
                     /*
-                     * 二重チェック。
+                     * 念のため描画直前にも
+                     * 権限チェック。
                      *
-                     * MENU側で既に除外しているが、
-                     * 描画直前にも確認する。
+                     * 権限がなければ
+                     * DOMにも出さない。
                      */
                     if (
                       !hasPermission(
@@ -879,6 +675,17 @@ export default function AppShell({
                       isActivePath(
                         pathname,
                         item.href
+                      );
+
+                    /*
+                     * 生徒の場合、
+                     * 成績管理という名前より
+                     * 「成績」の方が自然。
+                     */
+                    const label =
+                      getMenuLabel(
+                        user.role,
+                        item
                       );
 
                     return (
@@ -898,7 +705,7 @@ export default function AppShell({
                         }}
                       >
                         {
-                          item.label
+                          label
                         }
                       </Link>
                     );
@@ -953,7 +760,7 @@ export default function AppShell({
       </aside>
 
       {/* ==================================================
-          Content
+          Main content
           ================================================== */}
 
       <div
@@ -966,14 +773,20 @@ export default function AppShell({
             topbarStyle
           }
         >
-          <div>
+          <div
+            style={
+              topbarRoleContainerStyle
+            }
+          >
             <span
               style={
                 topbarRoleStyle
               }
             >
               {
-                user.role
+                getRoleLabel(
+                  user.role
+                )
               }
             </span>
           </div>
@@ -1002,7 +815,7 @@ export default function AppShell({
 }
 
 /* =========================================================
-   Visible sections
+   Menu filtering
    ========================================================= */
 
 function getVisibleSections(
@@ -1010,10 +823,8 @@ function getVisibleSections(
     | UserRole
     | null
     | undefined
-) {
-  if (
-    !role
-  ) {
+): MenuSection[] {
+  if (!role) {
     return [];
   }
 
@@ -1021,10 +832,8 @@ function getVisibleSections(
     .map(
       (
         section
-      ) => ({
-        ...section,
-
-        items:
+      ) => {
+        const items =
           section.items.filter(
             (
               item
@@ -1033,8 +842,13 @@ function getVisibleSections(
                 role,
                 item.permission
               )
-          ),
-      })
+          );
+
+        return {
+          ...section,
+          items,
+        };
+      }
     )
     .filter(
       (
@@ -1043,6 +857,28 @@ function getVisibleSections(
         section.items.length >
         0
     );
+}
+
+/* =========================================================
+   Menu labels
+   ========================================================= */
+
+function getMenuLabel(
+  role: UserRole,
+  item: MenuItem
+) {
+  /*
+   * 生徒には「成績管理」ではなく
+   * 「成績」と表示。
+   */
+  if (
+    role === "生徒" &&
+    item.href === "/results"
+  ) {
+    return "成績";
+  }
+
+  return item.label;
 }
 
 /* =========================================================
@@ -1069,6 +905,168 @@ function isActivePath(
     pathname.startsWith(
       `${href}/`
     )
+  );
+}
+
+/* =========================================================
+   Role
+   ========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    value ===
+      "本部管理者" ||
+    value ===
+      "校舎管理者" ||
+    value ===
+      "講師" ||
+    value ===
+      "生徒"
+  );
+}
+
+function getRoleLabel(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  switch (
+    role
+  ) {
+    case "本部管理者":
+      return "本部管理者";
+
+    case "校舎管理者":
+      return "校舎管理者";
+
+    case "講師":
+      return "講師";
+
+    case "生徒":
+      return "生徒";
+
+    default:
+      return "権限未設定";
+  }
+}
+
+/* =========================================================
+   Loading
+   ========================================================= */
+
+function LoadingScreen() {
+  return (
+    <div
+      style={
+        loadingStyle
+      }
+    >
+      <div
+        style={
+          loadingCardStyle
+        }
+      >
+        <div
+          style={
+            loadingTitleStyle
+          }
+        >
+          QR採点システム
+        </div>
+
+        <div
+          style={
+            loadingTextStyle
+          }
+        >
+          認証情報を確認しています...
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Unauthorized
+   ========================================================= */
+
+function UnauthorizedScreen({
+  message,
+  onLogin,
+}: {
+  message: string;
+
+  onLogin: () => void;
+}) {
+  return (
+    <div
+      style={
+        unauthorizedStyle
+      }
+    >
+      <div
+        style={
+          unauthorizedCardStyle
+        }
+      >
+        <div
+          style={{
+            fontSize:
+              28,
+
+            fontWeight:
+              800,
+
+            marginBottom:
+              16,
+          }}
+        >
+          QR採点システム
+        </div>
+
+        <h1
+          style={{
+            margin:
+              "0 0 10px",
+
+            fontSize:
+              22,
+          }}
+        >
+          ログインが必要です
+        </h1>
+
+        <p
+          style={{
+            margin:
+              "0 0 20px",
+
+            color:
+              "#666",
+
+            lineHeight:
+              1.8,
+          }}
+        >
+          {message}
+        </p>
+
+        <button
+          type="button"
+          onClick={
+            onLogin
+          }
+          style={
+            primaryButton
+          }
+        >
+          ログイン画面へ
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1142,25 +1140,6 @@ function ForbiddenScreen({
         </button>
       </div>
     </div>
-  );
-}
-
-/* =========================================================
-   User Role
-   ========================================================= */
-
-function isUserRole(
-  value: unknown
-): value is UserRole {
-  return (
-    value ===
-      "本部管理者" ||
-    value ===
-      "校舎管理者" ||
-    value ===
-      "講師" ||
-    value ===
-      "生徒"
   );
 }
 
@@ -1471,6 +1450,15 @@ const topbarStyle:
 
     borderBottom:
       "1px solid #e1e4e8",
+  };
+
+const topbarRoleContainerStyle:
+  React.CSSProperties = {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
   };
 
 const topbarRoleStyle:
