@@ -10,49 +10,53 @@ import {
 
 import {
   db,
-} from "@/lib/firebase";
+} from "./firebase";
 
 import type {
   UserRole,
-} from "@/lib/types";
+} from "../types";
 
 /* =========================================================
-   Types
+   User
    ========================================================= */
 
 export type FirestoreUser = {
   uid: string;
 
-  organizationId: string | null;
+  organizationId:
+    | string
+    | null;
 
-  role: UserRole | null;
+  role:
+    | UserRole
+    | null;
 
   schoolIds: string[];
 
-  studentId: string | null;
+  studentId:
+    | string
+    | null;
 };
 
+/* =========================================================
+   Scoped document
+   ========================================================= */
+
 export type ScopedDocument<
-  T extends DocumentData = DocumentData
+  T extends DocumentData =
+    DocumentData
 > = {
   id: string;
 
   data: T;
 };
 
-export type StudentScope = {
-  id: string;
-
-  organizationId: string;
-
-  schoolId: string;
-};
-
 /* =========================================================
    Constants
    ========================================================= */
 
-const FIRESTORE_IN_LIMIT = 10;
+const IN_LIMIT =
+  10;
 
 /* =========================================================
    Collection
@@ -61,27 +65,27 @@ const FIRESTORE_IN_LIMIT = 10;
 function getCollection<
   T extends DocumentData
 >(
-  collectionName: string
+  name: string
 ): CollectionReference<T> {
   return collection(
     db,
-    collectionName
+    name
   ) as CollectionReference<T>;
 }
 
 /* =========================================================
-   Organization query
+   Organization
    ========================================================= */
 
 export function organizationQuery<
   T extends DocumentData
 >(
-  collectionName: string,
+  name: string,
   organizationId: string
 ): Query<T> {
   return query(
     getCollection<T>(
-      collectionName
+      name
     ),
 
     where(
@@ -93,14 +97,15 @@ export function organizationQuery<
 }
 
 /* =========================================================
-   Split school IDs
+   Split
    ========================================================= */
 
 function splitIntoChunks(
   values: string[],
   size: number
-): string[][] {
-  const result: string[][] = [];
+) {
+  const result: string[][] =
+    [];
 
   for (
     let i = 0;
@@ -119,27 +124,24 @@ function splitIntoChunks(
 }
 
 /* =========================================================
-   School queries
+   School
    ========================================================= */
 
 export function schoolQueries<
   T extends DocumentData
 >(
-  collectionName: string,
+  name: string,
   organizationId: string,
   schoolIds: string[]
 ): Query<T>[] {
-  /*
-   * schoolIdsが空なら、
-   * 全校舎を取得してはいけない。
-   */
   if (
-    schoolIds.length === 0
+    schoolIds.length ===
+    0
   ) {
     return [
       query(
         getCollection<T>(
-          collectionName
+          name
         ),
 
         where(
@@ -151,29 +153,25 @@ export function schoolQueries<
         where(
           "schoolId",
           "==",
-          "__NO_SCHOOL_ACCESS__"
+          "__NO_ACCESS__"
         )
       ),
     ];
   }
 
-  /*
-   * Firestoreのin制限に合わせて
-   * 10校舎ずつ分割。
-   */
   const chunks =
     splitIntoChunks(
       schoolIds,
-      FIRESTORE_IN_LIMIT
+      IN_LIMIT
     );
 
   return chunks.map(
     (
-      schoolChunk
+      chunk
     ) =>
       query(
         getCollection<T>(
-          collectionName
+          name
         ),
 
         where(
@@ -185,26 +183,26 @@ export function schoolQueries<
         where(
           "schoolId",
           "in",
-          schoolChunk
+          chunk
         )
       )
   );
 }
 
 /* =========================================================
-   Student query
+   Student
    ========================================================= */
 
 export function studentQuery<
   T extends DocumentData
 >(
-  collectionName: string,
+  name: string,
   organizationId: string,
   studentId: string
 ): Query<T> {
   return query(
     getCollection<T>(
-      collectionName
+      name
     ),
 
     where(
@@ -227,65 +225,63 @@ export function studentQuery<
 
 export function studentsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "students",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
+    return [
+      organizationQuery(
         "students",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      /*
-       * 生徒は自分のstudentIdだけ。
-       */
-      return [
-        query(
-          getCollection(
-            "students"
-          ),
-
-          where(
-            "organizationId",
-            "==",
-            user.organizationId
-          ),
-
-          where(
-            "__name__",
-            "==",
-            user.studentId
-          )
-        ),
-      ];
-
-    default:
-      return [];
+        user.organizationId
+      ),
+    ];
   }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "students",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    /*
+     * 生徒のstudentIdは
+     * studentsドキュメントのID。
+     */
+    return [
+      query(
+        getCollection(
+          "students"
+        ),
+
+        where(
+          "__name__",
+          "==",
+          user.studentId
+        )
+      ),
+    ];
+  }
+
+  return [];
 }
 
 /* =========================================================
@@ -294,42 +290,39 @@ export function studentsQueries(
 
 export function testsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "tests",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
+    return [
+      organizationQuery(
         "tests",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    /*
-     * 生徒のテスト一覧は、
-     * 学習公開条件を別途指定して取得する。
-     */
-    case "生徒":
-      return [];
-
-    default:
-      return [];
+        user.organizationId
+      ),
+    ];
   }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "tests",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return [];
 }
 
 /* =========================================================
@@ -338,154 +331,53 @@ export function testsQueries(
 
 export function answersQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "answers",
-          user.organizationId
-        ),
-      ];
+    return [
+      organizationQuery(
+        "answers",
+        user.organizationId
+      ),
+    ];
+  }
 
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "answers",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    return [
+      studentQuery(
         "answers",
         user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "answers",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
-  }
-}
-
-/* =========================================================
-   OCR Results
-   ========================================================= */
-
-export function ocrResultsQueries(
-  user: FirestoreUser
-): Query<DocumentData>[] {
-  if (
-    !user.organizationId
-  ) {
-    return [];
+        user.studentId
+      ),
+    ];
   }
 
-  switch (
-    user.role
-  ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "answerOcrResults",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
-        "answerOcrResults",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "answerOcrResults",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
-  }
-}
-
-/* =========================================================
-   Grading Results
-   ========================================================= */
-
-export function gradingResultsQueries(
-  user: FirestoreUser
-): Query<DocumentData>[] {
-  if (
-    !user.organizationId
-  ) {
-    return [];
-  }
-
-  switch (
-    user.role
-  ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "gradingResults",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
-        "gradingResults",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "gradingResults",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
-  }
+  return [];
 }
 
 /* =========================================================
@@ -494,166 +386,287 @@ export function gradingResultsQueries(
 
 export function retestsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "retests",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
+    return [
+      organizationQuery(
         "retests",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      /*
-       * 生徒は追試管理画面に入れない。
-       */
-      return [];
-
-    default:
-      return [];
+        user.organizationId
+      ),
+    ];
   }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "retests",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return [];
 }
 
 /* =========================================================
-   Retest Results
+   Results
    ========================================================= */
 
-export function retestResultsQueries(
+export function resultsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "retestResults",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
-        "retestResults",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "retestResults",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
+    return [
+      organizationQuery(
+        "results",
+        user.organizationId
+      ),
+    ];
   }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "results",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    return [
+      studentQuery(
+        "results",
+        user.organizationId,
+        user.studentId
+      ),
+    ];
+  }
+
+  return [];
 }
 
 /* =========================================================
-   Student History
+   Report cards
    ========================================================= */
 
-export function studentHistoryQueries(
+export function reportCardsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "studentHistory",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-      return schoolQueries(
-        "studentHistory",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "講師":
-      return [];
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          "studentHistory",
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
+    return [
+      organizationQuery(
+        "reportCards",
+        user.organizationId
+      ),
+    ];
   }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "reportCards",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    return [
+      studentQuery(
+        "reportCards",
+        user.organizationId,
+        user.studentId
+      ),
+    ];
+  }
+
+  return [];
 }
 
 /* =========================================================
-   Student Number Registry
+   Grading results
+   ========================================================= */
+
+export function gradingResultsQueries(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return [];
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return [
+      organizationQuery(
+        "gradingResults",
+        user.organizationId
+      ),
+    ];
+  }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "gradingResults",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return [];
+}
+
+/* =========================================================
+   OCR results
+   ========================================================= */
+
+export function ocrResultsQueries(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return [];
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return [
+      organizationQuery(
+        "answerOcrResults",
+        user.organizationId
+      ),
+    ];
+  }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "answerOcrResults",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return [];
+}
+
+/* =========================================================
+   Schools
+   ========================================================= */
+
+export function schoolsQueries(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return [];
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return [
+      organizationQuery(
+        "schools",
+        user.organizationId
+      ),
+    ];
+  }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return schoolQueries(
+      "schools",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return [];
+}
+
+/* =========================================================
+   Student number registry
    ========================================================= */
 
 export function studentNumberRegistryQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  /*
-   * 生徒番号Registryは
-   * 組織単位で管理。
-   */
   if (
     user.role ===
       "本部管理者" ||
@@ -672,76 +685,95 @@ export function studentNumberRegistryQueries(
 }
 
 /* =========================================================
-   System Logs
+   History
+   ========================================================= */
+
+export function studentHistoryQueries(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return [];
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return [
+      organizationQuery(
+        "studentHistory",
+        user.organizationId
+      ),
+    ];
+  }
+
+  if (
+    user.role ===
+    "校舎管理者"
+  ) {
+    return schoolQueries(
+      "studentHistory",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    return [
+      studentQuery(
+        "studentHistory",
+        user.organizationId,
+        user.studentId
+      ),
+    ];
+  }
+
+  return [];
+}
+
+/* =========================================================
+   Logs
    ========================================================= */
 
 export function systemLogsQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "systemLogs",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-      return schoolQueries(
+    return [
+      organizationQuery(
         "systemLogs",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    default:
-      return [];
+        user.organizationId
+      ),
+    ];
   }
-}
 
-/* =========================================================
-   Schools
-   ========================================================= */
-
-export function schoolsQueries(
-  user: FirestoreUser
-): Query<DocumentData>[] {
   if (
-    !user.organizationId
+    user.role ===
+    "校舎管理者"
   ) {
-    return [];
+    return schoolQueries(
+      "systemLogs",
+      user.organizationId,
+      user.schoolIds
+    );
   }
 
-  switch (
-    user.role
-  ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "schools",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
-        "schools",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    default:
-      return [];
-  }
+  return [];
 }
 
 /* =========================================================
@@ -750,91 +782,41 @@ export function schoolsQueries(
 
 export function usageQueries(
   user: FirestoreUser
-): Query<DocumentData>[] {
+) {
   if (
     !user.organizationId
   ) {
     return [];
   }
 
-  switch (
-    user.role
+  if (
+    user.role ===
+    "本部管理者"
   ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          "usage",
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-      return schoolQueries(
+    return [
+      organizationQuery(
         "usage",
-        user.organizationId,
-        user.schoolIds
-      );
-
-    default:
-      return [];
+        user.organizationId
+      ),
+    ];
   }
-}
 
-/* =========================================================
-   Generic scoped queries
-   ========================================================= */
-
-export function scopedQueries(
-  collectionName: string,
-  user: FirestoreUser
-): Query<DocumentData>[] {
   if (
-    !user.organizationId
+    user.role ===
+    "校舎管理者"
   ) {
-    return [];
+    return schoolQueries(
+      "usage",
+      user.organizationId,
+      user.schoolIds
+    );
   }
 
-  switch (
-    user.role
-  ) {
-    case "本部管理者":
-      return [
-        organizationQuery(
-          collectionName,
-          user.organizationId
-        ),
-      ];
-
-    case "校舎管理者":
-    case "講師":
-      return schoolQueries(
-        collectionName,
-        user.organizationId,
-        user.schoolIds
-      );
-
-    case "生徒":
-      if (
-        !user.studentId
-      ) {
-        return [];
-      }
-
-      return [
-        studentQuery(
-          collectionName,
-          user.organizationId,
-          user.studentId
-        ),
-      ];
-
-    default:
-      return [];
-  }
+  return [];
 }
 
 /* =========================================================
-   Execute scoped queries
+   Scoped documents
    ========================================================= */
 
 export async function getScopedDocs<
@@ -863,10 +845,7 @@ export async function getScopedDocs<
       )
     );
 
-  /*
-   * document IDをキーにして重複除去。
-   */
-  const documents =
+  const map =
     new Map<
       string,
       ScopedDocument<T>
@@ -877,42 +856,85 @@ export async function getScopedDocs<
       snapshots
   ) {
     for (
-      const document of
+      const item of
         snapshot.docs
     ) {
-      documents.set(
-        document.id,
+      map.set(
+        item.id,
         {
           id:
-            document.id,
+            item.id,
 
           data:
-            document.data(),
+            item.data(),
         }
       );
     }
   }
 
   return Array.from(
-    documents.values()
+    map.values()
   );
 }
 
 /* =========================================================
-   Access: School
+   Existing page compatibility
+   =========================================================
+   既存ページが単数Queryを要求しているため残す。
+   ========================================================= */
+
+export function testsQuery(
+  user: FirestoreUser
+): Query<DocumentData> | null {
+  return (
+    testsQueries(
+      user
+    )[0] ??
+    null
+  );
+}
+
+export function studentsQuery(
+  user: FirestoreUser
+): Query<DocumentData> | null {
+  return (
+    studentsQueries(
+      user
+    )[0] ??
+    null
+  );
+}
+
+export function answersQuery(
+  user: FirestoreUser
+): Query<DocumentData> | null {
+  return (
+    answersQueries(
+      user
+    )[0] ??
+    null
+  );
+}
+
+export function retestsQuery(
+  user: FirestoreUser
+): Query<DocumentData> | null {
+  return (
+    retestsQueries(
+      user
+    )[0] ??
+    null
+  );
+}
+
+/* =========================================================
+   Access helpers
    ========================================================= */
 
 export function canAccessSchool(
   user: FirestoreUser,
   schoolId: string
-): boolean {
-  if (
-    !user.organizationId ||
-    !schoolId
-  ) {
-    return false;
-  }
-
+) {
   if (
     user.role ===
     "本部管理者"
@@ -925,27 +947,11 @@ export function canAccessSchool(
   );
 }
 
-/* =========================================================
-   Access: Student
-   ========================================================= */
-
 export function canAccessStudent(
   user: FirestoreUser,
-  student: StudentScope
-): boolean {
-  if (
-    !user.organizationId
-  ) {
-    return false;
-  }
-
-  if (
-    user.organizationId !==
-    student.organizationId
-  ) {
-    return false;
-  }
-
+  studentId: string,
+  schoolId?: string
+) {
   if (
     user.role ===
     "本部管理者"
@@ -959,8 +965,11 @@ export function canAccessStudent(
     user.role ===
       "講師"
   ) {
-    return user.schoolIds.includes(
-      student.schoolId
+    return (
+      !!schoolId &&
+      user.schoolIds.includes(
+        schoolId
+      )
     );
   }
 
@@ -970,157 +979,7 @@ export function canAccessStudent(
   ) {
     return (
       user.studentId ===
-      student.id
-    );
-  }
-
-  return false;
-}
-
-/* =========================================================
-   Access: Own data
-   ========================================================= */
-
-export function canAccessOwnStudentData(
-  user: FirestoreUser,
-  studentId: string
-): boolean {
-  return (
-    user.role ===
-      "生徒" &&
-    user.studentId ===
       studentId
-  );
-}
-
-/* =========================================================
-   Role helpers
-   ========================================================= */
-
-export function isHeadOfficeAdmin(
-  user: FirestoreUser
-): boolean {
-  return (
-    user.role ===
-    "本部管理者"
-  );
-}
-
-export function isSchoolAdmin(
-  user: FirestoreUser
-): boolean {
-  return (
-    user.role ===
-    "校舎管理者"
-  );
-}
-
-export function isTeacher(
-  user: FirestoreUser
-): boolean {
-  return (
-    user.role ===
-    "講師"
-  );
-}
-
-export function isStudent(
-  user: FirestoreUser
-): boolean {
-  return (
-    user.role ===
-    "生徒"
-  );
-}
-
-export function isStaff(
-  user: FirestoreUser
-): boolean {
-  return (
-    user.role ===
-      "本部管理者" ||
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  );
-}
-
-/* =========================================================
-   School management
-   ========================================================= */
-
-export function canManageSchool(
-  user: FirestoreUser,
-  schoolId: string
-): boolean {
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return user.schoolIds.includes(
-      schoolId
-    );
-  }
-
-  return false;
-}
-
-/* =========================================================
-   Student management
-   ========================================================= */
-
-export function canManageStudent(
-  user: FirestoreUser,
-  schoolId: string
-): boolean {
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return user.schoolIds.includes(
-      schoolId
-    );
-  }
-
-  return false;
-}
-
-/* =========================================================
-   Test management
-   ========================================================= */
-
-export function canManageTest(
-  user: FirestoreUser,
-  schoolId: string
-): boolean {
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return user.schoolIds.includes(
-      schoolId
     );
   }
 
