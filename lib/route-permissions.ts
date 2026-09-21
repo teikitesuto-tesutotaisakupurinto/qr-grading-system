@@ -7,141 +7,126 @@ import type {
   UserRole,
 } from "@/lib/types";
 
-type RoutePermission = {
+const ROUTES: Array<{
   path: string;
-
   permission: Permission;
-};
+}> = [
+  {
+    path: "/dashboard",
+    permission:
+      "dashboard.view",
+  },
 
-export const ROUTE_PERMISSIONS: RoutePermission[] =
-  [
-    {
-      path: "/dashboard",
-      permission:
-        "dashboard.view",
-    },
+  {
+    path: "/students",
+    permission:
+      "students.view",
+  },
 
-    {
-      path: "/students",
-      permission:
-        "students.view",
-    },
+  {
+    path: "/tests",
+    permission:
+      "tests.view",
+  },
 
-    {
-      path: "/tests",
-      permission:
-        "tests.view",
-    },
+  {
+    path: "/answers",
+    permission:
+      "answers.view",
+  },
 
-    {
-      path: "/answers",
-      permission:
-        "answers.view",
-    },
+  {
+    path: "/grading",
+    permission:
+      "answers.view",
+  },
 
-    {
-      path: "/grading/review",
-      permission:
-        "grading.firstReview",
-    },
+  {
+    path: "/grading/review",
+    permission:
+      "grading.firstReview",
+  },
 
-    {
-      path: "/grading/second-review",
-      permission:
-        "grading.secondReview",
-    },
+  {
+    path: "/grading/second-review",
+    permission:
+      "grading.secondReview",
+  },
 
-    {
-      path: "/results",
-      permission:
-        "results.view",
-    },
+  {
+    path: "/grading/confirm",
+    permission:
+      "grading.secondReview",
+  },
 
-    {
-      path: "/report-cards",
-      permission:
-        "reportCards.view",
-    },
+  {
+    path: "/results",
+    permission:
+      "results.view",
+  },
 
-    {
-      path: "/learning",
-      permission:
-        "learning.view",
-    },
+  {
+    path: "/reports",
+    permission:
+      "reportCards.view",
+  },
 
-    {
-      path: "/retests",
-      permission:
-        "retests.view",
-    },
+  {
+    path: "/report-cards",
+    permission:
+      "reportCards.view",
+  },
 
-    {
-      path: "/qr-stickers",
-      permission:
-        "qr.view",
-    },
+  {
+    path: "/retests",
+    permission:
+      "retests.view",
+  },
 
-    {
-      path: "/schools",
-      permission:
-        "schools.view",
-    },
+  {
+    path: "/qr",
+    permission:
+      "qr.view",
+  },
 
-    {
-      path: "/teachers",
-      permission:
-        "teachers.view",
-    },
+  {
+    path: "/qr-stickers",
+    permission:
+      "qr.view",
+  },
 
-    {
-      path: "/roles",
-      permission:
-        "roles.view",
-    },
+  {
+    path: "/schools",
+    permission:
+      "schools.view",
+  },
 
-    {
-      path: "/usage",
-      permission:
-        "usage.view",
-    },
+  {
+    path: "/users",
+    permission:
+      "teachers.view",
+  },
 
-    {
-      path: "/logs",
-      permission:
-        "logs.view",
-    },
-
-    {
-      path: "/settings",
-      permission:
-        "settings.view",
-    },
-  ];
+  {
+    path: "/settings",
+    permission:
+      "settings.view",
+  },
+];
 
 export function getRoutePermission(
   pathname: string
 ): Permission | null {
-  const exact =
-    ROUTE_PERMISSIONS.find(
-      (
-        route
-      ) =>
-        pathname ===
-        route.path
-    );
-
-  if (exact) {
-    return exact.permission;
-  }
-
-  const nested =
-    ROUTE_PERMISSIONS
+  const route =
+    ROUTES
       .filter(
         (
-          route
+          item
         ) =>
+          pathname ===
+            item.path ||
           pathname.startsWith(
-            `${route.path}/`
+            `${item.path}/`
           )
       )
       .sort(
@@ -154,7 +139,7 @@ export function getRoutePermission(
       )[0];
 
   return (
-    nested?.permission ??
+    route?.permission ??
     null
   );
 }
@@ -166,16 +151,37 @@ export function canAccessRoute(
     | undefined,
   pathname: string
 ) {
+  /*
+   * ログイン・403等は
+   * AppShell側で処理する。
+   */
+  if (
+    pathname ===
+      "/login" ||
+    pathname ===
+      "/403"
+  ) {
+    return true;
+  }
+
   const permission =
     getRoutePermission(
       pathname
     );
 
-  if (!permission) {
+  /*
+   * まだ権限定義していない
+   * 補助ページは通す。
+   */
+  if (
+    !permission
+  ) {
     return true;
   }
 
-  if (!role) {
+  if (
+    !role
+  ) {
     return false;
   }
 
