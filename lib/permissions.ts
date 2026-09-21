@@ -1,4 +1,6 @@
-import type { UserRole } from "@/lib/types";
+import type {
+  UserRole,
+} from "@/lib/types";
 
 export type Permission =
   | "dashboard.view"
@@ -24,6 +26,9 @@ export type Permission =
 
   | "reportCards.view"
   | "reportCards.self"
+
+  | "learning.view"
+  | "learning.self"
 
   | "retests.view"
   | "retests.create"
@@ -174,11 +179,17 @@ const ROLE_PERMISSIONS: Record<
 
     "reportCards.view",
     "reportCards.self",
+
+    "learning.view",
+    "learning.self",
   ],
 };
 
 export function hasPermission(
-  role: UserRole | null | undefined,
+  role:
+    | UserRole
+    | null
+    | undefined,
   permission: Permission
 ): boolean {
   if (!role) {
@@ -191,7 +202,10 @@ export function hasPermission(
 }
 
 export function getPermissions(
-  role: UserRole | null | undefined
+  role:
+    | UserRole
+    | null
+    | undefined
 ): readonly Permission[] {
   if (!role) {
     return [];
@@ -202,8 +216,11 @@ export function getPermissions(
   ];
 }
 
-export function isAdminRole(
-  role: UserRole | null | undefined
+export function isManagementRole(
+  role:
+    | UserRole
+    | null
+    | undefined
 ) {
   return (
     role === "本部管理者" ||
@@ -212,17 +229,14 @@ export function isAdminRole(
 }
 
 export function isStaffRole(
-  role: UserRole | null | undefined
+  role:
+    | UserRole
+    | null
+    | undefined
 ) {
   return (
     role === "本部管理者" ||
     role === "校舎管理者" ||
     role === "講師"
   );
-}
-
-export function isStudentRole(
-  role: UserRole | null | undefined
-) {
-  return role === "生徒";
 }
