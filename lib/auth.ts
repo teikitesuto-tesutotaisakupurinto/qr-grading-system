@@ -23,7 +23,7 @@ import type {
 } from "../types";
 
 /* =========================================================
-   Role normalization
+   Role
    ========================================================= */
 
 export function normalizeUserRole(
@@ -56,10 +56,6 @@ export function normalizeUserRole(
   }
 }
 
-/* =========================================================
-   Role check
-   ========================================================= */
-
 export function isUserRole(
   value: unknown
 ): value is UserRole {
@@ -71,7 +67,7 @@ export function isUserRole(
 }
 
 /* =========================================================
-   Get Tsystem user
+   Firebase User → Tsystem User
    ========================================================= */
 
 export async function getCurrentUserProfile(
@@ -158,24 +154,22 @@ export async function getCurrentUserProfile(
       error
     );
 
-    return null;
+    throw error;
   }
 }
 
 /* =========================================================
    getAppUser
    =========================================================
-   引数あり・なし両対応。
+   以下の両方に対応する。
    
    getAppUser()
    getAppUser(firebaseUser)
-   
-   どちらでも使える。
    ========================================================= */
 
 export async function getAppUser(
   firebaseUser?: User | null
-) {
+): Promise<UserProfile | null> {
   const user =
     firebaseUser ??
     auth.currentUser;
@@ -190,13 +184,13 @@ export async function getAppUser(
 }
 
 /* =========================================================
-   Email / Password login
+   Email / Password Login
    ========================================================= */
 
 export async function login(
   email: string,
   password: string
-) {
+): Promise<UserProfile> {
   const normalizedEmail =
     email
       .trim()
@@ -243,50 +237,26 @@ export async function login(
       );
     }
 
-    if (
-      !profile.active
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "このアカウントは現在利用できません。"
-      );
-    }
-
-    if (
-      !profile.organizationId
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "所属組織が設定されていません。"
-      );
-    }
-
-    if (
-      !profile.role
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "権限が設定されていません。"
-      );
-    }
+    validateAppUser(
+      profile
+    );
 
     return profile;
   } catch (
     error
   ) {
-    console.error(
-      "Email login error:",
-      error
-    );
+    /*
+     * Tsystem側で生成したエラーは
+     * そのまま返す。
+     */
+    if (
+      error instanceof Error &&
+      !isFirebaseAuthError(
+        error
+      )
+    ) {
+      throw error;
+    }
 
     throw normalizeAuthError(
       error
@@ -295,10 +265,10 @@ export async function login(
 }
 
 /* =========================================================
-   Google login
+   Google Login
    ========================================================= */
 
-export async function loginWithGoogle() {
+export async function loginWithGoogle(): Promise<UserProfile> {
   const provider =
     new GoogleAuthProvider();
 
@@ -331,54 +301,95 @@ export async function loginWithGoogle() {
       );
     }
 
-    if (
-      !profile.active
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "このアカウントは現在利用できません。"
-      );
-    }
-
-    if (
-      !profile.organizationId
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "所属組織が設定されていません。"
-      );
-    }
-
-    if (
-      !profile.role
-    ) {
-      await signOut(
-        auth
-      );
-
-      throw new Error(
-        "権限が設定されていません。"
-      );
-    }
+    validateAppUser(
+      profile
+    );
 
     return profile;
   } catch (
     error
   ) {
-    console.error(
-      "Google login error:",
-      error
-    );
+    if (
+      error instanceof Error &&
+      !isFirebaseAuthError(
+        error
+      )
+    ) {
+      throw error;
+    }
 
     throw normalizeAuthError(
       error
     );
+  }
+}
+
+/* =========================================================
+   Validate User
+   ========================================================= */
+
+function validateAppUser(
+  profile: UserProfile
+) {
+  if (
+    !profile.active
+  ) {
+    throw new Error(
+      "このアカウントは現在利用できません。"
+    );
+  }
+
+  if (
+    !profile.organizationId
+  ) {
+    throw new Error(
+      "所属組織が設定されていません。管理者に確認してください。"
+    );
+  }
+
+  if (
+    !profile.role
+  ) {
+    throw new Error(
+      "権限が設定されていません。管理者に確認してください。"
+    );
+  }
+
+  /*
+   * 生徒はstudentId必須。
+   */
+  if (
+    profile.role ===
+      "生徒" &&
+    !profile.studentId
+  ) {
+    throw new Error(
+      "生徒アカウントに生徒情報が紐付いていません。管理者に確認してください。"
+    );
+  }
+
+  /*
+   * 本部管理者以外は
+   * schoolIdsを持つ。
+   */
+  if (
+    profile.role !==
+      "本部管理者" &&
+    profile.schoolIds.length ===
+      0
+  ) {
+    /*
+     * 生徒についてはstudentIdがあれば
+     * schoolIdsがない旧データも許容。
+     */
+    if (
+      profile.role !==
+        "生徒"
+    ) {
+      throw new Error(
+        "所属校舎が設定されていません。管理者に確認してください。"
+      );
+    }
   }
 }
 
@@ -401,7 +412,93 @@ export function getFirebaseCurrentUser() {
 }
 
 /* =========================================================
-   Auth state
+   observeAuth
+   =========================================================
+   既存AuthGuard互換。
+   
+   observeAuth(onUser)
+
+   observeAuth(onUser, onError)
+   ========================================================= */
+
+export function observeAuth(
+  onUser: (
+    user: UserProfile | null
+  ) => void,
+
+  onError?: (
+    error: unknown
+  ) => void
+) {
+  let disposed =
+    false;
+
+  const unsubscribe =
+    onAuthStateChanged(
+      auth,
+      async (
+        firebaseUser
+      ) => {
+        if (
+          disposed
+        ) {
+          return;
+        }
+
+        try {
+          const appUser =
+            await getAppUser(
+              firebaseUser
+            );
+
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          onUser(
+            appUser
+          );
+        } catch (
+          error
+        ) {
+          console.error(
+            "observeAuth error:",
+            error
+          );
+
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          if (
+            onError
+          ) {
+            onError(
+              error
+            );
+          } else {
+            onUser(
+              null
+            );
+          }
+        }
+      }
+    );
+
+  return () => {
+    disposed =
+      true;
+
+    unsubscribe();
+  };
+}
+
+/* =========================================================
+   subscribeAuth
    ========================================================= */
 
 export function subscribeAuth(
@@ -409,6 +506,7 @@ export function subscribeAuth(
     firebaseUser: User | null,
     appUser: UserProfile | null
   ) => void,
+
   onError?: (
     error: unknown
   ) => void
@@ -532,6 +630,19 @@ export function isStaff(
       "校舎管理者" ||
     user?.role ===
       "講師"
+  );
+}
+
+export function isManagement(
+  user:
+    | UserProfile
+    | null
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者"
   );
 }
 
@@ -661,25 +772,66 @@ export function isOwnStudent(
 }
 
 /* =========================================================
-   Auth error normalization
+   Firebase error
+   ========================================================= */
+
+function isFirebaseAuthError(
+  error: unknown
+) {
+  if (
+    !error ||
+    typeof error !==
+      "object"
+  ) {
+    return false;
+  }
+
+  const code =
+    (
+      error as {
+        code?: unknown;
+      }
+    ).code;
+
+  return (
+    typeof code ===
+      "string" &&
+    code.startsWith(
+      "auth/"
+    )
+  );
+}
+
+/* =========================================================
+   Error normalization
    ========================================================= */
 
 function normalizeAuthError(
   error: unknown
-) {
+): Error {
   if (
-    error instanceof Error
+    error instanceof Error &&
+    !isFirebaseAuthError(
+      error
+    )
   ) {
     return error;
   }
 
-  const firebaseError =
-    error as {
-      code?: string;
-    };
+  const code =
+    error &&
+    typeof error ===
+      "object" &&
+    "code" in error
+      ? (
+          error as {
+            code?: unknown;
+          }
+        ).code
+      : "";
 
   switch (
-    firebaseError?.code
+    code
   ) {
     case "auth/invalid-email":
       return new Error(
@@ -713,89 +865,24 @@ function normalizeAuthError(
         "Googleログインがキャンセルされました。"
       );
 
+    case "auth/popup-blocked":
+      return new Error(
+        "Googleログインのポップアップがブロックされました。"
+      );
+
+    case "auth/cancelled-popup-request":
+      return new Error(
+        "Googleログインがキャンセルされました。"
+      );
+
+    case "auth/operation-not-allowed":
+      return new Error(
+        "このログイン方法は現在利用できません。"
+      );
+
     default:
       return new Error(
         "ログインできませんでした。"
       );
   }
-}
-/* =========================================================
-   AuthGuard compatibility
-   ========================================================= */
-
-export type AppUser =
-  UserProfile;
-
-/**
- * AuthGuard.tsx 互換用。
- *
- * 既存コード:
- *
- * observeAuth((user) => {
- *   ...
- * });
- *
- * に対応する。
- */
-export function observeAuth(
-  callback: (
-    user: AppUser | null
-  ) => void
-) {
-  let disposed = false;
-
-  const unsubscribe =
-    onAuthStateChanged(
-      auth,
-      async (
-        firebaseUser
-      ) => {
-        if (
-          disposed
-        ) {
-          return;
-        }
-
-        try {
-          const appUser =
-            await getAppUser(
-              firebaseUser
-            );
-
-          if (
-            disposed
-          ) {
-            return;
-          }
-
-          callback(
-            appUser
-          );
-        } catch (
-          error
-        ) {
-          console.error(
-            "observeAuth error:",
-            error
-          );
-
-          if (
-            disposed
-          ) {
-            return;
-          }
-
-          callback(
-            null
-          );
-        }
-      }
-    );
-
-  return () => {
-    disposed =
-      true;
-
-    unsubscribe();
-  };
 }
