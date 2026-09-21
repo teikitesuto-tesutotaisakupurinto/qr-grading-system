@@ -19,15 +19,19 @@ export default function LoginPage() {
   const [
     loading,
     setLoading,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   async function handleGoogleLogin() {
-    if (loading) {
+    if (
+      loading
+    ) {
       return;
     }
 
@@ -35,100 +39,49 @@ export default function LoginPage() {
       setLoading(true);
       setError("");
 
-      /*
-       * Google Authenticationのみ実行。
-       */
       await loginWithGoogle();
 
-      /*
-       * ログイン成功後はDashboardへ。
-       */
-      window.location.assign(
+      router.replace(
         "/dashboard"
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
-        "Google login error:",
         error
       );
 
-      setLoading(false);
-
       setError(
-        getLoginErrorMessage(
+        getErrorMessage(
           error
         )
       );
-    }
-  }
 
-  function handleBack() {
-    /*
-     * 前のページが存在する場合は戻る。
-     * 直接/loginを開いた場合はトップへ。
-     */
-    if (
-      window.history.length >
-      1
-    ) {
-      router.back();
-      return;
+      setLoading(false);
     }
-
-    window.location.assign(
-      "/"
-    );
   }
 
   return (
     <main className="loginPage">
       <section className="loginCard">
-
-        {/* =============================================
-            戻る
-            ============================================= */}
-
-        <button
-          type="button"
-          onClick={handleBack}
-          disabled={loading}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 24,
-            padding: 0,
-            border: "none",
-            background: "transparent",
-            color: "#666",
-            fontSize: 14,
-            cursor: loading
-              ? "default"
-              : "pointer",
-          }}
-        >
-          <span
-            aria-hidden="true"
+        <div className="loginHeader">
+          <div
             style={{
-              fontSize: 18,
-              lineHeight: 1,
+              fontSize:
+                32,
+
+              fontWeight:
+                800,
+
+              marginBottom:
+                20,
             }}
           >
-            ←
-          </span>
+            Tsystem
+          </div>
 
-          <span>
-            戻る
-          </span>
-        </button>
-
-        {/* =============================================
-            Header
-            ============================================= */}
-
-        <div className="loginHeader">
           <h1>
-            答案採点システム
+            ログイン
           </h1>
 
           <p>
@@ -138,18 +91,15 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* =============================================
-            Google Login
-            ============================================= */}
-
         <button
           type="button"
           className="googleLoginButton"
-          disabled={loading}
+          disabled={
+            loading
+          }
           onClick={
             handleGoogleLogin
           }
-          aria-busy={loading}
         >
           <img
             src="/google-logo.svg"
@@ -165,22 +115,16 @@ export default function LoginPage() {
           </span>
         </button>
 
-        {/* =============================================
-            Error
-            ============================================= */}
-
         {error && (
           <div
             className="loginError"
             role="alert"
           >
-            {error}
+            {
+              error
+            }
           </div>
         )}
-
-        {/* =============================================
-            Notice
-            ============================================= */}
 
         <p className="loginNotice">
           登録済みユーザーのみ利用できます。
@@ -190,65 +134,14 @@ export default function LoginPage() {
   );
 }
 
-/* =====================================================
-   Login Error
-   ===================================================== */
-
-function getLoginErrorMessage(
+function getErrorMessage(
   error: unknown
-): string {
+) {
   if (
-    !error ||
-    typeof error !==
-      "object"
+    error instanceof Error
   ) {
-    return "Googleログインに失敗しました。";
+    return error.message;
   }
 
-  const firebaseError =
-    error as {
-      code?: string;
-      message?: string;
-    };
-
-  switch (
-    firebaseError.code
-  ) {
-    case "auth/popup-closed-by-user":
-      return "Googleログインをキャンセルしました。";
-
-    case "auth/popup-blocked":
-      return "Googleログイン画面がブロックされました。ブラウザのポップアップを許可してください。";
-
-    case "auth/cancelled-popup-request":
-      return "Googleログイン処理がキャンセルされました。もう一度お試しください。";
-
-    case "auth/account-exists-with-different-credential":
-      return "このメールアドレスには別のログイン方法で登録されたアカウントがあります。";
-
-    case "auth/invalid-api-key":
-      return "Firebaseの設定を確認してください。";
-
-    case "auth/invalid-argument":
-    case "auth/argument-error":
-      return "Googleログインの設定を確認してください。";
-
-    case "auth/operation-not-allowed":
-      return "FirebaseでGoogleログインが有効になっていません。";
-
-    case "auth/unauthorized-domain":
-      return "現在のサイトがFirebase Authenticationの承認済みドメインに登録されていません。";
-
-    case "auth/network-request-failed":
-      return "ネットワーク通信に失敗しました。";
-
-    case "auth/internal-error":
-      return "Firebase Authenticationで内部エラーが発生しました。";
-
-    default:
-      return (
-        firebaseError.message ||
-        "Googleログインに失敗しました。"
-      );
-  }
+  return "ログインできませんでした。";
 }
