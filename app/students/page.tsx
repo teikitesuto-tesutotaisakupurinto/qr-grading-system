@@ -1,12 +1,11 @@
 "use client";
 
 import {
+  ChangeEvent,
   useEffect,
   useMemo,
   useState,
 } from "react";
-
-import Link from "next/link";
 
 import {
   onAuthStateChanged,
@@ -28,10 +27,6 @@ import {
   db,
 } from "@/lib/firebase";
 
-import {
-  getFirebaseErrorMessage,
-} from "@/lib/firebaseError";
-
 type UserRole =
   | "本部管理者"
   | "校舎管理者"
@@ -40,9 +35,23 @@ type UserRole =
 
 type CurrentUser = {
   uid: string;
+  name: string;
   organizationId: string | null;
   role: UserRole | null;
   schoolIds: string[];
+};
+
+type Student = {
+  id: string;
+  organizationId: string;
+  studentNumber: string;
+  name: string;
+  grade: string;
+  className: string;
+  schoolId: string;
+  active: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 };
 
 type School = {
@@ -51,38 +60,45 @@ type School = {
   active: boolean;
 };
 
-type Student = {
-  id: string;
-  organizationId: string;
-  schoolId: string;
+type CSVRow = {
+  rowNumber: number;
+  studentId: string;
   studentNumber: string;
   name: string;
   grade: string;
   className: string;
-  active: boolean;
+  schoolName: string;
+  schoolId: string;
+  error: string;
+  isNew: boolean;
+  isUpdate: boolean;
+  isUnchanged: boolean;
 };
 
-const GRADES = [
-  "未設定",
-  "小学1年",
-  "小学2年",
-  "小学3年",
-  "小学4年",
-  "小学5年",
-  "小学6年",
-  "中学1年",
-  "中学2年",
-  "中学3年",
-  "高校1年",
-  "高校2年",
-  "高校3年",
+type ImportSummary = {
+  newCount: number;
+  updateCount: number;
+  unchangedCount: number;
+  errorCount: number;
+};
+
+const CSV_HEADERS = [
+  "生徒番号",
+  "氏名",
+  "学年",
+  "クラス",
+  "校舎",
 ];
+
+const MAX_CSV_ROWS = 5000;
 
 export default function StudentsPage() {
   const [
     currentUser,
     setCurrentUser,
-  ] = useState<CurrentUser | null>(null);
+  ] = useState<CurrentUser | null>(
+    null
+  );
 
   const [
     students,
@@ -100,8 +116,8 @@ export default function StudentsPage() {
   ] = useState(true);
 
   const [
-    saving,
-    setSaving,
+    importing,
+    setImporting,
   ] = useState(false);
 
   const [
@@ -120,40 +136,23 @@ export default function StudentsPage() {
   ] = useState("");
 
   const [
-    editingId,
-    setEditingId,
-  ] = useState<string | null>(
-    null
-  );
+    csvRows,
+    setCsvRows,
+  ] = useState<CSVRow[]>([]);
 
   const [
-    studentNumber,
-    setStudentNumber,
+    fileName,
+    setFileName,
   ] = useState("");
 
   const [
-    name,
-    setName,
-  ] = useState("");
-
-  const [
-    grade,
-    setGrade,
-  ] = useState("未設定");
-
-  const [
-    className,
-    setClassName,
-  ] = useState("");
-
-  const [
-    schoolId,
-    setSchoolId,
-  ] = useState("");
+    previewReady,
+    setPreviewReady,
+  ] = useState(false);
 
   /*
    * ========================================================
-   * 認証ユーザー
+   * Authentication
    * ========================================================
    */
 
@@ -173,7 +172,10 @@ export default function StudentsPage() {
           }
 
           try {
-            const snapshot =
+            /*
+             * users/{uid} を直接取得する。
+             */
+            const userSnapshot =
               await getDocs(
                 query(
                   collection(
@@ -189,7 +191,7 @@ export default function StudentsPage() {
               );
 
             if (
-              snapshot.empty
+              userSnapshot.empty
             ) {
               setLoading(false);
 
@@ -201,7 +203,7 @@ export default function StudentsPage() {
             }
 
             const data =
-              snapshot.docs[0].data();
+              userSnapshot.docs[0].data();
 
             const role =
               isUserRole(
@@ -210,42 +212,46 @@ export default function StudentsPage() {
                 ? data.role
                 : null;
 
-            const organizationId =
-              typeof data.organizationId ===
-              "string"
-                ? data.organizationId
-                : null;
-
-            const schoolIds =
-              Array.isArray(
-                data.schoolIds
-              )
-                ? data.schoolIds.filter(
-                    (
-                      value
-                    ): value is string =>
-                      typeof value ===
-                      "string"
-                  )
-                : [];
-
             setCurrentUser({
               uid:
                 firebaseUser.uid,
 
-              organizationId,
+              name:
+                typeof data.name ===
+                "string"
+                  ? data.name
+                  : firebaseUser.displayName ??
+                    "",
+
+              organizationId:
+                typeof data.organizationId ===
+                "string"
+                  ? data.organizationId
+                  : null,
 
               role,
 
-              schoolIds,
+              schoolIds:
+                Array.isArray(
+                  data.schoolIds
+                )
+                  ? data.schoolIds.filter(
+                      (
+                        value
+                      ): value is string =>
+                        typeof value ===
+                        "string"
+                    )
+                  : [],
             });
           } catch (err) {
             console.error(
+              "Authentication error:",
               err
             );
 
             setError(
-              getFirebaseErrorMessage(
+              getSafeErrorMessage(
                 err
               )
             );
@@ -262,7 +268,7 @@ export default function StudentsPage() {
 
   /*
    * ========================================================
-   * データ読み込み
+   * Load students / schools
    * ========================================================
    */
 
@@ -285,116 +291,138 @@ export default function StudentsPage() {
   ) {
     try {
       setLoading(true);
+
       setError("");
 
       const [
         studentSnapshot,
         schoolSnapshot,
-      ] = await Promise.all([
-        getDocs(
-          query(
-            collection(
-              db,
-              "students"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
+      ] =
+        await Promise.all([
+          getDocs(
+            query(
+              collection(
+                db,
+                "students"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "schools"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
+          getDocs(
+            query(
+              collection(
+                db,
+                "schools"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
             )
-          )
-        ),
-      ]);
+          ),
+        ]);
 
       const loadedStudents =
-        studentSnapshot.docs.map(
-          (
-            item
-          ): Student => {
-            const data =
-              item.data();
+        studentSnapshot.docs
+          .map(
+            (
+              item
+            ): Student => {
+              const data =
+                item.data();
 
-            return {
-              id:
-                item.id,
+              return {
+                id:
+                  item.id,
 
-              organizationId,
+                organizationId,
 
-              schoolId:
-                typeof data.schoolId ===
-                "string"
-                  ? data.schoolId
-                  : "",
+                studentNumber:
+                  stringValue(
+                    data.studentNumber
+                  ),
 
-              studentNumber:
-                typeof data.studentNumber ===
-                "string"
-                  ? data.studentNumber
-                  : "",
+                name:
+                  stringValue(
+                    data.name
+                  ),
 
-              name:
-                typeof data.name ===
-                "string"
-                  ? data.name
-                  : "",
+                grade:
+                  stringValue(
+                    data.grade
+                  ),
 
-              grade:
-                typeof data.grade ===
-                "string"
-                  ? data.grade
-                  : "未設定",
+                className:
+                  stringValue(
+                    data.className
+                  ),
 
-              className:
-                typeof data.className ===
-                "string"
-                  ? data.className
-                  : "",
+                schoolId:
+                  stringValue(
+                    data.schoolId
+                  ),
 
-              active:
-                data.active !==
-                false,
-            };
-          }
-        );
+                active:
+                  data.active !==
+                  false,
+
+                createdAt:
+                  data.createdAt,
+
+                updatedAt:
+                  data.updatedAt,
+              };
+            }
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              a.studentNumber.localeCompare(
+                b.studentNumber
+              )
+          );
 
       const loadedSchools =
-        schoolSnapshot.docs.map(
-          (
-            item
-          ): School => {
-            const data =
-              item.data();
+        schoolSnapshot.docs
+          .map(
+            (
+              item
+            ): School => {
+              const data =
+                item.data();
 
-            return {
-              id:
-                item.id,
+              return {
+                id:
+                  item.id,
 
-              name:
-                typeof data.name ===
-                "string"
-                  ? data.name
-                  : "",
+                name:
+                  stringValue(
+                    data.name
+                  ),
 
-              active:
-                data.active !==
-                false,
-            };
-          }
-        );
+                active:
+                  data.active !==
+                  false,
+              };
+            }
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              a.name.localeCompare(
+                b.name
+              )
+          );
 
       setStudents(
         loadedStudents
@@ -403,37 +431,14 @@ export default function StudentsPage() {
       setSchools(
         loadedSchools
       );
-
-      /*
-       * 新規登録時の初期校舎
-       */
-      if (
-        !schoolId &&
-        loadedSchools.length >
-          0
-      ) {
-        const available =
-          getAvailableSchools(
-            loadedSchools,
-            currentUser
-          );
-
-        if (
-          available.length >
-          0
-        ) {
-          setSchoolId(
-            available[0].id
-          );
-        }
-      }
     } catch (err) {
       console.error(
+        "Student loading error:",
         err
       );
 
       setError(
-        getFirebaseErrorMessage(
+        getSafeErrorMessage(
           err
         )
       );
@@ -444,14 +449,14 @@ export default function StudentsPage() {
 
   /*
    * ========================================================
-   * 利用可能校舎
+   * Accessible schools
    * ========================================================
    */
 
-  const availableSchools =
+  const accessibleSchools =
     useMemo(
       () =>
-        getAvailableSchools(
+        getAccessibleSchools(
           schools,
           currentUser
         ),
@@ -463,50 +468,598 @@ export default function StudentsPage() {
 
   /*
    * ========================================================
-   * 生徒番号生成
+   * Search
    * ========================================================
    */
 
-  function generateStudentNumber() {
-    const existing =
-      new Set(
-        students.map(
-          (student) =>
-            student.studentNumber
-        )
+  const filteredStudents =
+    useMemo(() => {
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
+
+      let result =
+        students;
+
+      if (
+        currentUser?.role !==
+        "本部管理者"
+      ) {
+        result =
+          result.filter(
+            (
+              student
+            ) =>
+              currentUser?.schoolIds.includes(
+                student.schoolId
+              )
+          );
+      }
+
+      if (
+        keyword
+      ) {
+        result =
+          result.filter(
+            (
+              student
+            ) => {
+              const school =
+                schools.find(
+                  (
+                    item
+                  ) =>
+                    item.id ===
+                    student.schoolId
+                );
+
+              return (
+                student.studentNumber.includes(
+                  keyword
+                ) ||
+                student.name
+                  .toLowerCase()
+                  .includes(
+                    keyword
+                  ) ||
+                student.grade
+                  .toLowerCase()
+                  .includes(
+                    keyword
+                  ) ||
+                student.className
+                  .toLowerCase()
+                  .includes(
+                    keyword
+                  ) ||
+                (
+                  school?.name ??
+                  ""
+                )
+                  .toLowerCase()
+                  .includes(
+                    keyword
+                  )
+              );
+            }
+          );
+      }
+
+      return result;
+    }, [
+      students,
+      schools,
+      currentUser,
+      search,
+    ]);
+
+  /*
+   * ========================================================
+   * CSV download
+   * ========================================================
+   */
+
+  function downloadCurrentStudentsCSV() {
+    if (
+      students.length ===
+      0
+    ) {
+      setError(
+        "ダウンロードする生徒データがありません。"
       );
 
-    let number = "";
+      return;
+    }
 
-    do {
-      number =
-        Math.floor(
-          100000 +
-            Math.random() *
-              900000
-        ).toString();
-    } while (
-      existing.has(number)
+    const rows =
+      students
+        .filter(
+          (
+            student
+          ) => {
+            if (
+              currentUser?.role ===
+              "本部管理者"
+            ) {
+              return true;
+            }
+
+            return currentUser?.schoolIds.includes(
+              student.schoolId
+            );
+          }
+        )
+        .map(
+          (
+            student
+          ) => {
+            const school =
+              schools.find(
+                (
+                  item
+                ) =>
+                  item.id ===
+                  student.schoolId
+              );
+
+            return [
+              student.studentNumber,
+              student.name,
+              student.grade,
+              student.className,
+              school?.name ??
+                "",
+            ];
+          }
+        );
+
+    const csv =
+      "\uFEFF" +
+      [
+        CSV_HEADERS,
+        ...rows,
+      ]
+        .map(
+          (
+            row
+          ) =>
+            row
+              .map(
+                csvEscape
+              )
+              .join(",")
+        )
+        .join(
+          "\r\n"
+        );
+
+    downloadTextFile(
+      csv,
+      "生徒一覧.csv",
+      "text/csv;charset=utf-8;"
     );
 
-    setStudentNumber(
-      number
+    setMessage(
+      "現在の生徒一覧をCSVでダウンロードしました。"
     );
   }
 
   /*
    * ========================================================
-   * 生徒保存
+   * CSV file
    * ========================================================
    */
 
-  async function saveStudent() {
-    if (saving) {
+  async function handleCSVFile(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    setError("");
+    setMessage("");
+
+    const file =
+      event.target.files?.[0];
+
+    if (
+      !file
+    ) {
       return;
     }
 
-    setError("");
-    setMessage("");
+    setFileName(
+      file.name
+    );
+
+    setPreviewReady(
+      false
+    );
+
+    setCsvRows(
+      []
+    );
+
+    try {
+      if (
+        !file.name
+          .toLowerCase()
+          .endsWith(
+            ".csv"
+          )
+      ) {
+        throw new Error(
+          "CSVファイルを選択してください。"
+        );
+      }
+
+      const text =
+        await file.text();
+
+      const parsed =
+        parseCSV(
+          text
+        );
+
+      if (
+        parsed.length ===
+        0
+      ) {
+        throw new Error(
+          "CSVにデータがありません。"
+        );
+      }
+
+      if (
+        parsed.length >
+        MAX_CSV_ROWS
+      ) {
+        throw new Error(
+          `一度に登録できるのは${MAX_CSV_ROWS}行までです。`
+        );
+      }
+
+      const rows =
+        buildPreviewRows(
+          parsed
+        );
+
+      setCsvRows(
+        rows
+      );
+
+      setPreviewReady(
+        true
+      );
+    } catch (err) {
+      console.error(
+        "CSV parse error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "CSVを読み込めませんでした。"
+      );
+    }
+
+    /*
+     * 同じファイルを再選択できるようにする。
+     */
+    event.target.value =
+      "";
+  }
+
+  /*
+   * ========================================================
+   * Preview
+   * ========================================================
+   */
+
+  function buildPreviewRows(
+    parsed: string[][]
+  ) {
+    const rows: CSVRow[] =
+      [];
+
+    /*
+     * 1行目をヘッダーとして判定。
+     */
+
+    const first =
+      parsed[0] ?? [];
+
+    const hasHeader =
+      looksLikeHeader(
+        first
+      );
+
+    const dataRows =
+      hasHeader
+        ? parsed.slice(1)
+        : parsed;
+
+    /*
+     * CSV内の生徒番号重複チェック。
+     */
+    const seenNumbers =
+      new Set<string>();
+
+    /*
+     * CSV内の新規行重複チェック。
+     */
+    const seenNewKeys =
+      new Set<string>();
+
+    for (
+      let i = 0;
+      i < dataRows.length;
+      i++
+    ) {
+      const source =
+        dataRows[i];
+
+      const rowNumber =
+        hasHeader
+          ? i + 2
+          : i + 1;
+
+      const studentNumber =
+        normalizeStudentNumber(
+          source[0] ?? ""
+        );
+
+      const name =
+        cleanCSVValue(
+          source[1] ?? ""
+        );
+
+      const grade =
+        cleanCSVValue(
+          source[2] ?? ""
+        );
+
+      const className =
+        cleanCSVValue(
+          source[3] ?? ""
+        );
+
+      const schoolName =
+        cleanCSVValue(
+          source[4] ?? ""
+        );
+
+      let studentId =
+        "";
+
+      let errorText =
+        "";
+
+      let isNew =
+        false;
+
+      let isUpdate =
+        false;
+
+      let isUnchanged =
+        false;
+
+      /*
+       * 空行
+       */
+      if (
+        !studentNumber &&
+        !name &&
+        !grade &&
+        !className &&
+        !schoolName
+      ) {
+        continue;
+      }
+
+      /*
+       * 基本チェック
+       */
+      if (
+        !name
+      ) {
+        errorText =
+          "氏名がありません。";
+      }
+
+      /*
+       * 生徒番号あり
+       */
+      if (
+        !errorText &&
+        studentNumber
+      ) {
+        if (
+          !/^\d{6}$/.test(
+            studentNumber
+          )
+        ) {
+          errorText =
+            "生徒番号は6桁の数字で入力してください。";
+        }
+      }
+
+      /*
+       * 生徒番号重複
+       */
+      if (
+        !errorText &&
+        studentNumber
+      ) {
+        if (
+          seenNumbers.has(
+            studentNumber
+          )
+        ) {
+          errorText =
+            "CSV内で同じ生徒番号が重複しています。";
+        } else {
+          seenNumbers.add(
+            studentNumber
+          );
+        }
+      }
+
+      /*
+       * 校舎
+       */
+      let schoolId =
+        "";
+
+      if (
+        !errorText
+      ) {
+        const school =
+          findSchool(
+            schoolName,
+            accessibleSchools
+          );
+
+        if (
+          !school
+        ) {
+          errorText =
+            schoolName
+              ? `校舎「${schoolName}」が見つかりません。`
+              : "校舎がありません。";
+        } else {
+          schoolId =
+            school.id;
+        }
+      }
+
+      /*
+       * 既存生徒照合
+       *
+       * 生徒番号だけを識別子にする。
+       */
+      if (
+        !errorText &&
+        studentNumber
+      ) {
+        const existing =
+          students.find(
+            (
+              student
+            ) =>
+              student.studentNumber ===
+              studentNumber
+          );
+
+        if (
+          !existing
+        ) {
+          errorText =
+            `生徒番号「${studentNumber}」の生徒が登録されていません。新規生徒の場合は生徒番号を空欄にしてください。`;
+        } else {
+          studentId =
+            existing.id;
+
+          isUpdate =
+            hasStudentChanged(
+              existing,
+              {
+                name,
+                grade,
+                className,
+                schoolId,
+              }
+            );
+
+          isUnchanged =
+            !isUpdate;
+        }
+      }
+
+      /*
+       * 新規生徒
+       *
+       * 生徒番号が空欄なら新規。
+       */
+      if (
+        !errorText &&
+        !studentNumber
+      ) {
+        isNew =
+          true;
+
+        const key =
+          [
+            name,
+            grade,
+            className,
+            schoolId,
+          ].join(
+            "|"
+          );
+
+        if (
+          seenNewKeys.has(
+            key
+          )
+        ) {
+          errorText =
+            "CSV内で同じ新規生徒情報が重複しています。";
+        } else {
+          seenNewKeys.add(
+            key
+          );
+        }
+      }
+
+      rows.push({
+        rowNumber,
+
+        studentId,
+
+        studentNumber,
+
+        name,
+
+        grade,
+
+        className,
+
+        schoolName,
+
+        schoolId,
+
+        error:
+          errorText,
+
+        isNew:
+          !errorText &&
+          isNew,
+
+        isUpdate:
+          !errorText &&
+          isUpdate,
+
+        isUnchanged:
+          !errorText &&
+          isUnchanged,
+      });
+    }
+
+    return rows;
+  }
+
+  /*
+   * ========================================================
+   * Import
+   * ========================================================
+   */
+
+  async function importCSV() {
+    if (
+      importing
+    ) {
+      return;
+    }
 
     if (
       !currentUser?.organizationId
@@ -519,389 +1072,479 @@ export default function StudentsPage() {
     }
 
     if (
-      !schoolId
+      !previewReady ||
+      csvRows.length ===
+        0
     ) {
       setError(
-        "所属校舎を選択してください。"
+        "先にCSVをアップロードしてください。"
       );
 
       return;
     }
 
-    if (
-      !name.trim()
-    ) {
-      setError(
-        "氏名を入力してください。"
+    const invalidRows =
+      csvRows.filter(
+        (
+          row
+        ) =>
+          Boolean(
+            row.error
+          )
       );
 
-      return;
-    }
-
     if (
-      !/^\d{6}$/.test(
-        studentNumber
-      )
+      invalidRows.length >
+      0
     ) {
       setError(
-        "生徒番号は6桁の数字で入力してください。"
+        `${invalidRows.length}件のエラーがあります。修正してから再アップロードしてください。`
       );
 
       return;
     }
 
     /*
-     * 校舎権限確認
+     * 生徒登録・更新権限
      */
-
     if (
-      currentUser.role !==
-        "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        schoolId
+      !canManageStudents(
+        currentUser
       )
     ) {
       setError(
-        "この校舎の生徒を管理する権限がありません。"
+        "生徒情報を管理する権限がありません。"
       );
 
       return;
     }
 
     try {
-      setSaving(true);
+      setImporting(
+        true
+      );
+
+      setError("");
+      setMessage("");
 
       /*
-       * 生徒番号重複確認
+       * 現在の番号一覧。
        */
+      const usedNumbers =
+        new Set(
+          students
+            .map(
+              (
+                student
+              ) =>
+                student.studentNumber
+            )
+            .filter(
+              Boolean
+            )
+        );
 
-      const duplicateSnapshot =
+      /*
+       * 過去使用番号を記録する
+       * studentNumberRegistry も取得。
+       */
+      const registrySnapshot =
         await getDocs(
           query(
             collection(
               db,
-              "students"
+              "studentNumberRegistry"
             ),
             where(
               "organizationId",
               "==",
               currentUser.organizationId
-            ),
-            where(
-              "studentNumber",
-              "==",
-              studentNumber
             )
           )
         );
 
-      const duplicate =
-        duplicateSnapshot.docs.find(
-          (
-            item
-          ) =>
-            item.id !==
-            editingId
-        );
+      for (
+        const item of
+          registrySnapshot.docs
+      ) {
+        const number =
+          stringValue(
+            item.data()
+              .studentNumber
+          );
 
-      if (duplicate) {
-        throw new Error(
-          "この生徒番号はすでに使用されています。"
-        );
+        if (
+          number
+        ) {
+          usedNumbers.add(
+            number
+          );
+        }
       }
 
-      if (
-        editingId
+      let newCount =
+        0;
+
+      let updateCount =
+        0;
+
+      let unchangedCount =
+        0;
+
+      /*
+       * 新規生徒
+       */
+      for (
+        const row of
+          csvRows
       ) {
-        /*
-         * 編集
-         */
+        if (
+          !row.isNew
+        ) {
+          continue;
+        }
 
-        await updateDoc(
-          doc(
-            db,
-            "students",
-            editingId
-          ),
-          {
-            schoolId,
+        const studentNumber =
+          generateStudentNumber(
+            usedNumbers
+          );
 
-            studentNumber,
-
-            name:
-              name.trim(),
-
-            grade,
-
-            className:
-              className.trim(),
-
-            updatedAt:
-              serverTimestamp(),
-          }
+        usedNumbers.add(
+          studentNumber
         );
 
-        setMessage(
-          "生徒情報を更新しました。"
-        );
-      } else {
-        /*
-         * 新規登録
-         */
+        const studentRef =
+          await addDoc(
+            collection(
+              db,
+              "students"
+            ),
+            {
+              organizationId:
+                currentUser.organizationId,
 
+              studentNumber,
+
+              name:
+                row.name,
+
+              grade:
+                row.grade,
+
+              className:
+                row.className,
+
+              schoolId:
+                row.schoolId,
+
+              active:
+                true,
+
+              createdAt:
+                serverTimestamp(),
+
+              updatedAt:
+                serverTimestamp(),
+            }
+          );
+
+        /*
+         * 番号を永久予約。
+         */
         await addDoc(
           collection(
             db,
-            "students"
+            "studentNumberRegistry"
           ),
           {
             organizationId:
               currentUser.organizationId,
 
-            schoolId,
+            studentNumber,
+
+            studentId:
+              studentRef.id,
+
+            createdAt:
+              serverTimestamp(),
+          }
+        );
+
+        /*
+         * 初期履歴。
+         */
+        await addDoc(
+          collection(
+            db,
+            "studentHistory"
+          ),
+          {
+            organizationId:
+              currentUser.organizationId,
+
+            studentId:
+              studentRef.id,
 
             studentNumber,
 
             name:
-              name.trim(),
+              row.name,
 
-            grade,
+            grade:
+              row.grade,
 
             className:
-              className.trim(),
+              row.className,
 
-            active:
-              true,
+            schoolId:
+              row.schoolId,
 
-            createdAt:
+            changeType:
+              "新規登録",
+
+            changedBy:
+              currentUser.uid,
+
+            changedAt:
               serverTimestamp(),
+          }
+        );
+
+        newCount++;
+      }
+
+      /*
+       * 既存生徒の更新。
+       */
+      for (
+        const row of
+          csvRows
+      ) {
+        if (
+          !row.studentId
+        ) {
+          continue;
+        }
+
+        const existing =
+          students.find(
+            (
+              student
+            ) =>
+              student.id ===
+              row.studentId
+          );
+
+        if (
+          !existing
+        ) {
+          continue;
+        }
+
+        const changed =
+          hasStudentChanged(
+            existing,
+            {
+              name:
+                row.name,
+
+              grade:
+                row.grade,
+
+              className:
+                row.className,
+
+              schoolId:
+                row.schoolId,
+            }
+          );
+
+        if (
+          !changed
+        ) {
+          unchangedCount++;
+
+          continue;
+        }
+
+        /*
+         * 変更履歴を先に保存。
+         */
+        await addDoc(
+          collection(
+            db,
+            "studentHistory"
+          ),
+          {
+            organizationId:
+              currentUser.organizationId,
+
+            studentId:
+              existing.id,
+
+            studentNumber:
+              existing.studentNumber,
+
+            previousName:
+              existing.name,
+
+            previousGrade:
+              existing.grade,
+
+            previousClassName:
+              existing.className,
+
+            previousSchoolId:
+              existing.schoolId,
+
+            newName:
+              row.name,
+
+            newGrade:
+              row.grade,
+
+            newClassName:
+              row.className,
+
+            newSchoolId:
+              row.schoolId,
+
+            changeType:
+              "CSV更新",
+
+            changedBy:
+              currentUser.uid,
+
+            changedAt:
+              serverTimestamp(),
+          }
+        );
+
+        /*
+         * 現在情報だけ更新。
+         *
+         * studentNumberは絶対に変更しない。
+         */
+        await updateDoc(
+          doc(
+            db,
+            "students",
+            existing.id
+          ),
+          {
+            name:
+              row.name,
+
+            grade:
+              row.grade,
+
+            className:
+              row.className,
+
+            schoolId:
+              row.schoolId,
 
             updatedAt:
               serverTimestamp(),
           }
         );
 
-        setMessage(
-          "生徒を登録しました。"
-        );
+        updateCount++;
       }
 
-      resetForm();
+      setMessage(
+        `登録完了：新規${newCount}人、更新${updateCount}人、変更なし${unchangedCount}人`
+      );
+
+      setCsvRows(
+        []
+      );
+
+      setPreviewReady(
+        false
+      );
+
+      setFileName("");
 
       await loadData(
         currentUser.organizationId
       );
     } catch (err) {
       console.error(
+        "CSV import error:",
         err
       );
 
-      /*
-       * Firebaseの生エラーは
-       * 画面に表示しない。
-       */
-
       setError(
-        getFirebaseErrorMessage(
+        getSafeErrorMessage(
           err
         )
       );
     } finally {
-      setSaving(false);
-    }
-  }
-
-  /*
-   * ========================================================
-   * 編集開始
-   * ========================================================
-   */
-
-  function startEdit(
-    student: Student
-  ) {
-    setEditingId(
-      student.id
-    );
-
-    setStudentNumber(
-      student.studentNumber
-    );
-
-    setName(
-      student.name
-    );
-
-    setGrade(
-      student.grade
-    );
-
-    setClassName(
-      student.className
-    );
-
-    setSchoolId(
-      student.schoolId
-    );
-
-    setError("");
-    setMessage("");
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }
-
-  /*
-   * ========================================================
-   * 有効/停止
-   * ========================================================
-   */
-
-  async function toggleStudent(
-    student: Student
-  ) {
-    setError("");
-    setMessage("");
-
-    if (
-      !currentUser?.organizationId
-    ) {
-      return;
-    }
-
-    if (
-      currentUser.role !==
-        "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        student.schoolId
-      )
-    ) {
-      setError(
-        "この生徒を変更する権限がありません。"
-      );
-
-      return;
-    }
-
-    try {
-      await updateDoc(
-        doc(
-          db,
-          "students",
-          student.id
-        ),
-        {
-          active:
-            !student.active,
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      setMessage(
-        student.active
-          ? "生徒を停止しました。"
-          : "生徒を有効にしました。"
-      );
-
-      await loadData(
-        currentUser.organizationId
-      );
-    } catch (err) {
-      console.error(
-        err
-      );
-
-      setError(
-        getFirebaseErrorMessage(
-          err
-        )
+      setImporting(
+        false
       );
     }
   }
 
   /*
    * ========================================================
-   * フォームリセット
+   * CSV summary
    * ========================================================
    */
 
-  function resetForm() {
-    setEditingId(null);
+  const summary =
+    useMemo<ImportSummary>(() => {
+      return {
+        newCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isNew
+          ).length,
 
-    setStudentNumber("");
+        updateCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isUpdate
+          ).length,
 
-    setName("");
+        unchangedCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              row.isUnchanged
+          ).length,
 
-    setGrade(
-      "未設定"
-    );
-
-    setClassName("");
-
-    const first =
-      availableSchools[0];
-
-    setSchoolId(
-      first?.id ?? ""
-    );
-  }
-
-  /*
-   * ========================================================
-   * 検索
-   * ========================================================
-   */
-
-  const filteredStudents =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
-
-      if (!keyword) {
-        return students;
-      }
-
-      return students.filter(
-        (student) =>
-          student.name
-            .toLowerCase()
-            .includes(
-              keyword
-            ) ||
-          student.studentNumber.includes(
-            keyword
-          ) ||
-          student.className
-            .toLowerCase()
-            .includes(
-              keyword
-            )
-      );
+        errorCount:
+          csvRows.filter(
+            (
+              row
+            ) =>
+              Boolean(
+                row.error
+              )
+          ).length,
+      };
     }, [
-      students,
-      search,
+      csvRows,
     ]);
 
   /*
    * ========================================================
-   * 権限なし
+   * Permission
    * ========================================================
    */
 
   if (
     currentUser &&
-    currentUser.role !==
-      "本部管理者" &&
-    currentUser.role !==
-      "校舎管理者" &&
-    currentUser.role !==
-      "講師"
+    !canManageStudents(
+      currentUser
+    )
   ) {
     return (
       <main
@@ -919,7 +1562,7 @@ export default function StudentsPage() {
           </h1>
 
           <p>
-            この機能を利用する権限がありません。
+            生徒情報を管理する権限がありません。
           </p>
         </section>
       </main>
@@ -935,19 +1578,16 @@ export default function StudentsPage() {
       <div
         style={{
           maxWidth:
-            1400,
+            1500,
+
           margin:
             "0 auto",
         }}
       >
-        {/* ==================================================
-            Header
-            ================================================== */}
-
         <header
           style={{
             marginBottom:
-              28,
+              24,
           }}
         >
           <h1
@@ -962,347 +1602,524 @@ export default function StudentsPage() {
           <p
             style={{
               margin: 0,
+
               color:
                 "#666",
+
               lineHeight:
                 1.7,
             }}
           >
-            生徒情報・生徒番号・学年・クラス・所属校舎を管理します。
+            生徒はCSVで一括管理します。生徒番号はシステムが発行し、学年・クラス・校舎はCSVから更新できます。
           </p>
         </header>
 
         {error && (
-          <Message
-            type="error"
-            message={error}
-          />
+          <div
+            style={
+              errorStyle
+            }
+          >
+            {error}
+          </div>
         )}
 
         {message && (
-          <Message
-            type="success"
-            message={message}
-          />
+          <div
+            style={
+              successStyle
+            }
+          >
+            {message}
+          </div>
         )}
 
         {/* ==================================================
-            生徒登録
+            CSV operation
             ================================================== */}
 
         <section
           style={{
             ...cardStyle,
+
             marginBottom:
-              24,
+              20,
           }}
         >
+          <h2>
+            CSV一括登録・更新
+          </h2>
+
           <div
             style={{
-              display:
-                "flex",
-              alignItems:
-                "center",
-              justifyContent:
-                "space-between",
-              gap:
-                16,
+              marginTop:
+                10,
+
+              padding:
+                14,
+
+              background:
+                "#f7f7f7",
+
+              borderRadius:
+                8,
+
+              fontSize:
+                13,
+
+              lineHeight:
+                1.8,
             }}
           >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                {editingId
-                  ? "生徒情報を編集"
-                  : "生徒を登録"}
-              </h2>
+            <strong>
+              CSV形式
+            </strong>
 
-              <p
-                style={{
-                  margin:
-                    "6px 0 0",
-                  color:
-                    "#777",
-                  fontSize:
-                    13,
-                }}
-              >
-                生徒番号はQRシールに使用されます。
-              </p>
-            </div>
+            <br />
 
-            {editingId && (
-              <button
-                type="button"
-                onClick={
-                  resetForm
-                }
-                style={
-                  secondaryButton
-                }
-              >
-                新規登録に戻す
-              </button>
-            )}
+            <code>
+              生徒番号,氏名,学年,クラス,校舎
+            </code>
+
+            <br />
+
+            生徒番号が入っている行は既存生徒の更新、
+            生徒番号が空欄の行は新規生徒として扱います。
+            新規生徒の生徒番号はシステムが自動発行します。
           </div>
 
           <div
             style={{
               display:
-                "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(220px, 1fr))",
+                "flex",
+
               gap:
-                16,
+                10,
+
+              flexWrap:
+                "wrap",
+
               marginTop:
+                18,
+            }}
+          >
+            <button
+              type="button"
+              onClick={
+                downloadCurrentStudentsCSV
+              }
+              style={
+                secondaryButton
+              }
+            >
+              現在の生徒CSVをダウンロード
+            </button>
+
+            <label
+              style={
+                uploadButton
+              }
+            >
+              CSVを選択
+
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={
+                  handleCSVFile
+                }
+                style={{
+                  display:
+                    "none",
+                }}
+              />
+            </label>
+          </div>
+
+          {fileName && (
+            <div
+              style={{
+                marginTop:
+                  12,
+
+                color:
+                  "#666",
+
+                fontSize:
+                  12,
+              }}
+            >
+              選択ファイル：
+              <strong>
+                {fileName}
+              </strong>
+            </div>
+          )}
+        </section>
+
+        {/* ==================================================
+            Preview
+            ================================================== */}
+
+        {previewReady && (
+          <section
+            style={{
+              ...cardStyle,
+
+              marginBottom:
                 20,
             }}
           >
-            <label>
-              生徒番号
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                alignItems:
+                  "center",
+
+                gap:
+                  16,
+              }}
+            >
+              <div>
+                <h2
+                  style={{
+                    margin:
+                      0,
+                  }}
+                >
+                  CSVプレビュー
+                </h2>
+
+                <p
+                  style={{
+                    margin:
+                      "5px 0 0",
+
+                    color:
+                      "#777",
+
+                    fontSize:
+                      12,
+                  }}
+                >
+                  登録前に内容を確認してください。
+                </p>
+              </div>
 
               <div
                 style={{
                   display:
                     "flex",
+
                   gap:
                     8,
+
+                  flexWrap:
+                    "wrap",
                 }}
               >
-                <input
-                  value={
-                    studentNumber
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setStudentNumber(
-                      event.target.value.replace(
-                        /\D/g,
-                        ""
-                      ).slice(
-                        0,
-                        6
-                      )
-                    )
-                  }
-                  inputMode="numeric"
-                  maxLength={
-                    6
-                  }
-                  placeholder="123456"
-                  style={{
-                    ...inputStyle,
-                    marginTop:
-                      7,
-                  }}
+                <Summary
+                  label="新規"
+                  value={`${summary.newCount}件`}
                 />
 
-                {!editingId && (
-                  <button
-                    type="button"
-                    onClick={
-                      generateStudentNumber
-                    }
-                    style={{
-                      marginTop:
-                        7,
-                      whiteSpace:
-                        "nowrap",
-                      padding:
-                        "0 14px",
-                      border:
-                        "1px solid #ccc",
-                      borderRadius:
-                        7,
-                      background:
-                        "#fff",
-                      cursor:
-                        "pointer",
-                    }}
-                  >
-                    自動発行
-                  </button>
-                )}
+                <Summary
+                  label="更新"
+                  value={`${summary.updateCount}件`}
+                />
+
+                <Summary
+                  label="変更なし"
+                  value={`${summary.unchangedCount}件`}
+                />
+
+                <Summary
+                  label="エラー"
+                  value={`${summary.errorCount}件`}
+                  danger={
+                    summary.errorCount >
+                    0
+                  }
+                />
               </div>
-            </label>
+            </div>
 
-            <label>
-              氏名
+            <div
+              style={{
+                overflowX:
+                  "auto",
 
-              <input
-                value={
-                  name
-                }
-                onChange={(
-                  event
-                ) =>
-                  setName(
-                    event.target.value
-                  )
-                }
-                placeholder="山田太郎"
+                marginTop:
+                  20,
+
+                maxHeight:
+                  600,
+
+                overflowY:
+                  "auto",
+              }}
+            >
+              <table
                 style={
-                  inputStyle
-                }
-              />
-            </label>
-
-            <label>
-              学年
-
-              <select
-                value={
-                  grade
-                }
-                onChange={(
-                  event
-                ) =>
-                  setGrade(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
+                  tableStyle
                 }
               >
-                {GRADES.map(
-                  (
-                    item
-                  ) => (
-                    <option
-                      key={
-                        item
-                      }
-                      value={
-                        item
+                <thead>
+                  <tr>
+                    <th
+                      style={
+                        thStyle
                       }
                     >
-                      {
-                        item
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+                      行
+                    </th>
 
-            <label>
-              クラス
-
-              <input
-                value={
-                  className
-                }
-                onChange={(
-                  event
-                ) =>
-                  setClassName(
-                    event.target.value
-                  )
-                }
-                placeholder="3年2組"
-                style={
-                  inputStyle
-                }
-              />
-            </label>
-
-            <label>
-              所属校舎
-
-              <select
-                value={
-                  schoolId
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSchoolId(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              >
-                <option value="">
-                  選択してください
-                </option>
-
-                {availableSchools.map(
-                  (
-                    school
-                  ) => (
-                    <option
-                      key={
-                        school.id
-                      }
-                      value={
-                        school.id
+                    <th
+                      style={
+                        thStyle
                       }
                     >
-                      {
-                        school.name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-          </div>
+                      生徒番号
+                    </th>
 
-          <div
-            style={{
-              display:
-                "flex",
-              gap:
-                10,
-              marginTop:
-                24,
-            }}
-          >
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      氏名
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      学年
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      クラス
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      校舎
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      処理
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      エラー
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {csvRows.map(
+                    (
+                      row
+                    ) => (
+                      <tr
+                        key={`${row.rowNumber}-${row.studentNumber}-${row.name}`}
+                      >
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            row.rowNumber
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {row.studentNumber ||
+                            "自動発行"}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            row.name
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            row.grade
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            row.className
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            row.schoolName
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {row.error ? (
+                            <span
+                              style={
+                                errorBadge
+                              }
+                            >
+                              エラー
+                            </span>
+                          ) : row.isNew ? (
+                            <span
+                              style={
+                                newBadge
+                              }
+                            >
+                              新規登録
+                            </span>
+                          ) : row.isUpdate ? (
+                            <span
+                              style={
+                                updateBadge
+                              }
+                            >
+                              更新
+                            </span>
+                          ) : (
+                            <span
+                              style={
+                                unchangedBadge
+                              }
+                            >
+                              変更なし
+                            </span>
+                          )}
+                        </td>
+
+                        <td
+                          style={{
+                            ...tdStyle,
+
+                            color:
+                              row.error
+                                ? "#a00000"
+                                : "#777",
+                          }}
+                        >
+                          {
+                            row.error
+                          }
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+
             <button
               type="button"
               disabled={
-                saving
+                importing ||
+                summary.errorCount >
+                  0 ||
+                csvRows.length ===
+                  0
               }
               onClick={
-                saveStudent
+                importCSV
               }
-              style={
-                primaryButton
-              }
+              style={{
+                ...primaryButton,
+
+                marginTop:
+                  20,
+
+                opacity:
+                  importing ||
+                  summary.errorCount >
+                    0 ||
+                  csvRows.length ===
+                    0
+                    ? 0.5
+                    : 1,
+              }}
             >
-              {saving
-                ? "保存中..."
-                : editingId
-                  ? "変更を保存"
-                  : "生徒を登録"}
+              {importing
+                ? "登録・更新中..."
+                : "この内容で登録・更新する"}
             </button>
 
-            {editingId && (
-              <button
-                type="button"
-                onClick={
-                  resetForm
-                }
-                style={
-                  secondaryButton
-                }
+            {summary.errorCount >
+              0 && (
+              <p
+                style={{
+                  margin:
+                    "10px 0 0",
+
+                  color:
+                    "#a00000",
+
+                  fontSize:
+                    12,
+                }}
               >
-                キャンセル
-              </button>
+                エラーを修正してCSVを再アップロードしてください。
+              </p>
             )}
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* ==================================================
-            生徒一覧
+            Current students
             ================================================== */}
 
         <section
@@ -1314,10 +2131,13 @@ export default function StudentsPage() {
             style={{
               display:
                 "flex",
-              alignItems:
-                "center",
+
               justifyContent:
                 "space-between",
+
+              alignItems:
+                "center",
+
               gap:
                 16,
             }}
@@ -1329,20 +2149,24 @@ export default function StudentsPage() {
                     0,
                 }}
               >
-                生徒一覧
+                現在の生徒
               </h2>
 
               <p
                 style={{
                   margin:
-                    "6px 0 0",
+                    "5px 0 0",
+
                   color:
                     "#777",
+
                   fontSize:
-                    13,
+                    12,
                 }}
               >
-                {students.length}
+                {
+                  filteredStudents.length
+                }
                 人
               </p>
             </div>
@@ -1355,14 +2179,17 @@ export default function StudentsPage() {
                 event
               ) =>
                 setSearch(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
-              placeholder="氏名・生徒番号・クラスで検索"
+              placeholder="生徒番号・氏名・学年・クラス・校舎"
               style={{
                 ...inputStyle,
+
                 maxWidth:
-                  320,
+                  360,
+
                 marginTop:
                   0,
               }}
@@ -1373,7 +2200,7 @@ export default function StudentsPage() {
             <p
               style={{
                 marginTop:
-                  24,
+                  20,
               }}
             >
               読み込み中...
@@ -1383,8 +2210,15 @@ export default function StudentsPage() {
               style={{
                 overflowX:
                   "auto",
+
                 marginTop:
-                  20,
+                  18,
+
+                maxHeight:
+                  650,
+
+                overflowY:
+                  "auto",
               }}
             >
               <table
@@ -1441,14 +2275,6 @@ export default function StudentsPage() {
                     >
                       状態
                     </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      操作
-                    </th>
                   </tr>
                 </thead>
 
@@ -1456,154 +2282,89 @@ export default function StudentsPage() {
                   {filteredStudents.map(
                     (
                       student
-                    ) => (
-                      <tr
-                        key={
-                          student.id
-                        }
-                      >
-                        <td
-                          style={
-                            tdStyle
+                    ) => {
+                      const school =
+                        schools.find(
+                          (
+                            item
+                          ) =>
+                            item.id ===
+                            student.schoolId
+                        );
+
+                      return (
+                        <tr
+                          key={
+                            student.id
                           }
                         >
-                          <strong>
+                          <td
+                            style={{
+                              ...tdStyle,
+
+                              fontWeight:
+                                700,
+                            }}
+                          >
                             {
                               student.studentNumber
                             }
-                          </strong>
-                        </td>
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            student.name
-                          }
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              student.name
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            student.grade
-                          }
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              student.grade
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {student.className ||
-                            "—"}
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              student.className ||
+                              "—"
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {getSchoolName(
-                            student.schoolId,
-                            schools
-                          )}
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              school?.name ??
+                              "—"
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <span
-                            style={{
-                              padding:
-                                "4px 8px",
-                              borderRadius:
-                                999,
-                              background:
-                                student.active
-                                  ? "#eef8f1"
-                                  : "#f3f3f3",
-                              color:
-                                student.active
-                                  ? "#28733f"
-                                  : "#777",
-                              fontSize:
-                                11,
-                              fontWeight:
-                                600,
-                            }}
+                          <td
+                            style={
+                              tdStyle
+                            }
                           >
                             {student.active
-                              ? "有効"
+                              ? "在籍"
                               : "停止"}
-                          </span>
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
-                              gap:
-                                8,
-                              flexWrap:
-                                "wrap",
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() =>
-                                startEdit(
-                                  student
-                                )
-                              }
-                              style={
-                                smallButton
-                              }
-                            >
-                              編集
-                            </button>
-
-                            <Link
-                              href={`/qr-stickers?studentId=${encodeURIComponent(
-                                student.id
-                              )}`}
-                              style={
-                                smallLink
-                              }
-                            >
-                              QRシール
-                            </Link>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleStudent(
-                                  student
-                                )
-                              }
-                              style={
-                                dangerButton
-                              }
-                            >
-                              {student.active
-                                ? "停止"
-                                : "有効化"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
+                          </td>
+                        </tr>
+                      );
+                    }
                   )}
 
                   {filteredStudents.length ===
@@ -1611,14 +2372,17 @@ export default function StudentsPage() {
                     <tr>
                       <td
                         colSpan={
-                          7
+                          6
                         }
                         style={{
                           ...tdStyle,
+
                           padding:
                             40,
+
                           textAlign:
                             "center",
+
                           color:
                             "#777",
                         }}
@@ -1638,20 +2402,336 @@ export default function StudentsPage() {
 }
 
 /* =========================================================
-   Available schools
+   CSV parser
    ========================================================= */
 
-function getAvailableSchools(
+function parseCSV(
+  text: string
+): string[][] {
+  const normalized =
+    text
+      .replace(
+        /^\uFEFF/,
+        ""
+      )
+      .replace(
+        /\r\n/g,
+        "\n"
+      )
+      .replace(
+        /\r/g,
+        "\n"
+      );
+
+  const rows: string[][] =
+    [];
+
+  let row: string[] =
+    [];
+
+  let cell =
+    "";
+
+  let inQuotes =
+    false;
+
+  for (
+    let i = 0;
+    i < normalized.length;
+    i++
+  ) {
+    const char =
+      normalized[i];
+
+    if (
+      char ===
+      '"'
+    ) {
+      if (
+        inQuotes &&
+        normalized[i + 1] ===
+          '"'
+      ) {
+        cell +=
+          '"';
+
+        i++;
+
+        continue;
+      }
+
+      inQuotes =
+        !inQuotes;
+
+      continue;
+    }
+
+    if (
+      char ===
+        "," &&
+      !inQuotes
+    ) {
+      row.push(
+        cell
+      );
+
+      cell =
+        "";
+
+      continue;
+    }
+
+    if (
+      char ===
+        "\n" &&
+      !inQuotes
+    ) {
+      row.push(
+        cell
+      );
+
+      rows.push(
+        row
+      );
+
+      row =
+        [];
+
+      cell =
+        "";
+
+      continue;
+    }
+
+    cell +=
+      char;
+  }
+
+  /*
+   * 最終セル。
+   */
+  row.push(
+    cell
+  );
+
+  if (
+    row.some(
+      (
+        value
+      ) =>
+        value.trim()
+          .length > 0
+    )
+  ) {
+    rows.push(
+      row
+    );
+  }
+
+  return rows;
+}
+
+/* =========================================================
+   CSV helpers
+   ========================================================= */
+
+function looksLikeHeader(
+  row: string[]
+) {
+  const normalized =
+    row.map(
+      (
+        value
+      ) =>
+        cleanCSVValue(
+          value
+        )
+    );
+
+  return (
+    normalized.includes(
+      "生徒番号"
+    ) ||
+    normalized.includes(
+      "氏名"
+    )
+  );
+}
+
+function cleanCSVValue(
+  value: string
+) {
+  return value
+    .replace(
+      /^\uFEFF/,
+      ""
+    )
+    .trim();
+}
+
+function normalizeStudentNumber(
+  value: string
+) {
+  return cleanCSVValue(
+    value
+  ).replace(
+    /\s/g,
+    ""
+  );
+}
+
+function csvEscape(
+  value: string
+) {
+  return `"${String(
+    value
+  ).replace(
+    /"/g,
+    '""'
+  )}"`;
+}
+
+function downloadTextFile(
+  content: string,
+  filename: string,
+  type: string
+) {
+  const blob =
+    new Blob(
+      [
+        content,
+      ],
+      {
+        type,
+      }
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+  const anchor =
+    document.createElement(
+      "a"
+    );
+
+  anchor.href =
+    url;
+
+  anchor.download =
+    filename;
+
+  document.body.appendChild(
+    anchor
+  );
+
+  anchor.click();
+
+  anchor.remove();
+
+  URL.revokeObjectURL(
+    url
+  );
+}
+
+/* =========================================================
+   Student number
+   ========================================================= */
+
+function generateStudentNumber(
+  usedNumbers: Set<string>
+) {
+  for (
+    let attempt = 0;
+    attempt < 100000;
+    attempt++
+  ) {
+    const number =
+      Math.floor(
+        100000 +
+          Math.random() *
+            900000
+      ).toString();
+
+    if (
+      !usedNumbers.has(
+        number
+      )
+    ) {
+      return number;
+    }
+  }
+
+  throw new Error(
+    "新しい生徒番号を発行できませんでした。"
+  );
+}
+
+/* =========================================================
+   Existing student comparison
+   ========================================================= */
+
+function hasStudentChanged(
+  student: Student,
+  next: {
+    name: string;
+    grade: string;
+    className: string;
+    schoolId: string;
+  }
+) {
+  return (
+    student.name !==
+      next.name ||
+    student.grade !==
+      next.grade ||
+    student.className !==
+      next.className ||
+    student.schoolId !==
+      next.schoolId
+  );
+}
+
+/* =========================================================
+   School
+   ========================================================= */
+
+function findSchool(
+  schoolName: string,
+  schools: School[]
+) {
+  const normalized =
+    schoolName
+      .trim()
+      .toLowerCase();
+
+  return schools.find(
+    (
+      school
+    ) =>
+      school.name
+        .trim()
+        .toLowerCase() ===
+      normalized
+  );
+}
+
+function getAccessibleSchools(
   schools: School[],
   user: CurrentUser | null
 ) {
-  if (!user) {
+  if (
+    !user
+  ) {
     return [];
   }
 
-  const activeSchools =
+  const active =
     schools.filter(
-      (school) =>
+      (
+        school
+      ) =>
         school.active
     );
 
@@ -1659,11 +2739,13 @@ function getAvailableSchools(
     user.role ===
     "本部管理者"
   ) {
-    return activeSchools;
+    return active;
   }
 
-  return activeSchools.filter(
-    (school) =>
+  return active.filter(
+    (
+      school
+    ) =>
       user.schoolIds.includes(
         school.id
       )
@@ -1671,25 +2753,22 @@ function getAvailableSchools(
 }
 
 /* =========================================================
-   School name
+   Permission
    ========================================================= */
 
-function getSchoolName(
-  schoolId: string,
-  schools: School[]
+function canManageStudents(
+  user: CurrentUser
 ) {
   return (
-    schools.find(
-      (school) =>
-        school.id ===
-        schoolId
-    )?.name ??
-    "不明"
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者"
   );
 }
 
 /* =========================================================
-   Role
+   Validation
    ========================================================= */
 
 function isUserRole(
@@ -1708,50 +2787,131 @@ function isUserRole(
 }
 
 /* =========================================================
-   Message
+   Value helpers
    ========================================================= */
 
-function Message({
-  type,
-  message,
-}: {
-  type:
-    | "error"
-    | "success";
+function stringValue(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : "";
+}
 
-  message: string;
+function nullableNumber(
+  value: unknown
+) {
+  return typeof value ===
+    "number"
+    ? value
+    : null;
+}
+
+/* =========================================================
+   Error
+   ========================================================= */
+
+function getSafeErrorMessage(
+  error: unknown
+) {
+  const value =
+    error as {
+      code?: string;
+    };
+
+  switch (
+    value?.code
+  ) {
+    case "permission-denied":
+      return "この操作を行う権限がありません。";
+
+    case "unauthenticated":
+      return "ログイン状態を確認できません。";
+
+    case "failed-precondition":
+      return "現在この操作を実行できません。";
+
+    case "already-exists":
+      return "同じデータがすでに登録されています。";
+
+    case "unavailable":
+      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
+
+    default:
+      return error instanceof Error
+        ? error.message
+        : "生徒情報を処理できませんでした。";
+  }
+}
+
+/* =========================================================
+   Summary
+   ========================================================= */
+
+function Summary({
+  label,
+  value,
+  danger = false,
+}: {
+  label: string;
+  value: string;
+  danger?: boolean;
 }) {
   return (
     <div
       style={{
-        marginBottom:
-          16,
+        minWidth:
+          80,
+
         padding:
-          14,
+          "8px 10px",
+
         border:
-          "1px solid",
-        borderColor:
-          type ===
-          "error"
-            ? "#efb5b5"
-            : "#b8d9c0",
+          "1px solid #eee",
+
         borderRadius:
           8,
+
         background:
-          type ===
-          "error"
+          danger
             ? "#fff4f4"
-            : "#f2faf4",
-        color:
-          type ===
-          "error"
-            ? "#9b1c1c"
-            : "#25633a",
-        lineHeight:
-          1.6,
+            : "#fafafa",
       }}
     >
-      {message}
+      <div
+        style={{
+          color:
+            danger
+              ? "#a00000"
+              : "#777",
+
+          fontSize:
+            10,
+        }}
+      >
+        {label}
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            2,
+
+          color:
+            danger
+              ? "#a00000"
+              : "#222",
+
+          fontSize:
+            15,
+        }}
+      >
+        {value}
+      </strong>
     </div>
   );
 }
@@ -1799,7 +2959,7 @@ const inputStyle:
       7,
 
     padding:
-      "11px 12px",
+      "10px 12px",
 
     border:
       "1px solid #ccc",
@@ -1809,21 +2969,30 @@ const inputStyle:
 
     background:
       "#fff",
+  };
 
-    outline:
-      "none",
+const labelStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    fontWeight:
+      600,
   };
 
 const primaryButton:
   React.CSSProperties = {
+    width:
+      "100%",
+
     padding:
-      "11px 22px",
+      "13px 20px",
 
     border:
       "none",
 
     borderRadius:
-      7,
+      8,
 
     background:
       "#111",
@@ -1841,7 +3010,7 @@ const primaryButton:
 const secondaryButton:
   React.CSSProperties = {
     padding:
-      "10px 18px",
+      "10px 16px",
 
     border:
       "1px solid #ccc",
@@ -1852,32 +3021,14 @@ const secondaryButton:
     background:
       "#fff",
 
-    color:
-      "#333",
-
     cursor:
       "pointer",
+
+    fontWeight:
+      600,
   };
 
-const smallButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    cursor:
-      "pointer",
-  };
-
-const smallLink:
+const uploadButton:
   React.CSSProperties = {
     display:
       "inline-flex",
@@ -1885,47 +3036,26 @@ const smallLink:
     alignItems:
       "center",
 
+    justifyContent:
+      "center",
+
     padding:
-      "7px 10px",
+      "10px 16px",
 
     border:
       "1px solid #ccc",
 
     borderRadius:
-      6,
+      7,
 
     background:
       "#fff",
-
-    color:
-      "#333",
-
-    textDecoration:
-      "none",
-
-    fontSize:
-      13,
-  };
-
-const dangerButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #d99",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    color:
-      "#a00000",
 
     cursor:
       "pointer",
+
+    fontWeight:
+      600,
   };
 
 const tableStyle:
@@ -1939,8 +3069,14 @@ const tableStyle:
 
 const thStyle:
   React.CSSProperties = {
+    position:
+      "sticky",
+
+    top:
+      0,
+
     padding:
-      "11px 12px",
+      "11px 10px",
 
     textAlign:
       "left",
@@ -1948,21 +3084,177 @@ const thStyle:
     borderBottom:
       "2px solid #ddd",
 
+    background:
+      "#fff",
+
     whiteSpace:
       "nowrap",
+
+    fontSize:
+      12,
+
+    zIndex:
+      1,
   };
 
 const tdStyle:
   React.CSSProperties = {
     padding:
-      "12px",
+      "11px 10px",
 
     borderBottom:
       "1px solid #eee",
 
     fontSize:
-      14,
+      13,
 
     whiteSpace:
       "nowrap",
+
+    verticalAlign:
+      "middle",
+  };
+
+const errorBadge:
+  React.CSSProperties = {
+    display:
+      "inline-block",
+
+    padding:
+      "4px 8px",
+
+    borderRadius:
+      999,
+
+    background:
+      "#fff0f0",
+
+    color:
+      "#a00000",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const newBadge:
+  React.CSSProperties = {
+    display:
+      "inline-block",
+
+    padding:
+      "4px 8px",
+
+    borderRadius:
+      999,
+
+    background:
+      "#eef9f1",
+
+    color:
+      "#28733f",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const updateBadge:
+  React.CSSProperties = {
+    display:
+      "inline-block",
+
+    padding:
+      "4px 8px",
+
+    borderRadius:
+      999,
+
+    background:
+      "#eef5fc",
+
+    color:
+      "#1f4d80",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const unchangedBadge:
+  React.CSSProperties = {
+    display:
+      "inline-block",
+
+    padding:
+      "4px 8px",
+
+    borderRadius:
+      999,
+
+    background:
+      "#f2f2f2",
+
+    color:
+      "#666",
+
+    fontSize:
+      11,
+
+    fontWeight:
+      600,
+  };
+
+const errorStyle:
+  React.CSSProperties = {
+    marginBottom:
+      16,
+
+    padding:
+      14,
+
+    border:
+      "1px solid #efb5b5",
+
+    borderRadius:
+      8,
+
+    background:
+      "#fff4f4",
+
+    color:
+      "#9b1c1c",
+
+    lineHeight:
+      1.6,
+  };
+
+const successStyle:
+  React.CSSProperties = {
+    marginBottom:
+      16,
+
+    padding:
+      14,
+
+    border:
+      "1px solid #b8d9c0",
+
+    borderRadius:
+      8,
+
+    background:
+      "#f2faf4",
+
+    color:
+      "#25633a",
+
+    lineHeight:
+      1.6,
   };
