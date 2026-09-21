@@ -59,32 +59,92 @@ type Student = {
 
 type Answer = {
   id: string;
+
   studentId: string | null;
+
   studentNumber: string | null;
+
   testId: string;
+
   testCode: string;
+
   schoolId: string;
+
   status: string;
+
   gradingStatus: string;
+
   finalized: boolean;
+
   totalScore: number;
+
   maxScore: number;
-  percentage: number;
+};
+
+type RetestResult = {
+  id: string;
+
+  retestId: string;
+
+  originalTestId: string;
+
+  originalTestCode: string;
+
+  studentId: string;
+
+  studentNumber: string;
+
+  originalScore: number;
+
+  retestScore: number;
+
+  retestMaxScore: number;
+
+  retestPercentage: number | null;
+
+  appliedScore: number;
+
+  appliedMaxScore: number;
+
+  appliedPercentage: number | null;
+
+  source: "追試";
 };
 
 type ResultRow = {
   answerId: string;
-  studentId: string | null;
+
+  studentId: string;
+
   studentNumber: string;
+
   name: string;
+
   grade: string;
+
   className: string;
+
   schoolId: string;
+
+  originalScore: number | null;
+
+  retestScore: number | null;
+
   score: number;
+
   maxScore: number;
+
   percentage: number;
+
+  source:
+    | "通常"
+    | "追試";
+
   rank: number;
-  deviationScore: number | null;
+
+  deviationScore:
+    | number
+    | null;
 };
 
 export default function ResultsPage() {
@@ -111,13 +171,13 @@ export default function ResultsPage() {
   ] = useState<Answer[]>([]);
 
   const [
-    selectedTestId,
-    setSelectedTestId,
-  ] = useState("");
+    retestResults,
+    setRetestResults,
+  ] = useState<RetestResult[]>([]);
 
   const [
-    selectedSchoolId,
-    setSelectedSchoolId,
+    selectedTestId,
+    setSelectedTestId,
   ] = useState("");
 
   const [
@@ -147,7 +207,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 認証
+   * Authentication
    * ========================================================
    */
 
@@ -167,7 +227,7 @@ export default function ResultsPage() {
           }
 
           try {
-            const userRef =
+            const snapshot =
               await getDocs(
                 query(
                   collection(
@@ -183,19 +243,19 @@ export default function ResultsPage() {
               );
 
             if (
-              userRef.empty
+              snapshot.empty
             ) {
+              setLoading(false);
+
               setError(
                 "システムのユーザー情報が登録されていません。"
               );
-
-              setLoading(false);
 
               return;
             }
 
             const data =
-              userRef.docs[0].data();
+              snapshot.docs[0].data();
 
             setCurrentUser({
               uid:
@@ -250,7 +310,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * データ取得
+   * Data loading
    * ========================================================
    */
 
@@ -280,64 +340,87 @@ export default function ResultsPage() {
         testSnapshot,
         studentSnapshot,
         answerSnapshot,
-      ] = await Promise.all([
-        getDocs(
-          query(
-            collection(
-              db,
-              "tests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "active",
-              "==",
-              true
+        retestResultSnapshot,
+      ] =
+        await Promise.all([
+          getDocs(
+            query(
+              collection(
+                db,
+                "tests"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "active",
+                "==",
+                true
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "students"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "active",
-              "==",
-              true
+          getDocs(
+            query(
+              collection(
+                db,
+                "students"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "active",
+                "==",
+                true
+              )
             )
-          )
-        ),
+          ),
 
-        getDocs(
-          query(
-            collection(
-              db,
-              "answers"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "finalized",
-              "==",
-              true
+          /*
+           * 通常テストの確定答案。
+           */
+          getDocs(
+            query(
+              collection(
+                db,
+                "answers"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              ),
+              where(
+                "finalized",
+                "==",
+                true
+              )
             )
-          )
-        ),
-      ]);
+          ),
+
+          /*
+           * 追試で確定し、
+           * 通常成績への反映対象になったデータ。
+           */
+          getDocs(
+            query(
+              collection(
+                db,
+                "retestResults"
+              ),
+              where(
+                "organizationId",
+                "==",
+                organizationId
+              )
+            )
+          ),
+        ]);
 
       const loadedTests =
         testSnapshot.docs.map(
@@ -497,11 +580,84 @@ export default function ResultsPage() {
                 numberValue(
                   data.maxScore
                 ),
+            };
+          }
+        );
 
-              percentage:
-                numberValue(
-                  data.percentage
+      const loadedRetestResults =
+        retestResultSnapshot.docs.map(
+          (
+            item
+          ): RetestResult => {
+            const data =
+              item.data();
+
+            return {
+              id:
+                item.id,
+
+              retestId:
+                stringValue(
+                  data.retestId
                 ),
+
+              originalTestId:
+                stringValue(
+                  data.originalTestId
+                ),
+
+              originalTestCode:
+                stringValue(
+                  data.originalTestCode
+                ),
+
+              studentId:
+                stringValue(
+                  data.studentId
+                ),
+
+              studentNumber:
+                stringValue(
+                  data.studentNumber
+                ),
+
+              originalScore:
+                numberValue(
+                  data.originalScore
+                ),
+
+              retestScore:
+                numberValue(
+                  data.retestScore
+                ),
+
+              retestMaxScore:
+                numberValue(
+                  data.retestMaxScore
+                ),
+
+              retestPercentage:
+                nullableNumber(
+                  data.retestPercentage
+                ),
+
+              appliedScore:
+                numberValue(
+                  data.appliedScore
+                ),
+
+              appliedMaxScore:
+                numberValue(
+                  data.appliedMaxScore
+                ),
+
+              appliedPercentage:
+                nullableNumber(
+                  data.appliedPercentage
+                ),
+
+              source:
+                "追試",
             };
           }
         );
@@ -518,23 +674,28 @@ export default function ResultsPage() {
         loadedAnswers
       );
 
+      setRetestResults(
+        loadedRetestResults
+      );
+
+      /*
+       * 初期テスト。
+       */
       if (
-        loadedTests.length >
-          0 &&
         !selectedTestId
       ) {
-        const accessible =
+        const available =
           getAvailableTests(
             loadedTests,
             currentUser
           );
 
         if (
-          accessible.length >
+          available.length >
           0
         ) {
           setSelectedTestId(
-            accessible[0].id
+            available[0].id
           );
         }
       }
@@ -555,7 +716,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 利用可能テスト
+   * Available tests
    * ========================================================
    */
 
@@ -574,7 +735,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 選択テスト
+   * Selected test
    * ========================================================
    */
 
@@ -589,44 +750,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 校舎
-   * ========================================================
-   */
-
-  const availableSchoolIds =
-    useMemo(() => {
-      if (
-        !selectedTest
-      ) {
-        return [];
-      }
-
-      return Array.from(
-        new Set(
-          students
-            .filter(
-              (
-                student
-              ) =>
-                student.schoolId ===
-                selectedTest.schoolId
-            )
-            .map(
-              (
-                student
-              ) =>
-                student.schoolId
-            )
-        )
-      );
-    }, [
-      students,
-      selectedTest,
-    ]);
-
-  /*
-   * ========================================================
-   * クラス
+   * Classes
    * ========================================================
    */
 
@@ -666,6 +790,48 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
+   * Retest lookup
+   * ========================================================
+   *
+   * 同じ生徒・同じ元テストに複数の
+   * retestResultsがある場合は、
+   * 最後のものを採用する。
+   */
+
+  const retestMap =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          RetestResult
+        >();
+
+      for (
+        const result of
+          retestResults
+      ) {
+        if (
+          !result.originalTestId
+        ) {
+          continue;
+        }
+
+        const key =
+          `${result.originalTestId}:${result.studentId}`;
+
+        map.set(
+          key,
+          result
+        );
+      }
+
+      return map;
+    }, [
+      retestResults,
+    ]);
+
+  /*
+   * ========================================================
    * 成績行
    * ========================================================
    */
@@ -678,41 +844,77 @@ export default function ResultsPage() {
         return [];
       }
 
-      const source =
-        answers.filter(
-          (
-            answer
-          ) =>
-            answer.testId ===
-              selectedTest.id &&
-            answer.finalized
-        );
-
-      const rows: ResultRow[] =
-        [];
+      /*
+       * 生徒ごとに通常答案を1件だけ採用。
+       */
+      const normalByStudent =
+        new Map<
+          string,
+          Answer
+        >();
 
       for (
         const answer of
-          source
+          answers
       ) {
-        const student =
-          students.find(
-            (
-              item
-            ) =>
-              item.id ===
-              answer.studentId
-          );
-
         if (
-          !student
+          answer.testId !==
+          selectedTest.id
         ) {
           continue;
         }
 
+        if (
+          !answer.finalized
+        ) {
+          continue;
+        }
+
+        if (
+          !answer.studentId
+        ) {
+          continue;
+        }
+
+        const existing =
+          normalByStudent.get(
+            answer.studentId
+          );
+
         /*
-         * 校舎
+         * 複数答案がある場合は
+         * 後から取得したものを採用。
+         *
+         * 本番では answer の
+         * finalizedAt 等を使って
+         * 明示的に決める。
          */
+        if (
+          !existing
+        ) {
+          normalByStudent.set(
+            answer.studentId,
+            answer
+          );
+        }
+      }
+
+      /*
+       * まず通常答案が存在する生徒を登録。
+       */
+      const studentIds =
+        new Set<string>();
+
+      for (
+        const student of
+          students
+      ) {
+        if (
+          student.schoolId !==
+          selectedTest.schoolId
+        ) {
+          continue;
+        }
 
         if (
           currentUser?.role !==
@@ -724,14 +926,40 @@ export default function ResultsPage() {
           continue;
         }
 
+        studentIds.add(
+          student.id
+        );
+      }
+
+      /*
+       * 通常受験者＋追試で
+       * 成績に反映された生徒。
+       */
+      const rows: ResultRow[] =
+        [];
+
+      for (
+        const studentId of
+          studentIds
+      ) {
+        const student =
+          students.find(
+            (
+              item
+            ) =>
+              item.id ===
+              studentId
+          );
+
         if (
-          selectedSchoolId &&
-          student.schoolId !==
-            selectedSchoolId
+          !student
         ) {
           continue;
         }
 
+        /*
+         * クラス
+         */
         if (
           selectedClass &&
           student.className !==
@@ -740,6 +968,9 @@ export default function ResultsPage() {
           continue;
         }
 
+        /*
+         * 検索
+         */
         const keyword =
           search
             .trim()
@@ -759,12 +990,108 @@ export default function ResultsPage() {
           continue;
         }
 
+        const normal =
+          normalByStudent.get(
+            studentId
+          );
+
+        const retest =
+          retestMap.get(
+            `${selectedTest.id}:${studentId}`
+          );
+
+        /*
+         * 通常点
+         */
+        const normalScore =
+          normal
+            ? normal.totalScore
+            : null;
+
+        /*
+         * 追試点
+         *
+         * retestResultsに存在する場合、
+         * それを採用。
+         */
+        const retestScore =
+          retest
+            ? retest.appliedScore
+            : null;
+
+        /*
+         * 最終採用点
+         *
+         * 追試結果があれば追試点。
+         * なければ通常点。
+         */
+        let score:
+          | number
+          | null =
+          null;
+
+        let maxScore =
+          selectedTest.totalScore;
+
+        let source:
+          | "通常"
+          | "追試" =
+          "通常";
+
+        if (
+          retest
+        ) {
+          score =
+            retest.appliedScore;
+
+          maxScore =
+            retest.appliedMaxScore ||
+            selectedTest.totalScore;
+
+          source =
+            "追試";
+        } else if (
+          normal
+        ) {
+          score =
+            normal.totalScore;
+
+          maxScore =
+            normal.maxScore ||
+            selectedTest.totalScore;
+
+          source =
+            "通常";
+        }
+
+        /*
+         * 成績が存在しない生徒は
+         * 母集団に入れない。
+         */
+        if (
+          score ===
+          null
+        ) {
+          continue;
+        }
+
+        const percentage =
+          maxScore >
+          0
+            ? (
+                score /
+                maxScore
+              ) *
+              100
+            : 0;
+
         rows.push({
           answerId:
-            answer.id,
+            normal?.id ??
+            retest?.retestId ??
+            "",
 
-          studentId:
-            student.id,
+          studentId,
 
           studentNumber:
             student.studentNumber,
@@ -781,22 +1108,18 @@ export default function ResultsPage() {
           schoolId:
             student.schoolId,
 
-          score:
-            answer.totalScore,
+          originalScore:
+            normalScore,
 
-          maxScore:
-            answer.maxScore ||
-            selectedTest.totalScore,
+          retestScore,
 
-          percentage:
-            answer.maxScore >
-            0
-              ? (
-                  answer.totalScore /
-                  answer.maxScore
-                ) *
-                100
-              : 0,
+          score,
+
+          maxScore,
+
+          percentage,
+
+          source,
 
           rank:
             0,
@@ -807,7 +1130,9 @@ export default function ResultsPage() {
       }
 
       /*
-       * 得点降順で順位計算。
+       * ====================================================
+       * 全体母集団で順位
+       * ====================================================
        */
 
       const sorted =
@@ -852,15 +1177,14 @@ export default function ResultsPage() {
       );
 
       /*
-       * 偏差値
-       *
-       * 母集団が1人の場合は
-       * 計算しない。
+       * ====================================================
+       * 全体母集団で平均・偏差値
+       * ====================================================
        */
 
       if (
         sorted.length >
-        1
+        0
       ) {
         const mean =
           sorted.reduce(
@@ -895,14 +1219,17 @@ export default function ResultsPage() {
             variance
           );
 
-        if (
-          standardDeviation >
-          0
-        ) {
-          sorted.forEach(
-            (
-              row
-            ) => {
+        sorted.forEach(
+          (
+            row
+          ) => {
+            if (
+              standardDeviation ===
+              0
+            ) {
+              row.deviationScore =
+                50;
+            } else {
               row.deviationScore =
                 50 +
                 10 *
@@ -912,17 +1239,8 @@ export default function ResultsPage() {
                   ) /
                     standardDeviation;
             }
-          );
-        } else {
-          sorted.forEach(
-            (
-              row
-            ) => {
-              row.deviationScore =
-                50;
-            }
-          );
-        }
+          }
+        );
       }
 
       return sorted;
@@ -931,14 +1249,14 @@ export default function ResultsPage() {
       students,
       selectedTest,
       currentUser,
-      selectedSchoolId,
       selectedClass,
       search,
+      retestMap,
     ]);
 
   /*
    * ========================================================
-   * 集計
+   * Statistics
    * ========================================================
    */
 
@@ -956,22 +1274,14 @@ export default function ResultsPage() {
         };
       }
 
-      const scores =
-        resultRows.map(
-          (
-            row
-          ) =>
-            row.score
-        );
-
       const total =
-        scores.reduce(
+        resultRows.reduce(
           (
             sum,
-            score
+            row
           ) =>
             sum +
-            score,
+            row.score,
           0
         );
 
@@ -985,12 +1295,22 @@ export default function ResultsPage() {
 
         highest:
           Math.max(
-            ...scores
+            ...resultRows.map(
+              (
+                row
+              ) =>
+                row.score
+            )
           ),
 
         lowest:
           Math.min(
-            ...scores
+            ...resultRows.map(
+              (
+                row
+              ) =>
+                row.score
+            )
           ),
       };
     }, [
@@ -999,25 +1319,20 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * CSV出力
+   * CSV
    * ========================================================
    */
 
   function exportCSV() {
     if (
+      !selectedTest ||
       resultRows.length ===
-      0
+        0
     ) {
       setError(
         "出力する成績データがありません。"
       );
 
-      return;
-    }
-
-    if (
-      !selectedTest
-    ) {
       return;
     }
 
@@ -1027,7 +1342,10 @@ export default function ResultsPage() {
       "氏名",
       "学年",
       "クラス",
-      "得点",
+      "採用元",
+      "通常得点",
+      "追試得点",
+      "採用得点",
       "満点",
       "得点率",
       "偏差値",
@@ -1040,23 +1358,39 @@ export default function ResultsPage() {
         ) =>
           [
             row.rank,
+
             csvEscape(
               row.studentNumber
             ),
+
             csvEscape(
               row.name
             ),
+
             csvEscape(
               row.grade
             ),
+
             csvEscape(
               row.className
             ),
+
+            row.source,
+
+            row.originalScore ??
+              "",
+
+            row.retestScore ??
+              "",
+
             row.score,
+
             row.maxScore,
+
             row.percentage.toFixed(
               1
             ),
+
             row.deviationScore ===
             null
               ? ""
@@ -1123,7 +1457,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 印刷
+   * Print
    * ========================================================
    */
 
@@ -1144,7 +1478,7 @@ export default function ResultsPage() {
 
   /*
    * ========================================================
-   * 権限
+   * Permission
    * ========================================================
    */
 
@@ -1190,6 +1524,7 @@ export default function ResultsPage() {
         style={{
           maxWidth:
             1500,
+
           margin:
             "0 auto",
         }}
@@ -1217,13 +1552,15 @@ export default function ResultsPage() {
           <p
             style={{
               margin: 0,
+
               color:
                 "#666",
+
               lineHeight:
                 1.7,
             }}
           >
-            確定済み答案だけを使用して成績を表示します。
+            確定した通常答案と、確定して成績へ反映された追試結果を同じ母集団で集計します。
           </p>
         </header>
 
@@ -1250,13 +1587,14 @@ export default function ResultsPage() {
         )}
 
         {/* ==================================================
-            Filter
+            Filters
             ================================================== */}
 
         <section
           className="noPrint"
           style={{
             ...cardStyle,
+
             marginBottom:
               20,
           }}
@@ -1265,13 +1603,19 @@ export default function ResultsPage() {
             style={{
               display:
                 "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(220px, 1fr))",
+
               gap:
                 14,
             }}
           >
-            <label>
+            <label
+              style={
+                labelStyle
+              }
+            >
               テスト
 
               <select
@@ -1284,10 +1628,6 @@ export default function ResultsPage() {
                   setSelectedTestId(
                     event.target
                       .value
-                  );
-
-                  setSelectedSchoolId(
-                    ""
                   );
 
                   setSelectedClass(
@@ -1327,7 +1667,11 @@ export default function ResultsPage() {
               </select>
             </label>
 
-            <label>
+            <label
+              style={
+                labelStyle
+              }
+            >
               クラス
 
               <select
@@ -1371,7 +1715,11 @@ export default function ResultsPage() {
               </select>
             </label>
 
-            <label>
+            <label
+              style={
+                labelStyle
+              }
+            >
               生徒検索
 
               <input
@@ -1398,10 +1746,13 @@ export default function ResultsPage() {
             style={{
               display:
                 "flex",
+
               gap:
                 10,
+
               flexWrap:
                 "wrap",
+
               marginTop:
                 18,
             }}
@@ -1440,6 +1791,7 @@ export default function ResultsPage() {
           <section
             style={{
               ...cardStyle,
+
               marginBottom:
                 20,
             }}
@@ -1448,14 +1800,16 @@ export default function ResultsPage() {
               style={{
                 display:
                   "grid",
+
                 gridTemplateColumns:
                   "repeat(4, 1fr)",
+
                 gap:
                   12,
               }}
             >
               <Summary
-                label="受験者数"
+                label="集計人数"
                 value={`${statistics.count}人`}
               />
 
@@ -1497,8 +1851,10 @@ export default function ResultsPage() {
               style={{
                 padding:
                   60,
+
                 textAlign:
                   "center",
+
                 color:
                   "#777",
               }}
@@ -1511,8 +1867,10 @@ export default function ResultsPage() {
               style={{
                 padding:
                   60,
+
                 textAlign:
                   "center",
+
                 color:
                   "#777",
               }}
@@ -1600,7 +1958,31 @@ export default function ResultsPage() {
                           thStyle
                         }
                       >
-                        得点
+                        採用元
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        通常得点
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        追試得点
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        採用得点
                       </th>
 
                       <th
@@ -1628,12 +2010,13 @@ export default function ResultsPage() {
                       ) => (
                         <tr
                           key={
-                            row.answerId
+                            row.studentId
                           }
                         >
                           <td
                             style={{
                               ...tdStyle,
+
                               fontWeight:
                                 700,
                             }}
@@ -1678,13 +2061,73 @@ export default function ResultsPage() {
                               tdStyle
                             }
                           >
-                            {row.className ||
-                              "—"}
+                            {
+                              row.className ||
+                              "—"
+                            }
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            <span
+                              style={{
+                                display:
+                                  "inline-block",
+
+                                padding:
+                                  "4px 8px",
+
+                                borderRadius:
+                                  999,
+
+                                background:
+                                  row.source ===
+                                  "追試"
+                                    ? "#f5f5f5"
+                                    : "#eef5fc",
+
+                                fontSize:
+                                  11,
+
+                                fontWeight:
+                                  600,
+                              }}
+                            >
+                              {
+                                row.source
+                              }
+                            </span>
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {row.originalScore ===
+                            null
+                              ? "—"
+                              : `${row.originalScore}点`}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {row.retestScore ===
+                            null
+                              ? "—"
+                              : `${row.retestScore}点`}
                           </td>
 
                           <td
                             style={{
                               ...tdStyle,
+
                               fontWeight:
                                 700,
                             }}
@@ -1703,9 +2146,11 @@ export default function ResultsPage() {
                               tdStyle
                             }
                           >
-                            {row.percentage.toFixed(
-                              1
-                            )}
+                            {
+                              row.percentage.toFixed(
+                                1
+                              )
+                            }
                             %
                           </td>
 
@@ -1913,6 +2358,15 @@ function numberValue(
     : 0;
 }
 
+function nullableNumber(
+  value: unknown
+) {
+  return typeof value ===
+    "number"
+    ? value
+    : null;
+}
+
 function csvEscape(
   value: string
 ) {
@@ -1979,6 +2433,15 @@ const cardStyle:
 
     borderRadius:
       12,
+  };
+
+const labelStyle:
+  React.CSSProperties = {
+    display:
+      "block",
+
+    fontWeight:
+      600,
   };
 
 const inputStyle:
@@ -2087,6 +2550,9 @@ const errorStyle:
 
     color:
       "#9b1c1c",
+
+    lineHeight:
+      1.6,
   };
 
 const successStyle:
@@ -2108,4 +2574,7 @@ const successStyle:
 
     color:
       "#25633a",
+
+    lineHeight:
+      1.6,
   };
