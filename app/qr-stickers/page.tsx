@@ -21,6 +21,8 @@ import {
   where,
 } from "firebase/firestore";
 
+import QRCode from "qrcode";
+
 import {
   auth,
   db,
@@ -54,6 +56,10 @@ type Student = {
   grade: string;
   className: string;
   active: boolean;
+};
+
+type StickerStudent = Student & {
+  qrDataUrl: string;
 };
 
 export default function QRStickersPage() {
@@ -96,10 +102,22 @@ export default function QRStickersPage() {
     );
 
   const [
+    qrStudents,
+    setQrStudents,
+  ] =
+    useState<StickerStudent[]>([]);
+
+  const [
     loading,
     setLoading,
   ] =
     useState(true);
+
+  const [
+    generating,
+    setGenerating,
+  ] =
+    useState(false);
 
   const [
     error,
@@ -114,14 +132,14 @@ export default function QRStickersPage() {
     useState("");
 
   const [
-    selectedClass,
-    setSelectedClass,
+    selectedSchool,
+    setSelectedSchool,
   ] =
     useState("");
 
   const [
-    selectedSchool,
-    setSelectedSchool,
+    selectedClass,
+    setSelectedClass,
   ] =
     useState("");
 
@@ -211,6 +229,7 @@ export default function QRStickersPage() {
             });
           } catch (err) {
             console.error(
+              "QR sticker auth error:",
               err
             );
 
@@ -255,7 +274,6 @@ export default function QRStickersPage() {
   ) {
     try {
       setLoading(true);
-
       setError("");
 
       const [
@@ -375,10 +393,6 @@ export default function QRStickersPage() {
         loadedSchools
       );
 
-      /*
-       * URLから指定された生徒が
-       * 実際に存在する場合だけ選択。
-       */
       if (
         initialStudentId &&
         loadedStudents.some(
@@ -389,14 +403,13 @@ export default function QRStickersPage() {
             initialStudentId
         )
       ) {
-        setSelectedStudentIds(
-          [
-            initialStudentId,
-          ]
-        );
+        setSelectedStudentIds([
+          initialStudentId,
+        ]);
       }
     } catch (err) {
       console.error(
+        "QR sticker data error:",
         err
       );
 
@@ -412,30 +425,77 @@ export default function QRStickersPage() {
 
   /*
    * ========================================================
-   * 絞り込み
+   * 利用可能校舎
+   * ========================================================
+   */
+
+  const availableSchools =
+    useMemo(() => {
+      if (
+        !currentUser
+      ) {
+        return [];
+      }
+
+      const activeSchools =
+        schools.filter(
+          (
+            school
+          ) =>
+            school.active
+        );
+
+      if (
+        currentUser.role ===
+        "本部管理者"
+      ) {
+        return activeSchools;
+      }
+
+      return activeSchools.filter(
+        (
+          school
+        ) =>
+          currentUser.schoolIds.includes(
+            school.id
+          )
+      );
+    }, [
+      schools,
+      currentUser,
+    ]);
+
+  /*
+   * ========================================================
+   * クラス一覧
    * ========================================================
    */
 
   const classNames =
     useMemo(() => {
-      const values =
-        students
-          .map(
-            (
-              student
-            ) =>
-              student.className
-          )
-          .filter(
-            Boolean
-          );
-
       return Array.from(
-        new Set(values)
+        new Set(
+          students
+            .map(
+              (
+                student
+              ) =>
+                student.className
+            )
+            .filter(
+              Boolean
+            )
+        )
       ).sort();
     }, [
       students,
     ]);
+
+  /*
+   * ========================================================
+   * 絞り込み
+   * ========================================================
+   */
 
   const filteredStudents =
     useMemo(() => {
@@ -445,7 +505,9 @@ export default function QRStickersPage() {
           .toLowerCase();
 
       return students.filter(
-        (student) => {
+        (
+          student
+        ) => {
           if (
             !student.active
           ) {
@@ -498,7 +560,7 @@ export default function QRStickersPage() {
 
   /*
    * ========================================================
-   * 選択
+   * 生徒選択
    * ========================================================
    */
 
@@ -506,12 +568,16 @@ export default function QRStickersPage() {
     studentId: string
   ) {
     setSelectedStudentIds(
-      (current) =>
+      (
+        current
+      ) =>
         current.includes(
           studentId
         )
           ? current.filter(
-              (id) =>
+              (
+                id
+              ) =>
                 id !==
                 studentId
             )
@@ -532,7 +598,9 @@ export default function QRStickersPage() {
       );
 
     setSelectedStudentIds(
-      (current) =>
+      (
+        current
+      ) =>
         Array.from(
           new Set([
             ...current,
@@ -546,6 +614,117 @@ export default function QRStickersPage() {
     setSelectedStudentIds(
       []
     );
+
+    setQrStudents(
+      []
+    );
+  }
+
+  /*
+   * ========================================================
+   * QR生成
+   * ========================================================
+   */
+
+  async function generateQRStickers() {
+    if (
+      selectedStudentIds.length ===
+      0
+    ) {
+      setError(
+        "QRシールを作成する生徒を1人以上選択してください。"
+      );
+
+      return;
+    }
+
+    try {
+      setGenerating(true);
+      setError("");
+
+      const selected =
+        selectedStudentIds
+          .map(
+            (
+              id
+            ) =>
+              students.find(
+                (
+                  student
+                ) =>
+                  student.id ===
+                  id
+              )
+          )
+          .filter(
+            (
+              student
+            ): student is Student =>
+              Boolean(student)
+          );
+
+      const generated: StickerStudent[] =
+        [];
+
+      for (
+        const student of selected
+      ) {
+        /*
+         * QRには生徒番号だけを入れる。
+         */
+        const qrDataUrl =
+          await QRCode.toDataURL(
+            student.studentNumber,
+            {
+              errorCorrectionLevel:
+                "M",
+
+              margin:
+                0,
+
+              width:
+                180,
+            }
+          );
+
+        generated.push({
+          ...student,
+          qrDataUrl,
+        });
+      }
+
+      setQrStudents(
+        generated
+      );
+
+      /*
+       * 印刷エリアへ移動。
+       */
+      window.setTimeout(
+        () => {
+          document
+            .getElementById(
+              "printArea"
+            )
+            ?.scrollIntoView({
+              behavior:
+                "smooth",
+            });
+        },
+        100
+      );
+    } catch (err) {
+      console.error(
+        "QR generation error:",
+        err
+      );
+
+      setError(
+        "QRシールの生成に失敗しました。もう一度お試しください。"
+      );
+    } finally {
+      setGenerating(false);
+    }
   }
 
   /*
@@ -554,13 +733,13 @@ export default function QRStickersPage() {
    * ========================================================
    */
 
-  function handlePrint() {
+  function printStickers() {
     if (
-      selectedStudentIds.length ===
+      qrStudents.length ===
       0
     ) {
       setError(
-        "印刷する生徒を1人以上選択してください。"
+        "先にQRシールを作成してください。"
       );
 
       return;
@@ -573,28 +752,25 @@ export default function QRStickersPage() {
 
   /*
    * ========================================================
-   * 印刷対象
+   * 印刷用ページ
    * ========================================================
    */
 
-  const selectedStudents =
-    selectedStudentIds
-      .map(
-        (id) =>
-          students.find(
-            (
-              student
-            ) =>
-              student.id ===
-              id
-          )
+  const printPages =
+    [];
+
+  for (
+    let i = 0;
+    i < qrStudents.length;
+    i += 2
+  ) {
+    printPages.push(
+      qrStudents.slice(
+        i,
+        i + 2
       )
-      .filter(
-        (
-          student
-        ): student is Student =>
-          Boolean(student)
-      );
+    );
+  }
 
   /*
    * ========================================================
@@ -613,10 +789,14 @@ export default function QRStickersPage() {
   ) {
     return (
       <main
-        style={pageStyle}
+        style={
+          pageStyle
+        }
       >
         <section
-          style={cardStyle}
+          style={
+            cardStyle
+          }
         >
           <h1>
             QRシール
@@ -632,23 +812,22 @@ export default function QRStickersPage() {
 
   return (
     <main
-      style={pageStyle}
+      style={
+        pageStyle
+      }
     >
-      <div
-        className="qrStickerPage"
-        style={{
-          maxWidth:
-            1400,
-          margin:
-            "0 auto",
-        }}
-      >
-        {/* ==================================================
-            画面側
-            ================================================== */}
+      {/* ==================================================
+          操作画面
+          ================================================== */}
 
-        <section
-          className="noPrint"
+      <div className="noPrint">
+        <div
+          style={{
+            maxWidth:
+              1400,
+            margin:
+              "0 auto",
+          }}
         >
           <header
             style={{
@@ -674,7 +853,7 @@ export default function QRStickersPage() {
                   1.7,
               }}
             >
-              生徒番号だけをQRに埋め込んだ生徒用QRシールを発行します。
+              生徒番号だけをQRコードにして、生徒用QRシールを発行します。
             </p>
           </header>
 
@@ -688,9 +867,9 @@ export default function QRStickersPage() {
             </div>
           )}
 
-          {/* ================================================
-              仕様表示
-              ================================================ */}
+          {/* ==================================================
+              仕様
+              ================================================== */}
 
           <section
             style={{
@@ -699,7 +878,12 @@ export default function QRStickersPage() {
                 20,
             }}
           >
-            <h2>
+            <h2
+              style={{
+                marginTop:
+                  0,
+              }}
+            >
               シール仕様
             </h2>
 
@@ -711,23 +895,21 @@ export default function QRStickersPage() {
                   "repeat(auto-fit, minmax(180px, 1fr))",
                 gap:
                   12,
-                marginTop:
-                  16,
               }}
             >
               <Spec
-                label="シールサイズ"
-                value="横3cm × 縦2cm"
+                label="シール"
+                value="30mm × 20mm"
+              />
+
+              <Spec
+                label="1人"
+                value="18枚"
               />
 
               <Spec
                 label="配置"
                 value="横6 × 縦3"
-              />
-
-              <Spec
-                label="1人あたり"
-                value="18枚"
               />
 
               <Spec
@@ -741,15 +923,15 @@ export default function QRStickersPage() {
               />
 
               <Spec
-                label="シール表示"
+                label="表示"
                 value="氏名・生徒番号"
               />
             </div>
           </section>
 
-          {/* ================================================
+          {/* ==================================================
               絞り込み
-              ================================================ */}
+              ================================================== */}
 
           <section
             style={{
@@ -758,7 +940,12 @@ export default function QRStickersPage() {
                 20,
             }}
           >
-            <h2>
+            <h2
+              style={{
+                marginTop:
+                  0,
+              }}
+            >
               生徒を選択
             </h2>
 
@@ -770,8 +957,6 @@ export default function QRStickersPage() {
                   "repeat(auto-fit, minmax(200px, 1fr))",
                 gap:
                   12,
-                marginTop:
-                  16,
               }}
             >
               <input
@@ -812,7 +997,7 @@ export default function QRStickersPage() {
                   すべての校舎
                 </option>
 
-                {schools.map(
+                {availableSchools.map(
                   (
                     school
                   ) => (
@@ -877,10 +1062,10 @@ export default function QRStickersPage() {
               style={{
                 display:
                   "flex",
-                gap:
-                  8,
                 flexWrap:
                   "wrap",
+                gap:
+                  8,
                 marginTop:
                   16,
               }}
@@ -911,14 +1096,35 @@ export default function QRStickersPage() {
 
               <button
                 type="button"
+                disabled={
+                  generating
+                }
                 onClick={
-                  handlePrint
+                  generateQRStickers
                 }
                 style={
                   primaryButton
                 }
               >
-                選択した生徒を印刷
+                {generating
+                  ? "QRを作成中..."
+                  : "QRシールを作成"}
+              </button>
+
+              <button
+                type="button"
+                disabled={
+                  qrStudents.length ===
+                  0
+                }
+                onClick={
+                  printStickers
+                }
+                style={
+                  primaryButton
+                }
+              >
+                印刷
               </button>
             </div>
 
@@ -932,295 +1138,320 @@ export default function QRStickersPage() {
                   13,
               }}
             >
-              選択中：
+              選択：
               {
                 selectedStudentIds.length
               }
               人
+              {qrStudents.length >
+                0 && (
+                <>
+                  {"　"}
+                  QR生成済み：
+                  {
+                    qrStudents.length
+                  }
+                  人
+                </>
+              )}
             </p>
           </section>
 
-          {/* ================================================
-              Student list
-              ================================================ */}
+          {/* ==================================================
+              生徒一覧
+              ================================================== */}
 
           <section
             style={
               cardStyle
             }
           >
-            {loading ? (
-              <p>
-                読み込み中...
-              </p>
-            ) : (
-              <div
-                style={{
-                  overflowX:
-                    "auto",
-                }}
+            <div
+              style={{
+                overflowX:
+                  "auto",
+              }}
+            >
+              <table
+                style={
+                  tableStyle
+                }
               >
-                <table
-                  style={
-                    tableStyle
-                  }
-                >
-                  <thead>
-                    <tr>
-                      <th
-                        style={
-                          thStyle
+                <thead>
+                  <tr>
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      選択
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      生徒番号
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      氏名
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      学年
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      クラス
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
+                      校舎
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredStudents.map(
+                    (
+                      student
+                    ) => (
+                      <tr
+                        key={
+                          student.id
                         }
                       >
-                        選択
-                      </th>
-
-                      <th
-                        style={
-                          thStyle
-                        }
-                      >
-                        生徒番号
-                      </th>
-
-                      <th
-                        style={
-                          thStyle
-                        }
-                      >
-                        氏名
-                      </th>
-
-                      <th
-                        style={
-                          thStyle
-                        }
-                      >
-                        学年
-                      </th>
-
-                      <th
-                        style={
-                          thStyle
-                        }
-                      >
-                        クラス
-                      </th>
-
-                      <th
-                        style={
-                          thStyle
-                        }
-                      >
-                        校舎
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredStudents.map(
-                      (
-                        student
-                      ) => {
-                        const checked =
-                          selectedStudentIds.includes(
-                            student.id
-                          );
-
-                        return (
-                          <tr
-                            key={
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedStudentIds.includes(
                               student.id
+                            )}
+                            onChange={() =>
+                              toggleStudent(
+                                student.id
+                              )
                             }
-                          >
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
-                              <input
-                                type="checkbox"
-                                checked={
-                                  checked
-                                }
-                                onChange={() =>
-                                  toggleStudent(
-                                    student.id
-                                  )
-                                }
-                              />
-                            </td>
+                          />
+                        </td>
 
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            student.studentNumber
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            student.name
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {
+                            student.grade
+                          }
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {student.className ||
+                            "—"}
+                        </td>
+
+                        <td
+                          style={
+                            tdStyle
+                          }
+                        >
+                          {getSchoolName(
+                            student.schoolId,
+                            schools
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  )}
+
+                  {filteredStudents.length ===
+                    0 && (
+                    <tr>
+                      <td
+                        colSpan={
+                          6
+                        }
+                        style={{
+                          ...tdStyle,
+                          padding:
+                            40,
+                          textAlign:
+                            "center",
+                          color:
+                            "#777",
+                        }}
+                      >
+                        対象の生徒がありません。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {/* ==================================================
+          印刷エリア
+          ================================================== */}
+
+      <div
+        id="printArea"
+        className="printArea"
+      >
+        {printPages.map(
+          (
+            pageStudents,
+            pageIndex
+          ) => (
+            <section
+              className="a4Page"
+              key={
+                pageIndex
+              }
+            >
+              <div className="pageStudents">
+                {pageStudents.map(
+                  (
+                    student
+                  ) => {
+                    const qr =
+                      qrStudents.find(
+                        (
+                          item
+                        ) =>
+                          item.id ===
+                          student.id
+                      );
+
+                    if (!qr) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        className="studentBlock"
+                        key={
+                          student.id
+                        }
+                      >
+                        <div className="sheetHeader">
+                          <div className="schoolLogo">
+                            塾ロゴ
+                          </div>
+
+                          <div className="studentHeader">
+                            <div>
                               {
-                                student.studentNumber
+                                student.className ||
+                                student.grade
                               }
-                            </td>
+                            </div>
 
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
+                            <div>
                               {
                                 student.name
                               }
-                            </td>
-
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
-                              {
-                                student.grade
-                              }
-                            </td>
-
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
-                              {student.className ||
-                                "—"}
-                            </td>
-
-                            <td
-                              style={
-                                tdStyle
-                              }
-                            >
-                              {getSchoolName(
-                                student.schoolId,
-                                schools
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      }
-                    )}
-
-                    {filteredStudents.length ===
-                      0 && (
-                      <tr>
-                        <td
-                          colSpan={
-                            6
-                          }
-                          style={{
-                            ...tdStyle,
-                            textAlign:
-                              "center",
-                            padding:
-                              40,
-                            color:
-                              "#777",
-                          }}
-                        >
-                          対象の生徒がありません。
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </section>
-
-        {/* ==================================================
-            印刷ページ
-            ================================================== */}
-
-        <section className="printArea">
-          {selectedStudents.map(
-            (
-              student,
-              studentIndex
-            ) => (
-              <div
-                className="studentSheet"
-                key={
-                  student.id
-                }
-              >
-                <div className="sheetHeader">
-                  <div className="schoolLogo">
-                    塾ロゴ
-                  </div>
-
-                  <div className="studentHeader">
-                    <strong>
-                      {student.className ||
-                        student.grade}
-                    </strong>
-
-                    <span>
-                      {
-                        student.name
-                      }
-                    </span>
-                  </div>
-                </div>
-
-                <div className="stickerGrid">
-                  {Array.from(
-                    {
-                      length: 18,
-                    },
-                    (
-                      _,
-                      index
-                    ) => (
-                      <div
-                        className="sticker"
-                        key={
-                          `${student.id}-${index}`
-                        }
-                      >
-                        <div className="stickerQr">
-                          <div className="qrPlaceholder">
-                            QR
+                            </div>
                           </div>
                         </div>
 
-                        <div className="stickerText">
-                          <div className="stickerName">
+                        <div className="stickerGrid">
+                          {Array.from(
                             {
-                              student.name
-                            }
-                          </div>
+                              length:
+                                18,
+                            },
+                            (
+                              _,
+                              index
+                            ) => (
+                              <div
+                                className="sticker"
+                                key={
+                                  `${student.id}-${index}`
+                                }
+                              >
+                                <img
+                                  src={
+                                    qr.qrDataUrl
+                                  }
+                                  alt=""
+                                  className="qrImage"
+                                />
 
-                          <div className="stickerNumber">
-                            {
-                              student.studentNumber
-                            }
-                          </div>
+                                <div className="stickerText">
+                                  <div className="stickerName">
+                                    {
+                                      student.name
+                                    }
+                                  </div>
+
+                                  <div className="stickerNumber">
+                                    {
+                                      student.studentNumber
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          )}
                         </div>
                       </div>
-                    )
-                  )}
-                </div>
-
-                <div
-                  className="sheetSpacer"
-                />
-
-                <div
-                  className="printStudentNumber"
-                >
-                  {studentIndex +
-                    1}
-                </div>
+                    );
+                  }
+                )}
               </div>
-            )
-          )}
-        </section>
+            </section>
+          )
+        )}
       </div>
 
       <style jsx global>{`
@@ -1234,6 +1465,7 @@ export default function QRStickersPage() {
             margin: 0;
           }
 
+          html,
           body {
             margin: 0 !important;
             padding: 0 !important;
@@ -1248,21 +1480,48 @@ export default function QRStickersPage() {
             display: block !important;
           }
 
-          .studentSheet {
+          .a4Page {
             width: 297mm;
             height: 210mm;
             box-sizing: border-box;
-            padding: 8mm;
+            padding: 7mm;
             page-break-after: always;
             background: #fff;
+            overflow: hidden;
           }
 
-          .studentSheet:last-child {
+          .a4Page:last-child {
             page-break-after: auto;
           }
 
+          .pageStudents {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            gap: 8mm;
+          }
+
+          /*
+           * 1人分
+           *
+           * A4横の中に2人分。
+           */
+          .studentBlock {
+            width: 100%;
+            height: 92mm;
+            box-sizing: border-box;
+            position: relative;
+          }
+
+          .studentBlock + .studentBlock {
+            border-top: 0.25mm solid #ddd;
+            padding-top: 4mm;
+          }
+
           .sheetHeader {
-            height: 16mm;
+            height: 13mm;
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
@@ -1270,7 +1529,7 @@ export default function QRStickersPage() {
           }
 
           .schoolLogo {
-            font-size: 11pt;
+            font-size: 10pt;
             font-weight: 700;
           }
 
@@ -1279,9 +1538,15 @@ export default function QRStickersPage() {
             flex-direction: column;
             align-items: flex-end;
             gap: 1mm;
-            font-size: 11pt;
+            font-size: 10pt;
+            font-weight: 700;
           }
 
+          /*
+           * 6列 × 3行
+           *
+           * シールは必ず30mm × 20mm。
+           */
           .stickerGrid {
             display: grid;
             grid-template-columns: repeat(6, 30mm);
@@ -1296,44 +1561,33 @@ export default function QRStickersPage() {
             width: 30mm;
             height: 20mm;
             box-sizing: border-box;
-            border: 0.3mm solid #000;
+            border: 0.25mm solid #000;
             display: flex;
             align-items: center;
-            padding: 2mm;
+            padding: 1.5mm;
             background: #fff;
             overflow: hidden;
           }
 
-          .stickerQr {
-            width: 14mm;
-            height: 16mm;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+          .qrImage {
+            width: 15mm;
+            height: 15mm;
+            object-fit: contain;
+            display: block;
             flex-shrink: 0;
           }
 
-          .qrPlaceholder {
-            width: 13mm;
-            height: 13mm;
-            border: 0.3mm solid #000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 7pt;
-          }
-
           .stickerText {
-            flex: 1;
             min-width: 0;
-            margin-left: 2mm;
-            text-align: left;
+            flex: 1;
+            margin-left: 1.5mm;
             overflow: hidden;
           }
 
           .stickerName {
-            font-size: 7pt;
+            font-size: 6.5pt;
             font-weight: 700;
+            line-height: 1.2;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1341,16 +1595,9 @@ export default function QRStickersPage() {
 
           .stickerNumber {
             margin-top: 1mm;
-            font-size: 7pt;
+            font-size: 6.5pt;
+            line-height: 1.2;
             white-space: nowrap;
-          }
-
-          .sheetSpacer {
-            height: 15mm;
-          }
-
-          .printStudentNumber {
-            display: none;
           }
         }
       `}</style>
@@ -1359,7 +1606,7 @@ export default function QRStickersPage() {
 }
 
 /* =========================================================
-   Components
+   Spec
    ========================================================= */
 
 function Spec({
@@ -1459,14 +1706,11 @@ function getSafeErrorMessage(
     case "unauthenticated":
       return "ログイン状態を確認できません。";
 
-    case "failed-precondition":
-      return "現在この操作を実行できません。";
-
     case "unavailable":
       return "サーバーに接続できませんでした。しばらくしてからお試しください。";
 
     default:
-      return "生徒情報を取得できませんでした。";
+      return "QRシールに必要なデータを取得できませんでした。";
   }
 }
 
@@ -1531,7 +1775,7 @@ const primaryButton:
 const secondaryButton:
   React.CSSProperties = {
     padding:
-      "9px 14px",
+      "10px 14px",
     border:
       "1px solid #ccc",
     borderRadius:
