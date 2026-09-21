@@ -16,10 +16,6 @@ import type {
   UserRole,
 } from "../types";
 
-/* =========================================================
-   User
-   ========================================================= */
-
 export type FirestoreUser = {
   uid: string;
 
@@ -38,10 +34,6 @@ export type FirestoreUser = {
     | null;
 };
 
-/* =========================================================
-   Scoped document
-   ========================================================= */
-
 export type ScopedDocument<
   T extends DocumentData =
     DocumentData
@@ -51,31 +43,19 @@ export type ScopedDocument<
   data: T;
 };
 
-/* =========================================================
-   Constants
-   ========================================================= */
-
 const IN_LIMIT =
   10;
-
-/* =========================================================
-   Collection
-   ========================================================= */
 
 function getCollection<
   T extends DocumentData
 >(
   name: string
-): CollectionReference<T> {
+) {
   return collection(
     db,
     name
   ) as CollectionReference<T>;
 }
-
-/* =========================================================
-   Organization
-   ========================================================= */
 
 export function organizationQuery<
   T extends DocumentData
@@ -96,13 +76,8 @@ export function organizationQuery<
   );
 }
 
-/* =========================================================
-   Split
-   ========================================================= */
-
-function splitIntoChunks(
-  values: string[],
-  size: number
+function chunks(
+  values: string[]
 ) {
   const result: string[][] =
     [];
@@ -110,22 +85,18 @@ function splitIntoChunks(
   for (
     let i = 0;
     i < values.length;
-    i += size
+    i += IN_LIMIT
   ) {
     result.push(
       values.slice(
         i,
-        i + size
+        i + IN_LIMIT
       )
     );
   }
 
   return result;
 }
-
-/* =========================================================
-   School
-   ========================================================= */
 
 export function schoolQueries<
   T extends DocumentData
@@ -138,36 +109,14 @@ export function schoolQueries<
     schoolIds.length ===
     0
   ) {
-    return [
-      query(
-        getCollection<T>(
-          name
-        ),
-
-        where(
-          "organizationId",
-          "==",
-          organizationId
-        ),
-
-        where(
-          "schoolId",
-          "==",
-          "__NO_ACCESS__"
-        )
-      ),
-    ];
+    return [];
   }
 
-  const chunks =
-    splitIntoChunks(
-      schoolIds,
-      IN_LIMIT
-    );
-
-  return chunks.map(
+  return chunks(
+    schoolIds
+  ).map(
     (
-      chunk
+      schoolChunk
     ) =>
       query(
         getCollection<T>(
@@ -183,15 +132,11 @@ export function schoolQueries<
         where(
           "schoolId",
           "in",
-          chunk
+          schoolChunk
         )
       )
   );
 }
-
-/* =========================================================
-   Student
-   ========================================================= */
 
 export function studentQuery<
   T extends DocumentData
@@ -262,10 +207,6 @@ export function studentsQueries(
       "生徒" &&
     user.studentId
   ) {
-    /*
-     * 生徒のstudentIdは
-     * studentsドキュメントのID。
-     */
     return [
       query(
         getCollection(
@@ -495,7 +436,7 @@ export function reportCardsQueries(
   ) {
     return [
       organizationQuery(
-        "reportCards",
+        "gradeReports",
         user.organizationId
       ),
     ];
@@ -508,103 +449,7 @@ export function reportCardsQueries(
       "講師"
   ) {
     return schoolQueries(
-      "reportCards",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
-
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return [
-      studentQuery(
-        "reportCards",
-        user.organizationId,
-        user.studentId
-      ),
-    ];
-  }
-
-  return [];
-}
-
-/* =========================================================
-   Grading results
-   ========================================================= */
-
-export function gradingResultsQueries(
-  user: FirestoreUser
-) {
-  if (
-    !user.organizationId
-  ) {
-    return [];
-  }
-
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return [
-      organizationQuery(
-        "gradingResults",
-        user.organizationId
-      ),
-    ];
-  }
-
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQueries(
-      "gradingResults",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
-
-  return [];
-}
-
-/* =========================================================
-   OCR results
-   ========================================================= */
-
-export function ocrResultsQueries(
-  user: FirestoreUser
-) {
-  if (
-    !user.organizationId
-  ) {
-    return [];
-  }
-
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return [
-      organizationQuery(
-        "answerOcrResults",
-        user.organizationId
-      ),
-    ];
-  }
-
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQueries(
-      "answerOcrResults",
+      "gradeReports",
       user.organizationId,
       user.schoolIds
     );
@@ -655,7 +500,7 @@ export function schoolsQueries(
 }
 
 /* =========================================================
-   Student number registry
+   Registry
    ========================================================= */
 
 export function studentNumberRegistryQueries(
@@ -677,59 +522,6 @@ export function studentNumberRegistryQueries(
       organizationQuery(
         "studentNumberRegistry",
         user.organizationId
-      ),
-    ];
-  }
-
-  return [];
-}
-
-/* =========================================================
-   History
-   ========================================================= */
-
-export function studentHistoryQueries(
-  user: FirestoreUser
-) {
-  if (
-    !user.organizationId
-  ) {
-    return [];
-  }
-
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return [
-      organizationQuery(
-        "studentHistory",
-        user.organizationId
-      ),
-    ];
-  }
-
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return schoolQueries(
-      "studentHistory",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
-
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return [
-      studentQuery(
-        "studentHistory",
-        user.organizationId,
-        user.studentId
       ),
     ];
   }
@@ -777,10 +569,11 @@ export function systemLogsQueries(
 }
 
 /* =========================================================
-   Usage
+   Generic
    ========================================================= */
 
-export function usageQueries(
+export function scopedQueries(
+  name: string,
   user: FirestoreUser
 ) {
   if (
@@ -795,7 +588,7 @@ export function usageQueries(
   ) {
     return [
       organizationQuery(
-        "usage",
+        name,
         user.organizationId
       ),
     ];
@@ -803,20 +596,36 @@ export function usageQueries(
 
   if (
     user.role ===
-    "校舎管理者"
+      "校舎管理者" ||
+    user.role ===
+      "講師"
   ) {
     return schoolQueries(
-      "usage",
+      name,
       user.organizationId,
       user.schoolIds
     );
+  }
+
+  if (
+    user.role ===
+      "生徒" &&
+    user.studentId
+  ) {
+    return [
+      studentQuery(
+        name,
+        user.organizationId,
+        user.studentId
+      ),
+    ];
   }
 
   return [];
 }
 
 /* =========================================================
-   Scoped documents
+   Execute
    ========================================================= */
 
 export async function getScopedDocs<
@@ -878,14 +687,12 @@ export async function getScopedDocs<
 }
 
 /* =========================================================
-   Existing page compatibility
-   =========================================================
-   既存ページが単数Queryを要求しているため残す。
+   Existing API compatibility
    ========================================================= */
 
 export function testsQuery(
   user: FirestoreUser
-): Query<DocumentData> | null {
+) {
   return (
     testsQueries(
       user
@@ -896,7 +703,7 @@ export function testsQuery(
 
 export function studentsQuery(
   user: FirestoreUser
-): Query<DocumentData> | null {
+) {
   return (
     studentsQueries(
       user
@@ -907,7 +714,7 @@ export function studentsQuery(
 
 export function answersQuery(
   user: FirestoreUser
-): Query<DocumentData> | null {
+) {
   return (
     answersQueries(
       user
@@ -918,70 +725,11 @@ export function answersQuery(
 
 export function retestsQuery(
   user: FirestoreUser
-): Query<DocumentData> | null {
+) {
   return (
     retestsQueries(
       user
     )[0] ??
     null
   );
-}
-
-/* =========================================================
-   Access helpers
-   ========================================================= */
-
-export function canAccessSchool(
-  user: FirestoreUser,
-  schoolId: string
-) {
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  return user.schoolIds.includes(
-    schoolId
-  );
-}
-
-export function canAccessStudent(
-  user: FirestoreUser,
-  studentId: string,
-  schoolId?: string
-) {
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
-
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return (
-      !!schoolId &&
-      user.schoolIds.includes(
-        schoolId
-      )
-    );
-  }
-
-  if (
-    user.role ===
-    "生徒"
-  ) {
-    return (
-      user.studentId ===
-      studentId
-    );
-  }
-
-  return false;
 }
