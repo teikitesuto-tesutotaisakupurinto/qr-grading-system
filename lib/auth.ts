@@ -11,8 +11,12 @@ import {
 } from "firebase/auth";
 
 import {
+  collection,
   doc,
+  getDocs,
   getDoc,
+  query,
+  where,
 } from "firebase/firestore";
 
 import {
@@ -56,11 +60,6 @@ export type AppUser = {
 
 /* =========================================================
    Googleログイン
-   =========================================================
-   
-   ここではFirebase Authenticationだけを処理します。
-
-   Firestoreのusers/{uid}はここでは読みません。
    ========================================================= */
 
 export async function loginWithGoogle(): Promise<User> {
@@ -72,9 +71,13 @@ export async function loginWithGoogle(): Promise<User> {
   const provider =
     new GoogleAuthProvider();
 
-  provider.setCustomParameters({
-    prompt: "select_account",
-  });
+  provider.addScope(
+    "email"
+  );
+
+  provider.addScope(
+    "profile"
+  );
 
   const result =
     await signInWithPopup(
@@ -102,7 +105,7 @@ export function getFirebaseUser(): User | null {
 }
 
 /* =========================================================
-   Firestoreからアプリユーザーを取得
+   Firestore users/{uid} 取得
    ========================================================= */
 
 export async function getAppUser(
@@ -122,11 +125,12 @@ export async function getAppUser(
 
   /*
    * Firebase Authenticationには
-   * 存在するがFirestoreにはまだ
-   * 登録されていないユーザー。
+   * 存在するが、Firestoreにはまだ
+   * 登録されていない。
    *
-   * ログアウトはしない。
+   * ここではログアウトしない。
    */
+
   if (
     !snapshot.exists()
   ) {
@@ -222,14 +226,16 @@ export async function getAppUser(
 }
 
 /* =========================================================
-   現在のアプリユーザー
+   現在のユーザー
    ========================================================= */
 
 export async function getCurrentUser(): Promise<AppUser | null> {
   const firebaseUser =
     auth.currentUser;
 
-  if (!firebaseUser) {
+  if (
+    !firebaseUser
+  ) {
     return null;
   }
 
@@ -257,20 +263,13 @@ export function observeAuth(
       firebaseUser
     ) => {
       try {
-        /*
-         * ログアウト状態
-         */
-        if (!firebaseUser) {
+        if (
+          !firebaseUser
+        ) {
           callback(null);
           return;
         }
 
-        /*
-         * Firebase Authentication
-         * 成功済み。
-         *
-         * その後Firestoreのユーザー情報を取得。
-         */
         const appUser =
           await getAppUser(
             firebaseUser
@@ -282,7 +281,9 @@ export function observeAuth(
       } catch (
         error
       ) {
-        if (onError) {
+        if (
+          onError
+        ) {
           onError(
             error instanceof Error
               ? error
@@ -297,7 +298,116 @@ export function observeAuth(
 }
 
 /* =========================================================
-   ユーザー権限確認
+   Googleアカウントに対応する招待を検索
+   ========================================================= */
+
+export async function findInvitationForGoogleUser(
+  firebaseUser: User
+) {
+  const email =
+    firebaseUser.email
+      ?.trim()
+      .toLowerCase();
+
+  if (
+    !email
+  ) {
+    return null;
+  }
+
+  const invitationQuery =
+    query(
+      collection(
+        db,
+        "userInvitations"
+      ),
+      where(
+        "email",
+        "==",
+        email
+      ),
+      where(
+        "active",
+        "==",
+        true
+      )
+    );
+
+  const snapshot =
+    await getDocs(
+      invitationQuery
+    );
+
+  if (
+    snapshot.empty
+  ) {
+    return null;
+  }
+
+  const invitation =
+    snapshot.docs[0];
+
+  return {
+    id:
+      invitation.id,
+
+    ...invitation.data(),
+  };
+}
+
+/* =========================================================
+   Google初回ログイン時のユーザー確認
+   ========================================================= */
+
+export async function resolveGoogleUser(
+  firebaseUser: User
+): Promise<AppUser> {
+  /*
+   * ① 既存ユーザーを確認
+   */
+
+  const existingUser =
+    await getAppUser(
+      firebaseUser
+    );
+
+  if (
+    existingUser.organizationId &&
+    existingUser.role
+  ) {
+    return existingUser;
+  }
+
+  /*
+   * ② 招待を確認
+   */
+
+  const invitation =
+    await findInvitationForGoogleUser(
+      firebaseUser
+    );
+
+  if (
+    !invitation
+  ) {
+    return existingUser;
+  }
+
+  /*
+   * 招待がある場合でも、
+   * クライアント側から勝手に
+   * users/{uid}を書き換える処理は
+   * ここでは行わない。
+   *
+   * 本番では管理権限を持つ
+   * サーバー処理で確定する。
+   */
+
+  return existingUser;
+}
+
+/* =========================================================
+   権限確認
    ========================================================= */
 
 export async function hasRole(
@@ -344,6 +454,46 @@ export async function hasAnyRole(
 }
 
 /* =========================================================
+   本部管理者確認
+   ========================================================= */
+
+export async function isHeadOfficeAdmin(): Promise<boolean> {
+  return hasRole(
+    "本部管理者"
+  );
+}
+
+/* =========================================================
+   校舎管理者確認
+   ========================================================= */
+
+export async function isSchoolAdmin(): Promise<boolean> {
+  return hasRole(
+    "校舎管理者"
+  );
+}
+
+/* =========================================================
+   講師確認
+   ========================================================= */
+
+export async function isTeacher(): Promise<boolean> {
+  return hasRole(
+    "講師"
+  );
+}
+
+/* =========================================================
+   生徒確認
+   ========================================================= */
+
+export async function isStudent(): Promise<boolean> {
+  return hasRole(
+    "生徒"
+  );
+}
+
+/* =========================================================
    校舎アクセス確認
    ========================================================= */
 
@@ -362,8 +512,9 @@ export async function canAccessSchool(
   }
 
   /*
-   * 本部管理者は全校舎にアクセス可能。
+   * 本部管理者は全校舎へアクセス可能
    */
+
   if (
     user.role ===
     "本部管理者"
@@ -400,7 +551,8 @@ export async function isActiveUser(): Promise<boolean> {
   return Boolean(
     user &&
       user.active &&
-      user.role
+      user.role &&
+      user.organizationId
   );
 }
 
