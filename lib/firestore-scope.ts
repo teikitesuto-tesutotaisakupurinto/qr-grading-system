@@ -2,9 +2,9 @@ import {
   collection,
   query,
   where,
-  type Query,
-  type DocumentData,
   type CollectionReference,
+  type DocumentData,
+  type Query,
 } from "firebase/firestore";
 
 import type {
@@ -14,6 +14,10 @@ import type {
 import {
   db,
 } from "@/lib/firebase";
+
+/* =========================================================
+   Types
+   ========================================================= */
 
 export type FirestoreUser = {
   uid: string;
@@ -34,31 +38,60 @@ export type FirestoreUser = {
 };
 
 /* =========================================================
-   基本
+   Internal helpers
    ========================================================= */
 
-function baseCollection(
+function getCollection<T extends DocumentData>(
   collectionName: string
-) {
+): CollectionReference<T> {
   return collection(
     db,
     collectionName
-  );
+  ) as CollectionReference<T>;
 }
 
-/* =========================================================
-   組織のみ
-   本部管理者用
-   ========================================================= */
-
-export function organizationQuery<T extends DocumentData>(
+/*
+ * schoolIds が空の場合でも、
+ * 組織全体を取得してしまわないようにする。
+ */
+function noSchoolQuery<T extends DocumentData>(
   collectionName: string,
   organizationId: string
 ): Query<T> {
   return query(
-    baseCollection(
+    getCollection<T>(
       collectionName
-    ) as CollectionReference<T>,
+    ),
+
+    where(
+      "organizationId",
+      "==",
+      organizationId
+    ),
+
+    where(
+      "schoolId",
+      "==",
+      "__NO_SCHOOL_ACCESS__"
+    )
+  );
+}
+
+/* =========================================================
+   Organization scope
+   ========================================================= */
+
+export function organizationQuery<
+  T extends DocumentData
+>(
+  collectionName: string,
+  organizationId: string
+): Query<T> {
+  return query(
+    getCollection<T>(
+      collectionName
+    ),
+
     where(
       "organizationId",
       "==",
@@ -68,94 +101,86 @@ export function organizationQuery<T extends DocumentData>(
 }
 
 /* =========================================================
-   校舎単位
-   校舎管理者・講師用
+   School scope
+   =========================================================
+   本部管理者:
+   全校舎ではなく organization 全体
+
+   校舎管理者・講師:
+   schoolIds に含まれる校舎のみ
    ========================================================= */
 
-export function schoolQuery<T extends DocumentData>(
+export function schoolQuery<
+  T extends DocumentData
+>(
   collectionName: string,
   organizationId: string,
   schoolIds: string[]
 ): Query<T> {
-  /*
-   * Firestoreのarray-contains-anyを使って、
-   * schoolIdsのどれかに一致するデータだけ取得。
-   */
-
   if (
     schoolIds.length ===
     0
   ) {
-    /*
-     * 権限のないユーザーに
-     * 全件取得させない。
-     *
-     * schoolIdsが空なら
-     * 意図的に0件になる条件を使う。
-     */
-    return query(
-      baseCollection(
-        collectionName
-      ) as CollectionReference<T>,
-      where(
-        "organizationId",
-        "==",
-        organizationId
-      ),
-      where(
-        "schoolId",
-        "==",
-        "__NO_SCHOOL_ACCESS__"
-      )
+    return noSchoolQuery<T>(
+      collectionName,
+      organizationId
     );
   }
 
   /*
-   * array-contains-anyは最大10件。
-   * schoolIdsが10を超える組織では、
-   * 呼び出し側で分割する必要がある。
+   * Firestore の "in" は最大10件。
+   *
+   * 校舎が10校を超える場合は、
+   * 呼び出し側で複数Queryを実行して
+   * 結合する必要がある。
    */
-  const limitedSchoolIds =
+  const ids =
     schoolIds.slice(
       0,
       10
     );
 
   return query(
-    baseCollection(
+    getCollection<T>(
       collectionName
-    ) as CollectionReference<T>,
+    ),
+
     where(
       "organizationId",
       "==",
       organizationId
     ),
+
     where(
       "schoolId",
       "in",
-      limitedSchoolIds
+      ids
     )
   );
 }
 
 /* =========================================================
-   生徒本人
+   Student scope
    ========================================================= */
 
-export function studentQuery<T extends DocumentData>(
+export function studentQuery<
+  T extends DocumentData
+>(
   collectionName: string,
   organizationId: string,
   studentId: string
 ): Query<T> {
   return query(
-    baseCollection(
+    getCollection<T>(
       collectionName
-    ) as CollectionReference<T>,
+    ),
+
     where(
       "organizationId",
       "==",
       organizationId
     ),
+
     where(
       "studentId",
       "==",
@@ -165,65 +190,25 @@ export function studentQuery<T extends DocumentData>(
 }
 
 /* =========================================================
-   生徒本人のテスト結果
+   Student document collections
    ========================================================= */
 
-export function studentTestResultQuery<T extends DocumentData>(
+export function studentDocumentQuery<
+  T extends DocumentData
+>(
   collectionName: string,
   organizationId: string,
-  studentId: string,
-  testId?: string
+  studentId: string
 ): Query<T> {
-  const ref =
-    baseCollection(
-      collectionName
-    ) as CollectionReference<T>;
-
-  if (
-    testId
-  ) {
-    return query(
-      ref,
-
-      where(
-        "organizationId",
-        "==",
-        organizationId
-      ),
-
-      where(
-        "studentId",
-        "==",
-        studentId
-      ),
-
-      where(
-        "testId",
-        "==",
-        testId
-      )
-    );
-  }
-
-  return query(
-    ref,
-
-    where(
-      "organizationId",
-      "==",
-      organizationId
-    ),
-
-    where(
-      "studentId",
-      "==",
-      studentId
-    )
+  return studentQuery<T>(
+    collectionName,
+    organizationId,
+    studentId
   );
 }
 
 /* =========================================================
-   権限別 students query
+   Students
    ========================================================= */
 
 export function studentsQuery(
@@ -235,49 +220,43 @@ export function studentsQuery(
     return null;
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return organizationQuery(
-      "students",
-      user.organizationId
-    );
-  }
+    case "本部管理者":
+      return organizationQuery(
+        "students",
+        user.organizationId
+      );
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQuery(
-      "students",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "students",
+        user.organizationId,
+        user.schoolIds
+      );
 
-  /*
-   * 生徒は自分だけ。
-   */
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return studentQuery(
-      "students",
-      user.organizationId,
-      user.studentId
-    );
-  }
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
 
-  return null;
+      return studentQuery(
+        "students",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   権限別 tests query
+   Tests
    ========================================================= */
 
 export function testsQuery(
@@ -289,40 +268,37 @@ export function testsQuery(
     return null;
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return organizationQuery(
-      "tests",
-      user.organizationId
-    );
-  }
+    case "本部管理者":
+      return organizationQuery(
+        "tests",
+        user.organizationId
+      );
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQuery(
-      "tests",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "tests",
+        user.organizationId,
+        user.schoolIds
+      );
 
-  /*
-   * 生徒用。
-   *
-   * 生徒側では必要なテストだけ
-   * 別途取得する。
-   */
-  return null;
+    /*
+     * 生徒用テスト一覧は、
+     * 公開対象など別条件で取得する。
+     */
+    case "生徒":
+      return null;
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   権限別 answers query
+   Answers
    ========================================================= */
 
 export function answersQuery(
@@ -334,46 +310,147 @@ export function answersQuery(
     return null;
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return organizationQuery(
-      "answers",
-      user.organizationId
-    );
-  }
+    case "本部管理者":
+      return organizationQuery(
+        "answers",
+        user.organizationId
+      );
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQuery(
-      "answers",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "answers",
+        user.organizationId,
+        user.schoolIds
+      );
 
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return studentQuery(
-      "answers",
-      user.organizationId,
-      user.studentId
-    );
-  }
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
 
-  return null;
+      return studentQuery(
+        "answers",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   権限別 retests query
+   OCR Results
+   ========================================================= */
+
+export function ocrResultsQuery(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return null;
+  }
+
+  /*
+   * answerOcrResults 自体には
+   * schoolId がない旧構造を想定しない。
+   *
+   * 本番では answer と同じ範囲を取得できる
+   * schoolId / organizationId を持たせる。
+   */
+
+  switch (
+    user.role
+  ) {
+    case "本部管理者":
+      return organizationQuery(
+        "answerOcrResults",
+        user.organizationId
+      );
+
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "answerOcrResults",
+        user.organizationId,
+        user.schoolIds
+      );
+
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
+
+      return studentQuery(
+        "answerOcrResults",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* =========================================================
+   Grading Results
+   ========================================================= */
+
+export function gradingResultsQuery(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return null;
+  }
+
+  switch (
+    user.role
+  ) {
+    case "本部管理者":
+      return organizationQuery(
+        "gradingResults",
+        user.organizationId
+      );
+
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "gradingResults",
+        user.organizationId,
+        user.schoolIds
+      );
+
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
+
+      return studentQuery(
+        "gradingResults",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* =========================================================
+   Retests
    ========================================================= */
 
 export function retestsQuery(
@@ -385,57 +462,43 @@ export function retestsQuery(
     return null;
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return organizationQuery(
-      "retests",
-      user.organizationId
-    );
-  }
+    case "本部管理者":
+      return organizationQuery(
+        "retests",
+        user.organizationId
+      );
 
-  /*
-   * retests自体にはschoolIdを持たせず、
-   * studentIdから校舎を判定するRulesなので、
-   * クライアントから全校舎retetsをqueryすると
-   * Rules上問題になる。
-   *
-   * 本番ではretetsにもschoolIdを保存する。
-   *
-   * 以降の登録処理で必ずschoolIdを
-   * 保存する前提。
-   */
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQuery(
-      "retests",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "retests",
+        user.organizationId,
+        user.schoolIds
+      );
 
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return studentQuery(
-      "retests",
-      user.organizationId,
-      user.studentId
-    );
-  }
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
 
-  return null;
+      return studentQuery(
+        "retests",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   権限別 retestResults query
+   Retest Results
    ========================================================= */
 
 export function retestResultsQuery(
@@ -447,46 +510,97 @@ export function retestResultsQuery(
     return null;
   }
 
-  if (
-    user.role ===
-    "本部管理者"
+  switch (
+    user.role
   ) {
-    return organizationQuery(
-      "retestResults",
-      user.organizationId
-    );
-  }
+    case "本部管理者":
+      return organizationQuery(
+        "retestResults",
+        user.organizationId
+      );
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return schoolQuery(
-      "retestResults",
-      user.organizationId,
-      user.schoolIds
-    );
-  }
+    case "校舎管理者":
+    case "講師":
+      return schoolQuery(
+        "retestResults",
+        user.organizationId,
+        user.schoolIds
+      );
 
-  if (
-    user.role ===
-      "生徒" &&
-    user.studentId
-  ) {
-    return studentQuery(
-      "retestResults",
-      user.organizationId,
-      user.studentId
-    );
-  }
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
 
-  return null;
+      return studentQuery(
+        "retestResults",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
 }
 
 /* =========================================================
-   systemLogs
+   Student History
+   ========================================================= */
+
+export function studentHistoryQuery(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return null;
+  }
+
+  switch (
+    user.role
+  ) {
+    case "本部管理者":
+      return organizationQuery(
+        "studentHistory",
+        user.organizationId
+      );
+
+    case "校舎管理者":
+      return schoolQuery(
+        "studentHistory",
+        user.organizationId,
+        user.schoolIds
+      );
+
+    case "講師":
+      /*
+       * 講師には生徒履歴管理を
+       * 開放しない。
+       */
+      return null;
+
+    case "生徒":
+      if (
+        !user.studentId
+      ) {
+        return null;
+      }
+
+      return studentQuery(
+        "studentHistory",
+        user.organizationId,
+        user.studentId
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* =========================================================
+   System Logs
    ========================================================= */
 
 export function systemLogsQuery(
@@ -498,10 +612,43 @@ export function systemLogsQuery(
     return null;
   }
 
+  switch (
+    user.role
+  ) {
+    case "本部管理者":
+      return organizationQuery(
+        "systemLogs",
+        user.organizationId
+      );
+
+    case "校舎管理者":
+      return schoolQuery(
+        "systemLogs",
+        user.organizationId,
+        user.schoolIds
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* =========================================================
+   Schools
+   ========================================================= */
+
+export function schoolsQuery(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return null;
+  }
+
   /*
-   * systemLogsには必ず
-   * organizationIdとschoolIdを保存する
-   * 仕様にする。
+   * schoolsには必ず
+   * organizationIdを持たせる。
    */
 
   if (
@@ -509,17 +656,19 @@ export function systemLogsQuery(
     "本部管理者"
   ) {
     return organizationQuery(
-      "systemLogs",
+      "schools",
       user.organizationId
     );
   }
 
   if (
     user.role ===
-      "校舎管理者"
+      "校舎管理者" ||
+    user.role ===
+      "講師"
   ) {
     return schoolQuery(
-      "systemLogs",
+      "schools",
       user.organizationId,
       user.schoolIds
     );
@@ -529,10 +678,47 @@ export function systemLogsQuery(
 }
 
 /* =========================================================
-   Utility
+   Usage
    ========================================================= */
 
-export function canUseSchool(
+export function usageQuery(
+  user: FirestoreUser
+) {
+  if (
+    !user.organizationId
+  ) {
+    return null;
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return organizationQuery(
+      "usage",
+      user.organizationId
+    );
+  }
+
+  if (
+    user.role ===
+    "校舎管理者"
+  ) {
+    return schoolQuery(
+      "usage",
+      user.organizationId,
+      user.schoolIds
+    );
+  }
+
+  return null;
+}
+
+/* =========================================================
+   Permission helpers
+   ========================================================= */
+
+export function canAccessSchool(
   user: FirestoreUser,
   schoolId: string
 ) {
@@ -545,5 +731,82 @@ export function canUseSchool(
 
   return user.schoolIds.includes(
     schoolId
+  );
+}
+
+export function canAccessStudent(
+  user: FirestoreUser,
+  student: StudentScope
+) {
+  if (
+    !user.organizationId ||
+    user.organizationId !==
+      student.organizationId
+  ) {
+    return false;
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    return user.schoolIds.includes(
+      student.schoolId
+    );
+  }
+
+  if (
+    user.role ===
+    "生徒"
+  ) {
+    return (
+      user.studentId ===
+      student.id
+    );
+  }
+
+  return false;
+}
+
+export type StudentScope = {
+  id: string;
+
+  organizationId: string;
+
+  schoolId: string;
+};
+
+/* =========================================================
+   Empty query helper
+   ========================================================= */
+
+export function noAccessQuery<
+  T extends DocumentData
+>(
+  collectionName: string
+): Query<T> {
+  /*
+   * organizationIdに絶対に一致しない
+   * ダミー値を使用する。
+   */
+  return query(
+    getCollection<T>(
+      collectionName
+    ),
+
+    where(
+      "organizationId",
+      "==",
+      "__NO_ACCESS__"
+    )
   );
 }
