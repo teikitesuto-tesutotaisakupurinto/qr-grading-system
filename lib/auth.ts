@@ -719,3 +719,83 @@ function normalizeAuthError(
       );
   }
 }
+/* =========================================================
+   AuthGuard compatibility
+   ========================================================= */
+
+export type AppUser =
+  UserProfile;
+
+/**
+ * AuthGuard.tsx 互換用。
+ *
+ * 既存コード:
+ *
+ * observeAuth((user) => {
+ *   ...
+ * });
+ *
+ * に対応する。
+ */
+export function observeAuth(
+  callback: (
+    user: AppUser | null
+  ) => void
+) {
+  let disposed = false;
+
+  const unsubscribe =
+    onAuthStateChanged(
+      auth,
+      async (
+        firebaseUser
+      ) => {
+        if (
+          disposed
+        ) {
+          return;
+        }
+
+        try {
+          const appUser =
+            await getAppUser(
+              firebaseUser
+            );
+
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          callback(
+            appUser
+          );
+        } catch (
+          error
+        ) {
+          console.error(
+            "observeAuth error:",
+            error
+          );
+
+          if (
+            disposed
+          ) {
+            return;
+          }
+
+          callback(
+            null
+          );
+        }
+      }
+    );
+
+  return () => {
+    disposed =
+      true;
+
+    unsubscribe();
+  };
+}
