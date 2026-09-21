@@ -20,7 +20,7 @@ import {
 import type {
   UserProfile,
   UserRole,
-} from "../types";
+} from "./types";
 
 export type AppUser =
   UserProfile;
@@ -59,25 +59,15 @@ export function normalizeUserRole(
   }
 }
 
-export function isUserRole(
-  value: unknown
-): value is UserRole {
-  return (
-    normalizeUserRole(
-      value
-    ) !== null
-  );
-}
-
 /* =========================================================
-   User
+   Profile
    ========================================================= */
 
 export async function getCurrentUserProfile(
   firebaseUser:
     | User
     | null
-): Promise<UserProfile | null> {
+) {
   if (
     !firebaseUser
   ) {
@@ -107,10 +97,9 @@ export async function getCurrentUserProfile(
       firebaseUser.uid,
 
     organizationId:
-      typeof data.organizationId ===
-      "string"
-        ? data.organizationId
-        : null,
+      stringOrNull(
+        data.organizationId
+      ),
 
     role:
       normalizeUserRole(
@@ -131,10 +120,9 @@ export async function getCurrentUserProfile(
         : [],
 
     studentId:
-      typeof data.studentId ===
-      "string"
-        ? data.studentId
-        : null,
+      stringOrNull(
+        data.studentId
+      ),
 
     name:
       typeof data.name ===
@@ -151,11 +139,11 @@ export async function getCurrentUserProfile(
     active:
       data.active !==
       false,
-  };
+  } satisfies UserProfile;
 }
 
 /* =========================================================
-   getAppUser
+   Compatibility
    ========================================================= */
 
 export async function getAppUser(
@@ -170,7 +158,7 @@ export async function getAppUser(
 }
 
 /* =========================================================
-   Login
+   Email login
    ========================================================= */
 
 export async function login(
@@ -186,16 +174,16 @@ export async function login(
       password
     );
 
-  const profile =
-    await getCurrentUserProfile(
+  const user =
+    await getAppUser(
       credential.user
     );
 
   if (
-    !profile ||
-    !profile.active ||
-    !profile.role ||
-    !profile.organizationId
+    !user ||
+    !user.active ||
+    !user.role ||
+    !user.organizationId
   ) {
     await signOut(
       auth
@@ -206,11 +194,11 @@ export async function login(
     );
   }
 
-  return profile;
+  return user;
 }
 
 /* =========================================================
-   Google
+   Google login
    ========================================================= */
 
 export async function loginWithGoogle() {
@@ -228,16 +216,16 @@ export async function loginWithGoogle() {
       provider
     );
 
-  const profile =
-    await getCurrentUserProfile(
+  const user =
+    await getAppUser(
       credential.user
     );
 
   if (
-    !profile ||
-    !profile.active ||
-    !profile.role ||
-    !profile.organizationId
+    !user ||
+    !user.active ||
+    !user.role ||
+    !user.organizationId
   ) {
     await signOut(
       auth
@@ -248,21 +236,11 @@ export async function loginWithGoogle() {
     );
   }
 
-  return profile;
+  return user;
 }
 
 /* =========================================================
-   Logout
-   ========================================================= */
-
-export function logout() {
-  return signOut(
-    auth
-  );
-}
-
-/* =========================================================
-   observeAuth
+   Auth observer
    ========================================================= */
 
 export function observeAuth(
@@ -339,51 +317,17 @@ export function observeAuth(
 }
 
 /* =========================================================
-   subscribeAuth
+   Logout
    ========================================================= */
 
-export function subscribeAuth(
-  callback: (
-    firebaseUser:
-      | User
-      | null,
-    appUser:
-      | UserProfile
-      | null
-  ) => void,
-
-  onError?: (
-    error: unknown
-  ) => void
-) {
-  return onAuthStateChanged(
-    auth,
-    async (
-      firebaseUser
-    ) => {
-      try {
-        const appUser =
-          await getAppUser(
-            firebaseUser
-          );
-
-        callback(
-          firebaseUser,
-          appUser
-        );
-      } catch (
-        error
-      ) {
-        onError?.(
-          error
-        );
-      }
-    }
+export async function logout() {
+  await signOut(
+    auth
   );
 }
 
 /* =========================================================
-   Role helpers
+   Role
    ========================================================= */
 
 export function isHeadOfficeAdmin(
@@ -430,23 +374,8 @@ export function isStudent(
   );
 }
 
-export function isStaff(
-  user:
-    | UserProfile
-    | null
-) {
-  return (
-    user?.role ===
-      "本部管理者" ||
-    user?.role ===
-      "校舎管理者" ||
-    user?.role ===
-      "講師"
-  );
-}
-
 /* =========================================================
-   Access
+   Scope
    ========================================================= */
 
 export function canAccessSchool(
@@ -456,8 +385,7 @@ export function canAccessSchool(
   schoolId: string
 ) {
   if (
-    !user ||
-    !schoolId
+    !user
   ) {
     return false;
   }
@@ -514,4 +442,17 @@ export function canAccessStudent(
     user.studentId ===
       studentId
   );
+}
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+function stringOrNull(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : null;
 }
