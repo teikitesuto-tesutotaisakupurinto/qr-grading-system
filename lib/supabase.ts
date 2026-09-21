@@ -32,7 +32,7 @@ if (
 }
 
 /* =========================================================
-   Supabase Client
+   Client
    ========================================================= */
 
 let client:
@@ -76,8 +76,11 @@ export const supabase =
     : null;
 
 /* =========================================================
-   Bucket
+   Storage Buckets
    ========================================================= */
 
 export const ANSWERS_BUCKET =
   "answers";
+
+export const SCHOOL_ASSETS_BUCKET =
+  "school-assets";
