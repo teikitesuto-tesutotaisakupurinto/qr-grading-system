@@ -26,6 +26,10 @@ import {
   db,
 } from "@/lib/firebase";
 
+/* =========================================================
+   Types
+   ========================================================= */
+
 type UserRole =
   | "本部管理者"
   | "校舎管理者"
@@ -34,33 +38,84 @@ type UserRole =
 
 type CurrentUser = {
   uid: string;
+
   name: string;
-  email: string | null;
-  organizationId: string | null;
-  role: UserRole | null;
+
+  email:
+    | string
+    | null;
+
+  organizationId:
+    | string
+    | null;
+
+  role:
+    | UserRole
+    | null;
+
+  schoolIds: string[];
 };
 
 type ManagedUser = {
   id: string;
+
   name: string;
+
   email: string;
-  role: UserRole | null;
+
+  role:
+    | UserRole
+    | null;
+
   schoolIds: string[];
+
+  studentId:
+    | string
+    | null;
+
   active: boolean;
 };
 
 type Invitation = {
   id: string;
+
   email: string;
+
   name: string;
+
   role: UserRole;
+
   schoolIds: string[];
+
+  studentId:
+    | string
+    | null;
+
   active: boolean;
 };
 
 type School = {
   id: string;
+
   name: string;
+};
+
+type Student = {
+  id: string;
+
+  studentNumber: string;
+
+  name: string;
+
+  grade: string;
+
+  className: string;
+
+  schoolId: string;
+
+  schoolName: string;
+
+  active: boolean;
 };
 
 const roles: UserRole[] = [
@@ -70,85 +125,134 @@ const roles: UserRole[] = [
   "生徒",
 ];
 
+/* =========================================================
+   Page
+   ========================================================= */
+
 export default function UsersPage() {
   const [
     currentUser,
     setCurrentUser,
-  ] = useState<CurrentUser | null>(null);
+  ] =
+    useState<
+      CurrentUser | null
+    >(null);
 
   const [
     users,
     setUsers,
-  ] = useState<ManagedUser[]>([]);
+  ] =
+    useState<
+      ManagedUser[]
+    >([]);
 
   const [
     invitations,
     setInvitations,
-  ] = useState<Invitation[]>([]);
+  ] =
+    useState<
+      Invitation[]
+    >([]);
 
   const [
     schools,
     setSchools,
-  ] = useState<School[]>([]);
+  ] =
+    useState<
+      School[]
+    >([]);
+
+  const [
+    students,
+    setStudents,
+  ] =
+    useState<
+      Student[]
+    >([]);
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     saving,
     setSaving,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     message,
     setMessage,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     search,
     setSearch,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     email,
     setEmail,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     name,
     setName,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     role,
     setRole,
-  ] = useState<UserRole>("講師");
+  ] =
+    useState<UserRole>(
+      "講師"
+    );
 
   const [
     selectedSchoolIds,
     setSelectedSchoolIds,
-  ] = useState<string[]>([]);
+  ] =
+    useState<string[]>(
+      []
+    );
 
-  /*
-   * ========================================================
-   * 現在のユーザー
-   * ========================================================
-   */
+  const [
+    selectedStudentId,
+    setSelectedStudentId,
+  ] =
+    useState<
+      string
+    >("");
+
+  /* =======================================================
+     Current user
+     ======================================================= */
 
   useEffect(() => {
     const unsubscribe =
       onAuthStateChanged(
         auth,
-        async (firebaseUser) => {
-          if (!firebaseUser) {
-            setLoading(false);
+        async (
+          firebaseUser
+        ) => {
+          if (
+            !firebaseUser
+          ) {
+            setLoading(
+              false
+            );
 
             setError(
               "ログイン状態を確認できません。"
@@ -158,12 +262,6 @@ export default function UsersPage() {
           }
 
           try {
-            const userRef = doc(
-              db,
-              "users",
-              firebaseUser.uid
-            );
-
             const snapshot =
               await getDocs(
                 query(
@@ -182,7 +280,9 @@ export default function UsersPage() {
             if (
               snapshot.empty
             ) {
-              setLoading(false);
+              setLoading(
+                false
+              );
 
               setError(
                 "ユーザー情報が登録されていません。"
@@ -200,6 +300,19 @@ export default function UsersPage() {
               )
                 ? data.role
                 : null;
+
+            const schoolIds =
+              Array.isArray(
+                data.schoolIds
+              )
+                ? data.schoolIds.filter(
+                    (
+                      value
+                    ): value is string =>
+                      typeof value ===
+                      "string"
+                  )
+                : [];
 
             setCurrentUser({
               uid:
@@ -223,8 +336,16 @@ export default function UsersPage() {
 
               role:
                 userRole,
+
+              schoolIds,
             });
-          } catch (err) {
+
+            setLoading(
+              false
+            );
+          } catch (
+            err
+          ) {
             console.error(
               err
             );
@@ -235,7 +356,9 @@ export default function UsersPage() {
                 : "ユーザー情報を取得できません。"
             );
 
-            setLoading(false);
+            setLoading(
+              false
+            );
           }
         }
       );
@@ -245,11 +368,9 @@ export default function UsersPage() {
     };
   }, []);
 
-  /*
-   * ========================================================
-   * 組織データ読み込み
-   * ========================================================
-   */
+  /* =======================================================
+     Organization data
+     ======================================================= */
 
   useEffect(() => {
     if (
@@ -269,13 +390,15 @@ export default function UsersPage() {
     organizationId: string
   ) {
     try {
-      setLoading(true);
+      setLoading(
+        true
+      );
+
       setError("");
 
       /*
-       * ユーザー
+       * Users
        */
-
       const userSnapshot =
         await getDocs(
           query(
@@ -335,6 +458,12 @@ export default function UsersPage() {
                     )
                   : [],
 
+              studentId:
+                typeof data.studentId ===
+                "string"
+                  ? data.studentId
+                  : null,
+
               active:
                 data.active !==
                 false,
@@ -343,9 +472,8 @@ export default function UsersPage() {
         );
 
       /*
-       * 招待
+       * Invitations
        */
-
       const invitationSnapshot =
         await getDocs(
           query(
@@ -405,6 +533,12 @@ export default function UsersPage() {
                     )
                   : [],
 
+              studentId:
+                typeof data.studentId ===
+                "string"
+                  ? data.studentId
+                  : null,
+
               active:
                 data.active !==
                 false,
@@ -413,9 +547,8 @@ export default function UsersPage() {
         );
 
       /*
-       * 校舎
+       * Schools
        */
-
       const schoolSnapshot =
         await getDocs(
           query(
@@ -449,6 +582,106 @@ export default function UsersPage() {
           })
         );
 
+      /*
+       * Students
+       */
+      const studentSnapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "students"
+            ),
+            where(
+              "organizationId",
+              "==",
+              organizationId
+            )
+          )
+        );
+
+      const schoolMap =
+        new Map<
+          string,
+          string
+        >(
+          loadedSchools.map(
+            (
+              school
+            ) => [
+              school.id,
+              school.name,
+            ]
+          )
+        );
+
+      const loadedStudents =
+        studentSnapshot.docs
+          .map(
+            (
+              item
+            ): Student => {
+              const data =
+                item.data();
+
+              const schoolId =
+                typeof data.schoolId ===
+                "string"
+                  ? data.schoolId
+                  : "";
+
+              return {
+                id:
+                  item.id,
+
+                studentNumber:
+                  typeof data.studentNumber ===
+                  "string"
+                    ? data.studentNumber
+                    : "",
+
+                name:
+                  typeof data.name ===
+                  "string"
+                    ? data.name
+                    : "",
+
+                grade:
+                  typeof data.grade ===
+                  "string"
+                    ? data.grade
+                    : "",
+
+                className:
+                  typeof data.className ===
+                  "string"
+                    ? data.className
+                    : "",
+
+                schoolId,
+
+                schoolName:
+                  typeof data.schoolName ===
+                  "string"
+                    ? data.schoolName
+                    : schoolMap.get(
+                        schoolId
+                      ) ??
+                      "",
+
+                active:
+                  data.active !==
+                  false,
+              };
+            }
+          )
+          .filter(
+            (
+              student
+            ) =>
+              student.active
+          );
+
       setUsers(
         loadedUsers
       );
@@ -460,7 +693,13 @@ export default function UsersPage() {
       setSchools(
         loadedSchools
       );
-    } catch (err) {
+
+      setStudents(
+        loadedStudents
+      );
+    } catch (
+      err
+    ) {
       console.error(
         err
       );
@@ -471,18 +710,169 @@ export default function UsersPage() {
           : "データを取得できませんでした。"
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
 
-  /*
-   * ========================================================
-   * 招待登録
-   * ========================================================
-   */
+  /* =======================================================
+     Available students
+     ======================================================= */
+
+  const availableStudents =
+    useMemo(() => {
+      if (
+        !currentUser
+      ) {
+        return [];
+      }
+
+      /*
+       * 本部管理者
+       * → 組織内すべて
+       */
+      if (
+        currentUser.role ===
+        "本部管理者"
+      ) {
+        return students;
+      }
+
+      /*
+       * 校舎管理者
+       * → 所属校舎のみ
+       */
+      if (
+        currentUser.role ===
+        "校舎管理者"
+      ) {
+        return students.filter(
+          (
+            student
+          ) =>
+            currentUser.schoolIds.includes(
+              student.schoolId
+            )
+        );
+      }
+
+      return [];
+    }, [
+      students,
+      currentUser,
+    ]);
+
+  /* =======================================================
+     Selected student
+     ======================================================= */
+
+  const selectedStudent =
+    availableStudents.find(
+      (
+        student
+      ) =>
+        student.id ===
+        selectedStudentId
+    ) ??
+    null;
+
+  /* =======================================================
+     Role change
+     ======================================================= */
+
+  function handleRoleChange(
+    nextRole: UserRole
+  ) {
+    setRole(
+      nextRole
+    );
+
+    /*
+     * 生徒以外なら
+     * 生徒情報をクリア。
+     */
+    if (
+      nextRole !==
+      "生徒"
+    ) {
+      setSelectedStudentId(
+        ""
+      );
+    }
+
+    /*
+     * 生徒なら
+     * 校舎は生徒から自動設定する。
+     */
+    if (
+      nextRole ===
+      "生徒"
+    ) {
+      setSelectedSchoolIds(
+        []
+      );
+    }
+  }
+
+  /* =======================================================
+     Student change
+     ======================================================= */
+
+  function handleStudentChange(
+    studentId: string
+  ) {
+    setSelectedStudentId(
+      studentId
+    );
+
+    const student =
+      availableStudents.find(
+        (
+          item
+        ) =>
+          item.id ===
+          studentId
+      );
+
+    if (
+      !student
+    ) {
+      return;
+    }
+
+    /*
+     * 生徒の所属校舎を自動設定。
+     */
+    if (
+      student.schoolId
+    ) {
+      setSelectedSchoolIds([
+        student.schoolId,
+      ]);
+    }
+
+    /*
+     * 生徒マスターの氏名を
+     * アカウント登録名の初期値にする。
+     */
+    if (
+      student.name
+    ) {
+      setName(
+        student.name
+      );
+    }
+  }
+
+  /* =======================================================
+     Create invitation
+     ======================================================= */
 
   async function createInvitation() {
-    if (saving) {
+    if (
+      saving
+    ) {
       return;
     }
 
@@ -517,7 +907,9 @@ export default function UsersPage() {
     const trimmedName =
       name.trim();
 
-    if (!normalizedEmail) {
+    if (
+      !normalizedEmail
+    ) {
       setError(
         "Googleアカウントのメールアドレスを入力してください。"
       );
@@ -526,7 +918,9 @@ export default function UsersPage() {
     }
 
     if (
-      !normalizedEmail.includes("@")
+      !normalizedEmail.includes(
+        "@"
+      )
     ) {
       setError(
         "正しいメールアドレスを入力してください。"
@@ -535,7 +929,12 @@ export default function UsersPage() {
       return;
     }
 
-    if (!trimmedName) {
+    /*
+     * 生徒以外の名前。
+     */
+    if (
+      !trimmedName
+    ) {
       setError(
         "氏名を入力してください。"
       );
@@ -544,10 +943,8 @@ export default function UsersPage() {
     }
 
     /*
-     * 校舎管理者は
-     * 本部管理者権限を付与できない。
+     * 校舎管理者は本部管理者を作れない。
      */
-
     if (
       currentUser.role ===
         "校舎管理者" &&
@@ -562,57 +959,107 @@ export default function UsersPage() {
     }
 
     /*
-     * 校舎管理者は
-     * 自分の所属校舎だけ。
+     * 生徒の場合は
+     * 既存の生徒を必ず選択。
      */
-
     if (
-      currentUser.role ===
-        "校舎管理者"
+      role ===
+      "生徒"
     ) {
-      const allowed =
-        selectedSchoolIds.every(
-          (
-            schoolId
-          ) =>
-            currentUser.organizationId &&
-            currentUser.organizationId ===
-              organizationIdOfSchool(
-                schoolId,
-                schools
-              )
-        );
-
-      /*
-       * 組織IDは現在のユーザーと
-       * 同じなので、最終的な
-       * 校舎アクセス制御はRulesで行う。
-       *
-       * ここでは空選択も許可しない。
-       */
       if (
-        selectedSchoolIds.length ===
-        0
+        !selectedStudentId
       ) {
         setError(
-          "所属校舎を1つ以上選択してください。"
+          "生徒アカウントには既存の生徒情報を選択してください。"
         );
 
         return;
       }
 
-      void allowed;
+      if (
+        !selectedStudent
+      ) {
+        setError(
+          "選択した生徒情報が見つかりません。"
+        );
+
+        return;
+      }
+
+      if (
+        !selectedStudent.schoolId
+      ) {
+        setError(
+          "選択した生徒に校舎が設定されていません。"
+        );
+
+        return;
+      }
+
+      /*
+       * 生徒の校舎を強制。
+       */
+      setSelectedSchoolIds([
+        selectedStudent.schoolId,
+      ]);
+    }
+
+    /*
+     * 生徒以外は校舎必須。
+     */
+    if (
+      role !==
+        "生徒" &&
+      selectedSchoolIds.length ===
+        0
+    ) {
+      setError(
+        "所属校舎を1つ以上選択してください。"
+      );
+
+      return;
+    }
+
+    /*
+     * 校舎管理者は所属校舎のみ。
+     */
+    if (
+      currentUser.role ===
+        "校舎管理者"
+    ) {
+      const invalidSchool =
+        selectedSchoolIds.some(
+          (
+            schoolId
+          ) =>
+            !currentUser.schoolIds.includes(
+              schoolId
+            )
+        );
+
+      if (
+        invalidSchool
+      ) {
+        setError(
+          "所属していない校舎を指定することはできません。"
+        );
+
+        return;
+      }
     }
 
     try {
-      setSaving(true);
+      setSaving(
+        true
+      );
+
       setError("");
+
       setMessage("");
 
       /*
-       * 同一組織の既存ユーザー
+       * 既存ユーザー確認
        */
-
       const existingUsers =
         await getDocs(
           query(
@@ -642,9 +1089,45 @@ export default function UsersPage() {
       }
 
       /*
-       * 既存招待
+       * 同じ生徒にすでに
+       * アカウントがないか確認。
        */
+      if (
+        role ===
+        "生徒"
+      ) {
+        const existingStudentUsers =
+          await getDocs(
+            query(
+              collection(
+                db,
+                "users"
+              ),
+              where(
+                "organizationId",
+                "==",
+                currentUser.organizationId
+              ),
+              where(
+                "studentId",
+                "==",
+                selectedStudentId
+              )
+            )
+          );
 
+        if (
+          !existingStudentUsers.empty
+        ) {
+          throw new Error(
+            "この生徒にはすでにアカウントが紐付いています。"
+          );
+        }
+      }
+
+      /*
+       * 既存招待確認
+       */
       const existingInvitations =
         await getDocs(
           query(
@@ -678,6 +1161,50 @@ export default function UsersPage() {
         );
       }
 
+      /*
+       * 同じ生徒の登録待ち確認。
+       */
+      if (
+        role ===
+        "生徒"
+      ) {
+        const existingStudentInvitations =
+          await getDocs(
+            query(
+              collection(
+                db,
+                "userInvitations"
+              ),
+              where(
+                "organizationId",
+                "==",
+                currentUser.organizationId
+              ),
+              where(
+                "studentId",
+                "==",
+                selectedStudentId
+              ),
+              where(
+                "active",
+                "==",
+                true
+              )
+            )
+          );
+
+        if (
+          !existingStudentInvitations.empty
+        ) {
+          throw new Error(
+            "この生徒にはすでに登録待ちのアカウントがあります。"
+          );
+        }
+      }
+
+      /*
+       * 招待登録
+       */
       await addDoc(
         collection(
           db,
@@ -698,6 +1225,16 @@ export default function UsersPage() {
           schoolIds:
             selectedSchoolIds,
 
+          /*
+           * 生徒の場合は既存studentsのID。
+           * その他の権限ではnull。
+           */
+          studentId:
+            role ===
+            "生徒"
+              ? selectedStudentId
+              : null,
+
           active:
             true,
 
@@ -713,18 +1250,34 @@ export default function UsersPage() {
       );
 
       setEmail("");
+
       setName("");
-      setRole("講師");
-      setSelectedSchoolIds([]);
+
+      setRole(
+        "講師"
+      );
+
+      setSelectedSchoolIds(
+        []
+      );
+
+      setSelectedStudentId(
+        ""
+      );
 
       setMessage(
-        "ユーザー登録を受け付けました。対象者が登録したGoogleアカウントでログインすると、正式ユーザー化されます。"
+        role ===
+        "生徒"
+          ? "生徒アカウントの登録待ちを作成しました。指定したGoogleアカウントでログインすると、既存の生徒情報と紐付いた状態で利用できます。"
+          : "ユーザー登録を受け付けました。対象者が登録したGoogleアカウントでログインすると、正式ユーザー化されます。"
       );
 
       await loadData(
         currentUser.organizationId
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         err
       );
@@ -735,15 +1288,15 @@ export default function UsersPage() {
           : "ユーザー登録に失敗しました。"
       );
     } finally {
-      setSaving(false);
+      setSaving(
+        false
+      );
     }
   }
 
-  /*
-   * ========================================================
-   * ユーザー停止
-   * ========================================================
-   */
+  /* =======================================================
+     Deactivate user
+     ======================================================= */
 
   async function deactivateUser(
     userId: string
@@ -767,6 +1320,7 @@ export default function UsersPage() {
 
     try {
       setError("");
+
       setMessage("");
 
       await updateDoc(
@@ -795,7 +1349,9 @@ export default function UsersPage() {
           currentUser.organizationId
         );
       }
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         err
       );
@@ -808,17 +1364,16 @@ export default function UsersPage() {
     }
   }
 
-  /*
-   * ========================================================
-   * 招待停止
-   * ========================================================
-   */
+  /* =======================================================
+     Deactivate invitation
+     ======================================================= */
 
   async function deactivateInvitation(
     invitationId: string
   ) {
     try {
       setError("");
+
       setMessage("");
 
       await updateDoc(
@@ -847,7 +1402,9 @@ export default function UsersPage() {
           currentUser.organizationId
         );
       }
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         err
       );
@@ -860,11 +1417,9 @@ export default function UsersPage() {
     }
   }
 
-  /*
-   * ========================================================
-   * 検索
-   * ========================================================
-   */
+  /* =======================================================
+     Search
+     ======================================================= */
 
   const filteredUsers =
     useMemo(() => {
@@ -873,12 +1428,16 @@ export default function UsersPage() {
           .trim()
           .toLowerCase();
 
-      if (!keyword) {
+      if (
+        !keyword
+      ) {
         return users;
       }
 
       return users.filter(
-        (item) =>
+        (
+          item
+        ) =>
           item.name
             .toLowerCase()
             .includes(
@@ -895,11 +1454,35 @@ export default function UsersPage() {
       search,
     ]);
 
-  /*
-   * ========================================================
-   * 権限なし
-   * ========================================================
-   */
+  /* =======================================================
+     Loading
+     ======================================================= */
+
+  if (
+    loading
+  ) {
+    return (
+      <main
+        style={
+          pageStyle
+        }
+      >
+        <section
+          style={
+            cardStyle
+          }
+        >
+          <strong>
+            ユーザー情報を読み込んでいます...
+          </strong>
+        </section>
+      </main>
+    );
+  }
+
+  /* =======================================================
+     Permission
+     ======================================================= */
 
   if (
     currentUser &&
@@ -910,7 +1493,9 @@ export default function UsersPage() {
   ) {
     return (
       <main
-        style={pageStyle}
+        style={
+          pageStyle
+        }
       >
         <section
           style={
@@ -929,18 +1514,29 @@ export default function UsersPage() {
     );
   }
 
+  /* =======================================================
+     Render
+     ======================================================= */
+
   return (
     <main
-      style={pageStyle}
+      style={
+        pageStyle
+      }
     >
       <div
         style={{
           maxWidth:
             1300,
+
           margin:
             "0 auto",
         }}
       >
+        {/* ==================================================
+            Header
+            ================================================== */}
+
         <header
           style={{
             marginBottom:
@@ -958,38 +1554,46 @@ export default function UsersPage() {
 
           <p
             style={{
-              margin: 0,
+              margin:
+                0,
+
               color:
                 "#666",
+
               lineHeight:
                 1.7,
             }}
           >
-            Googleアカウント、権限、所属校舎を管理します。
+            Googleアカウント、権限、所属校舎、生徒情報を管理します。
           </p>
         </header>
 
         {error && (
           <Message
             type="error"
-            message={error}
+            message={
+              error
+            }
           />
         )}
 
         {message && (
           <Message
             type="success"
-            message={message}
+            message={
+              message
+            }
           />
         )}
 
         {/* ==================================================
-            登録
+            Create
             ================================================== */}
 
         <section
           style={{
             ...cardStyle,
+
             marginBottom:
               24,
           }}
@@ -1002,24 +1606,29 @@ export default function UsersPage() {
             style={{
               color:
                 "#666",
+
               fontSize:
                 13,
+
               lineHeight:
                 1.7,
             }}
           >
-            登録するGoogleアカウントのメールアドレスを指定してください。
-            パスワードはこのシステムでは管理しません。
+            Googleアカウントのメールアドレスを指定して登録します。
+            生徒の場合は、CSVなどで登録済みの生徒情報を選択して紐付けます。
           </p>
 
           <div
             style={{
               display:
                 "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(220px, 1fr))",
+
               gap:
                 16,
+
               marginTop:
                 20,
             }}
@@ -1078,7 +1687,7 @@ export default function UsersPage() {
                 onChange={(
                   event
                 ) =>
-                  setRole(
+                  handleRoleChange(
                     event.target
                       .value as UserRole
                   )
@@ -1119,88 +1728,332 @@ export default function UsersPage() {
             </label>
           </div>
 
-          <div
-            style={{
-              marginTop:
-                22,
-            }}
-          >
-            <strong>
-              所属校舎
-            </strong>
+          {/* =================================================
+              Student link
+              ================================================= */}
 
+          {role ===
+            "生徒" && (
             <div
               style={{
-                display:
-                  "flex",
-                flexWrap:
-                  "wrap",
-                gap:
-                  12,
                 marginTop:
-                  12,
+                  22,
+
+                padding:
+                  16,
+
+                border:
+                  "1px solid #ddd",
+
+                borderRadius:
+                  10,
+
+                background:
+                  "#fafafa",
               }}
             >
-              {schools.map(
-                (
-                  school
-                ) => {
-                  const checked =
-                    selectedSchoolIds.includes(
-                      school.id
-                    );
+              <strong>
+                生徒情報との紐付け
+              </strong>
 
-                  return (
-                    <label
-                      key={
-                        school.id
-                      }
-                      style={{
-                        display:
-                          "flex",
-                        alignItems:
-                          "center",
-                        gap:
-                          7,
-                        cursor:
-                          "pointer",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={
-                          checked
-                        }
-                        onChange={() => {
-                          setSelectedSchoolIds(
-                            (
-                              current
-                            ) =>
-                              checked
-                                ? current.filter(
-                                    (
-                                      id
-                                    ) =>
-                                      id !==
-                                      school.id
-                                  )
-                                : [
-                                    ...current,
-                                    school.id,
-                                  ]
-                          );
-                        }}
-                      />
+              <p
+                className="muted"
+                style={{
+                  margin:
+                    "5px 0 12px",
 
-                      {
-                        school.name
-                      }
-                    </label>
-                  );
+                  fontSize:
+                    12,
+
+                  lineHeight:
+                    1.6,
+                }}
+              >
+                既に生徒管理へ登録されている生徒を選択してください。
+                生徒本人が自分で生徒情報を作成する必要はありません。
+              </p>
+
+              <select
+                value={
+                  selectedStudentId
                 }
+                onChange={(
+                  event
+                ) =>
+                  handleStudentChange(
+                    event.target
+                      .value
+                  )
+                }
+                style={
+                  inputStyle
+                }
+              >
+                <option value="">
+                  生徒を選択してください
+                </option>
+
+                {availableStudents.map(
+                  (
+                    student
+                  ) => (
+                    <option
+                      key={
+                        student.id
+                      }
+                      value={
+                        student.id
+                      }
+                    >
+                      {student.studentNumber}
+                      {"　"}
+                      {student.name}
+                      {"　"}
+                      {student.grade}
+                      {"　"}
+                      {student.className}
+                      {student.schoolName &&
+                        `　${student.schoolName}`}
+                    </option>
+                  )
+                )}
+              </select>
+
+              {selectedStudent && (
+                <div
+                  style={{
+                    marginTop:
+                      12,
+
+                    padding:
+                      12,
+
+                    background:
+                      "#fff",
+
+                    border:
+                      "1px solid #e5e5e5",
+
+                    borderRadius:
+                      7,
+
+                    fontSize:
+                      12,
+
+                    lineHeight:
+                      1.8,
+                  }}
+                >
+                  <div>
+                    <strong>
+                      {
+                        selectedStudent.name
+                      }
+                    </strong>
+                  </div>
+
+                  <div>
+                    生徒番号：
+                    {
+                      selectedStudent.studentNumber
+                    }
+                  </div>
+
+                  <div>
+                    学年：
+                    {
+                      selectedStudent.grade
+                    }
+                  </div>
+
+                  <div>
+                    クラス：
+                    {
+                      selectedStudent.className ||
+                      "—"
+                    }
+                  </div>
+
+                  <div>
+                    校舎：
+                    {
+                      selectedStudent.schoolName ||
+                      "—"
+                    }
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop:
+                        6,
+
+                      color:
+                        "#25633a",
+
+                      fontWeight:
+                        600,
+                    }}
+                  >
+                    この生徒のIDがGoogleアカウントに紐付けられます。
+                  </div>
+                </div>
               )}
             </div>
-          </div>
+          )}
+
+          {/* =================================================
+              Schools
+              ================================================= */}
+
+          {role !==
+            "生徒" && (
+            <div
+              style={{
+                marginTop:
+                  22,
+              }}
+            >
+              <strong>
+                所属校舎
+              </strong>
+
+              <div
+                style={{
+                  display:
+                    "flex",
+
+                  flexWrap:
+                    "wrap",
+
+                  gap:
+                    12,
+
+                  marginTop:
+                    12,
+                }}
+              >
+                {schools
+                  .filter(
+                    (
+                      school
+                    ) =>
+                      currentUser?.role ===
+                        "本部管理者" ||
+                      currentUser.schoolIds.includes(
+                        school.id
+                      )
+                  )
+                  .map(
+                    (
+                      school
+                    ) => {
+                      const checked =
+                        selectedSchoolIds.includes(
+                          school.id
+                        );
+
+                      return (
+                        <label
+                          key={
+                            school.id
+                          }
+                          style={{
+                            display:
+                              "flex",
+
+                            alignItems:
+                              "center",
+
+                            gap:
+                              7,
+
+                            cursor:
+                              "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={
+                              checked
+                            }
+                            onChange={() => {
+                              setSelectedSchoolIds(
+                                (
+                                  current
+                                ) =>
+                                  checked
+                                    ? current.filter(
+                                        (
+                                          id
+                                        ) =>
+                                          id !==
+                                          school.id
+                                      )
+                                    : [
+                                        ...current,
+                                        school.id,
+                                      ]
+                              );
+                            }}
+                          />
+
+                          {
+                            school.name
+                          }
+                        </label>
+                      );
+                    }
+                  )}
+              </div>
+            </div>
+          )}
+
+          {/* =================================================
+              Student school
+              ================================================= */}
+
+          {role ===
+            "生徒" &&
+            selectedStudent && (
+              <div
+                style={{
+                  marginTop:
+                    14,
+
+                  padding:
+                    10,
+
+                  background:
+                    "#f5f8ff",
+
+                  borderRadius:
+                    7,
+
+                  fontSize:
+                    12,
+                }}
+              >
+                所属校舎：
+                <strong>
+                  {
+                    selectedStudent.schoolName ||
+                    "未設定"
+                  }
+                </strong>
+
+                <div
+                  style={{
+                    marginTop:
+                      3,
+
+                    color:
+                      "#777",
+                  }}
+                >
+                  生徒マスターの所属校舎を自動的に使用します。
+                </div>
+              </div>
+            )}
 
           <button
             type="button"
@@ -1221,12 +2074,13 @@ export default function UsersPage() {
         </section>
 
         {/* ==================================================
-            登録済みユーザー
+            Users
             ================================================== */}
 
         <section
           style={{
             ...cardStyle,
+
             marginBottom:
               24,
           }}
@@ -1235,10 +2089,13 @@ export default function UsersPage() {
             style={{
               display:
                 "flex",
+
               justifyContent:
                 "space-between",
+
               alignItems:
                 "center",
+
               gap:
                 16,
             }}
@@ -1257,13 +2114,17 @@ export default function UsersPage() {
                 style={{
                   margin:
                     "6px 0 0",
+
                   color:
                     "#777",
+
                   fontSize:
                     13,
                 }}
               >
-                {users.length}
+                {
+                  users.length
+                }
                 人
               </p>
             </div>
@@ -1283,8 +2144,10 @@ export default function UsersPage() {
               placeholder="氏名・メールを検索"
               style={{
                 ...inputStyle,
+
                 maxWidth:
                   280,
+
                 marginTop:
                   0,
               }}
@@ -1294,6 +2157,9 @@ export default function UsersPage() {
           <UserTable
             users={
               filteredUsers
+            }
+            students={
+              students
             }
             currentUid={
               currentUser?.uid ??
@@ -1306,7 +2172,7 @@ export default function UsersPage() {
         </section>
 
         {/* ==================================================
-            登録待ち
+            Invitations
             ================================================== */}
 
         <section
@@ -1371,6 +2237,14 @@ export default function UsersPage() {
                         thStyle
                       }
                     >
+                      生徒情報
+                    </th>
+
+                    <th
+                      style={
+                        thStyle
+                      }
+                    >
                       状態
                     </th>
 
@@ -1388,75 +2262,100 @@ export default function UsersPage() {
                   {invitations.map(
                     (
                       invitation
-                    ) => (
-                      <tr
-                        key={
-                          invitation.id
-                        }
-                      >
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            invitation.name
-                          }
-                        </td>
+                    ) => {
+                      const student =
+                        invitation.studentId
+                          ? students.find(
+                              (
+                                item
+                              ) =>
+                                item.id ===
+                                invitation.studentId
+                            )
+                          : null;
 
-                        <td
-                          style={
-                            tdStyle
+                      return (
+                        <tr
+                          key={
+                            invitation.id
                           }
                         >
-                          {
-                            invitation.email
-                          }
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              invitation.name
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            invitation.role
-                          }
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              invitation.email
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {invitation.active
-                            ? "登録待ち"
-                            : "停止"}
-                        </td>
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {
+                              invitation.role
+                            }
+                          </td>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {invitation.active && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                deactivateInvitation(
-                                  invitation.id
-                                )
-                              }
-                              style={
-                                dangerButton
-                              }
-                            >
-                              停止
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    )
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {student
+                              ? `${student.studentNumber} ${student.name}`
+                              : invitation.studentId
+                                ? "生徒情報あり"
+                                : "—"}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {invitation.active
+                              ? "登録待ち"
+                              : "停止"}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {invitation.active && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  deactivateInvitation(
+                                    invitation.id
+                                  )
+                                }
+                                style={
+                                  dangerButton
+                                }
+                              >
+                                停止
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    }
                   )}
                 </tbody>
               </table>
@@ -1474,11 +2373,16 @@ export default function UsersPage() {
 
 function UserTable({
   users,
+  students,
   currentUid,
   onDeactivate,
 }: {
   users: ManagedUser[];
+
+  students: Student[];
+
   currentUid: string;
+
   onDeactivate: (
     userId: string
   ) => void;
@@ -1492,6 +2396,7 @@ function UserTable({
         style={{
           marginTop:
             24,
+
           color:
             "#777",
         }}
@@ -1506,6 +2411,7 @@ function UserTable({
       style={{
         overflowX:
           "auto",
+
         marginTop:
           20,
       }}
@@ -1546,6 +2452,14 @@ function UserTable({
                 thStyle
               }
             >
+              生徒情報
+            </th>
+
+            <th
+              style={
+                thStyle
+              }
+            >
               状態
             </th>
 
@@ -1563,78 +2477,103 @@ function UserTable({
           {users.map(
             (
               user
-            ) => (
-              <tr
-                key={
-                  user.id
-                }
-              >
-                <td
-                  style={
-                    tdStyle
-                  }
-                >
-                  {
-                    user.name
-                  }
-                </td>
+            ) => {
+              const student =
+                user.studentId
+                  ? students.find(
+                      (
+                        item
+                      ) =>
+                        item.id ===
+                        user.studentId
+                    )
+                  : null;
 
-                <td
-                  style={
-                    tdStyle
+              return (
+                <tr
+                  key={
+                    user.id
                   }
                 >
-                  {
-                    user.email
-                  }
-                </td>
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {
+                      user.name
+                    }
+                  </td>
 
-                <td
-                  style={
-                    tdStyle
-                  }
-                >
-                  {
-                    user.role ??
-                    "未設定"
-                  }
-                </td>
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {
+                      user.email
+                    }
+                  </td>
 
-                <td
-                  style={
-                    tdStyle
-                  }
-                >
-                  {user.active
-                    ? "有効"
-                    : "停止"}
-                </td>
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {
+                      user.role ??
+                      "未設定"
+                    }
+                  </td>
 
-                <td
-                  style={
-                    tdStyle
-                  }
-                >
-                  {user.active &&
-                    user.id !==
-                      currentUid && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onDeactivate(
-                            user.id
-                          )
-                        }
-                        style={
-                          dangerButton
-                        }
-                      >
-                        停止
-                      </button>
-                    )}
-                </td>
-              </tr>
-            )
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {student
+                      ? `${student.studentNumber} ${student.name}`
+                      : user.studentId
+                        ? "紐付け済み"
+                        : "—"}
+                  </td>
+
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {user.active
+                      ? "有効"
+                      : "停止"}
+                  </td>
+
+                  <td
+                    style={
+                      tdStyle
+                    }
+                  >
+                    {user.active &&
+                      user.id !==
+                        currentUid && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onDeactivate(
+                              user.id
+                            )
+                          }
+                          style={
+                            dangerButton
+                          }
+                        >
+                          停止
+                        </button>
+                      )}
+                  </td>
+                </tr>
+              );
+            }
           )}
         </tbody>
       </table>
@@ -1693,7 +2632,9 @@ function Message({
           1.6,
       }}
     >
-      {message}
+      {
+        message
+      }
     </div>
   );
 }
@@ -1715,24 +2656,6 @@ function isUserRole(
     value ===
       "生徒"
   );
-}
-
-function organizationIdOfSchool(
-  schoolId: string,
-  schools: School[]
-): string | null {
-  const school =
-    schools.find(
-      (
-        item
-      ) =>
-        item.id ===
-        schoolId
-    );
-
-  return school
-    ? school.id
-    : null;
 }
 
 /* =========================================================
