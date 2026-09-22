@@ -345,6 +345,9 @@ export async function generateResultFromAnswer(
 
   return createResultFromConfirmedAnswer(
     {
+      organizationId:
+        answer.organizationId,
+
       answerId:
         answer.id,
 
@@ -375,6 +378,228 @@ export async function generateResultFromAnswer(
         "通常",
     }
   );
+}
+
+/* =========================================================
+   Publish scores
+   ========================================================= */
+
+export async function publishScores(
+  testId: string,
+  subjectId?: string
+) {
+  const user =
+    await getAppUser();
+
+  if (
+    !user
+  ) {
+    throw new Error(
+      "ログインしてください。"
+    );
+  }
+
+  assertResultManager(
+    user.role
+  );
+
+  if (
+    !user.organizationId
+  ) {
+    throw new Error(
+      "所属組織が設定されていません。"
+    );
+  }
+
+  if (
+    !testId.trim()
+  ) {
+    throw new Error(
+      "テストIDが指定されていません。"
+    );
+  }
+
+  /*
+   * 対象答案を取得。
+   */
+  const answerConstraints = [
+    where(
+      "organizationId",
+      "==",
+      user.organizationId
+    ),
+
+    where(
+      "testId",
+      "==",
+      testId
+    ),
+  ];
+
+  if (
+    subjectId
+  ) {
+    answerConstraints.push(
+      where(
+        "subjectId",
+        "==",
+        subjectId
+      )
+    );
+  }
+
+  const answerSnapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "answers"
+        ),
+        ...answerConstraints
+      )
+    );
+
+  /*
+   * 権限範囲内の答案だけを対象にする。
+   */
+  const answers =
+    answerSnapshot.docs.filter(
+      (
+        item
+      ) => {
+        const data =
+          item.data();
+
+        if (
+          user.role ===
+          "本部管理者"
+        ) {
+          return true;
+        }
+
+        return user.schoolIds.includes(
+          stringValue(
+            data.schoolId
+          )
+        );
+      }
+    );
+
+  if (
+    answers.length ===
+    0
+  ) {
+    throw new Error(
+      "対象となる答案がありません。"
+    );
+  }
+
+  /*
+   * 全員・全答案が採点確定しているか確認。
+   *
+   * 1件でも未確定なら、
+   * 点数公開へ進めない。
+   */
+  const unconfirmed =
+    answers.filter(
+      (
+        item
+      ) =>
+        item.data().status !==
+        "confirmed"
+    );
+
+  if (
+    unconfirmed.length >
+    0
+  ) {
+    throw new Error(
+      `まだ採点が確定していない答案が${unconfirmed.length}件あります。全員の採点を確定してください。`
+    );
+  }
+
+  /*
+   * 全員確定済み。
+   *
+   * ここで初めて点数公開。
+   */
+  const answerChunks =
+    chunk(
+      answers,
+      400
+    );
+
+  for (
+    const current of
+      answerChunks
+  ) {
+    const batch =
+      writeBatch(
+        db
+      );
+
+    for (
+      const answer of
+        current
+    ) {
+      batch.update(
+        doc(
+          db,
+          "answers",
+          answer.id
+        ),
+        {
+          status:
+            "published",
+
+          scorePublished:
+            true,
+
+          scorePublishedAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+    }
+
+    await batch.commit();
+  }
+
+  /*
+   * 点数公開後に成績計算。
+   *
+   * 既存の統計計算処理を利用する。
+   */
+  const calculation =
+    await recalculateTestStatistics(
+      testId,
+      subjectId
+    );
+
+  return {
+    testId,
+
+    subjectId:
+      subjectId ??
+      null,
+
+    publishedCount:
+      answers.length,
+
+    calculatedCount:
+      calculation.count,
+
+    average:
+      calculation.average,
+
+    standardDeviation:
+      calculation.standardDeviation,
+
+    results:
+      calculation.results,
+  };
 }
 
 /* =========================================================
@@ -476,6 +701,12 @@ export async function recalculateTestStatistics(
 
       average:
         null,
+
+      standardDeviation:
+        0,
+
+      results:
+        [],
     };
   }
 
@@ -1222,9 +1453,11 @@ export function calculateDeviationScore(
   return (
     50 +
     10 *
-      ((score -
-        average) /
-        standardDeviation)
+      (
+        (score -
+          average) /
+        standardDeviation
+      )
   );
 }
 
@@ -1671,212 +1904,4 @@ function safeNumber(
   )
     ? number
     : 0;
-}
-/* =========================================================
-   Publish scores
-   ========================================================= */
-
-export async function publishScores(
-  testId: string,
-  subject?: string
-) {
-  const user =
-    await getAppUser();
-
-  if (
-    !user
-  ) {
-    throw new Error(
-      "ログインしてください。"
-    );
-  }
-
-  assertResultManager(
-    user.role
-  );
-
-  if (
-    !user.organizationId
-  ) {
-    throw new Error(
-      "所属組織が設定されていません。"
-    );
-  }
-
-  /*
-   * 対象テストの答案を取得。
-   */
-  const answerConstraints = [
-    where(
-      "organizationId",
-      "==",
-      user.organizationId
-    ),
-
-    where(
-      "testId",
-      "==",
-      testId
-    ),
-  ];
-
-  if (
-    subject
-  ) {
-    answerConstraints.push(
-      where(
-        "subjectId",
-        "==",
-        subject
-      )
-    );
-  }
-
-  const answerSnapshot =
-    await getDocs(
-      query(
-        collection(
-          db,
-          "answers"
-        ),
-        ...answerConstraints
-      )
-    );
-
-  const answers =
-    answerSnapshot.docs.filter(
-      (
-        item
-      ) => {
-        const data =
-          item.data();
-
-        /*
-         * 本部以外は所属校舎のみ。
-         */
-        if (
-          user.role ===
-          "本部管理者"
-        ) {
-          return true;
-        }
-
-        return user.schoolIds.includes(
-          stringValue(
-            data.schoolId
-          )
-        );
-      }
-    );
-
-  if (
-    answers.length ===
-    0
-  ) {
-    throw new Error(
-      "対象となる答案がありません。"
-    );
-  }
-
-  /*
-   * 全員の採点が確定しているか確認。
-   */
-  const unconfirmed =
-    answers.filter(
-      (
-        item
-      ) =>
-        item.data().status !==
-        "confirmed"
-    );
-
-  if (
-    unconfirmed.length >
-    0
-  ) {
-    throw new Error(
-      `まだ採点が確定していない答案が${unconfirmed.length}件あります。全答案の採点を確定してください。`
-    );
-  }
-
-  /*
-   * 点数公開。
-   *
-   * 生徒本人が見られる状態にする。
-   */
-  const chunks =
-    chunk(
-      answers,
-      400
-    );
-
-  for (
-    const current of
-      chunks
-  ) {
-    const batch =
-      writeBatch(
-        db
-      );
-
-    for (
-      const item of
-        current
-    ) {
-      batch.update(
-        doc(
-          db,
-          "answers",
-          item.id
-        ),
-        {
-          status:
-            "published",
-
-          scorePublished:
-            true,
-
-          scorePublishedAt:
-            serverTimestamp(),
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-    }
-
-    await batch.commit();
-  }
-
-  /*
-   * 点数公開後に成績計算。
-   */
-  const calculation =
-    await recalculateTestStatistics(
-      testId,
-      subject
-    );
-
-  return {
-    testId,
-
-    subject:
-      subject ??
-      null,
-
-    published:
-      answers.length,
-
-    calculated:
-      calculation.count,
-
-    average:
-      calculation.average,
-
-    standardDeviation:
-      calculation.standardDeviation,
-
-    results:
-      calculation.results,
-  };
 }
