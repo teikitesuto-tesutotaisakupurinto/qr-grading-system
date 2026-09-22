@@ -33,6 +33,8 @@ import type {
    ========================================================= */
 
 export type CreateResultInput = {
+  organizationId?: string;
+
   answerId: string;
 
   studentId: string;
