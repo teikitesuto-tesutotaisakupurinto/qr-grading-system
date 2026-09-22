@@ -41,10 +41,7 @@ export type AppUser = {
 };
 
 /*
- * 既存画面との互換用。
- *
- * UserProfileを利用している画面は
- * AppUserと同じユーザープロフィールとして扱う。
+ * 既存画面との互換用
  */
 export type UserProfile =
   AppUser;
@@ -148,12 +145,16 @@ export type Test = {
 };
 
 /* =========================================================
-   Test Question
+   Grading Method
    ========================================================= */
 
 export type GradingMethod =
   | "automatic"
   | "manual";
+
+/* =========================================================
+   Test Question
+   ========================================================= */
 
 export type TestQuestion = {
   id: string;
@@ -168,6 +169,10 @@ export type TestQuestion = {
 
   maxScore: number;
 
+  /*
+   * デフォルトはautomatic。
+   * 必要な問題だけmanualに変更する。
+   */
   gradingMethod: GradingMethod;
 
   correctAnswer: string;
@@ -186,7 +191,7 @@ export type TestQuestion = {
 };
 
 /* =========================================================
-   Answer
+   Answer Status
    ========================================================= */
 
 export type AnswerStatus =
@@ -198,6 +203,10 @@ export type AnswerStatus =
   | "confirmed"
   | "published"
   | "error";
+
+/* =========================================================
+   Answer
+   ========================================================= */
 
 export type Answer = {
   id: string;
@@ -242,11 +251,35 @@ export type Answer = {
 
   processingError: string;
 
+  /*
+   * 点数公開状態
+   *
+   * false / undefined:
+   *   生徒には点数を公開しない
+   *
+   * true:
+   *   点数公開済み
+   */
+  scorePublished?: boolean;
+
+  /*
+   * 点数を公開した日時
+   */
+  scorePublishedAt?: unknown;
+
+  /*
+   * 採点確定者
+   */
+  confirmedBy?: string;
+
+  /*
+   * 採点確定日時
+   */
+  confirmedAt?: unknown;
+
   uploadedBy?: string;
 
   processedAt?: unknown;
-
-  confirmedAt?: unknown;
 
   createdAt?: unknown;
 
@@ -406,12 +439,16 @@ export type SecondReview = {
 };
 
 /* =========================================================
-   Student Result
+   Result Source
    ========================================================= */
 
 export type ResultSource =
   | "通常"
   | "追試";
+
+/* =========================================================
+   Student Result
+   ========================================================= */
 
 export type StudentResult = {
   id: string;
@@ -468,7 +505,7 @@ export type StudentResult = {
 };
 
 /* =========================================================
-   Grade Report Subject
+   Grade Distribution
    ========================================================= */
 
 export type GradeDistributionItem = {
@@ -482,6 +519,10 @@ export type GradeDistributionItem = {
 
   selected: boolean;
 };
+
+/* =========================================================
+   Grade Report Subject
+   ========================================================= */
 
 export type GradeReportSubject = {
   subject: string;
@@ -506,7 +547,8 @@ export type GradeReportSubject = {
     | number
     | null;
 
-  distribution: GradeDistributionItem[];
+  distribution:
+    GradeDistributionItem[];
 };
 
 /* =========================================================
@@ -686,7 +728,7 @@ export type Subject = {
 };
 
 /* =========================================================
-   Class
+   School Class
    ========================================================= */
 
 export type SchoolClass = {
