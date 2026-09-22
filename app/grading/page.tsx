@@ -425,29 +425,12 @@ export default function GradingPage() {
             </p>
           </div>
 
-          <div
-            style={{
-              display:
-                "flex",
-
-              gap:
-                8,
-            }}
+          <Link
+            href="/answers"
+            className="button"
           >
-            <Link
-              href="/answers"
-              className="button"
-            >
-              答案管理
-            </Link>
-
-            <Link
-              href="/grading/review"
-              className="button"
-            >
-              一次確認
-            </Link>
-          </div>
+            答案管理
+          </Link>
         </header>
 
         {/* ==================================================
