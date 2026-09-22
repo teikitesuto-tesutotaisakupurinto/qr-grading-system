@@ -1,122 +1,358 @@
 "use client";
 
 import {
+  FormEvent,
   useEffect,
   useState,
 } from "react";
 
 import {
   useRouter,
+  useSearchParams,
 } from "next/navigation";
 
 import {
-  loginWithGoogle,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from "firebase/auth";
+
+import {
+  auth,
+  googleProvider,
+} from "@/lib/firebase";
+
+import {
   getAppUser,
 } from "@/lib/auth";
+
+import type {
+  UserRole,
+} from "@/lib/types";
+
+/* =========================================================
+   Page
+   ========================================================= */
 
 export default function LoginPage() {
   const router =
     useRouter();
 
+  const searchParams =
+    useSearchParams();
+
+  const [
+    email,
+    setEmail,
+  ] =
+    useState("");
+
+  const [
+    password,
+    setPassword,
+  ] =
+    useState("");
+
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
-    loggingIn,
-    setLoggingIn,
-  ] = useState(false);
+    signingIn,
+    setSigningIn,
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
+
+  const [
+    showPassword,
+    setShowPassword,
+  ] =
+    useState(false);
 
   /* =======================================================
-     すでにログイン済みなら
-     ログイン画面を表示しない
+     Next path
+     ======================================================= */
+
+  const requestedPath =
+    searchParams.get(
+      "next"
+    );
+
+  /*
+   * 外部サイトへリダイレクトさせない。
+   *
+   * /から始まる内部パスだけ許可。
+   */
+  const safeNextPath =
+    getSafeNextPath(
+      requestedPath
+    );
+
+  /* =======================================================
+     Existing session
      ======================================================= */
 
   useEffect(() => {
-    let disposed =
-      false;
+    let mounted =
+      true;
 
-    async function checkSession() {
-      try {
-        const user =
-          await getAppUser();
+    /*
+     * Firebase Authの現在セッションを確認。
+     *
+     * ログイン状態はFirebase側に維持させる。
+     */
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        async (
+          firebaseUser
+        ) => {
+          if (
+            !mounted
+          ) {
+            return;
+          }
 
-        if (
-          disposed
-        ) {
-          return;
+          if (
+            !firebaseUser
+          ) {
+            setLoading(
+              false
+            );
+
+            return;
+          }
+
+          try {
+            /*
+             * Authenticationだけでなく
+             * Firestore側のAppUserも確認。
+             */
+            const appUser =
+              await getAppUser(
+                firebaseUser
+              );
+
+            if (
+              !mounted
+            ) {
+              return;
+            }
+
+            if (
+              !appUser ||
+              appUser.active ===
+                false
+            ) {
+              setLoading(
+                false
+              );
+
+              return;
+            }
+
+            /*
+             * 既にログイン済みなら
+             * ログイン画面を出さない。
+             */
+            router.replace(
+              safeNextPath ??
+                getDashboardPath(
+                  appUser.role
+                )
+            );
+          } catch (
+            error
+          ) {
+            console.error(
+              "Existing session check error:",
+              error
+            );
+
+            if (
+              mounted
+            ) {
+              setLoading(
+                false
+              );
+            }
+          }
         }
-
-        if (
-          user
-        ) {
-          router.replace(
-            getDashboardPath(
-              user.role
-            )
-          );
-
-          return;
-        }
-      } catch (
-        error
-      ) {
-        console.error(
-          "Login session check error:",
-          error
-        );
-      } finally {
-        if (
-          !disposed
-        ) {
-          setLoading(
-            false
-          );
-        }
-      }
-    }
-
-    void checkSession();
+      );
 
     return () => {
-      disposed =
-        true;
+      mounted =
+        false;
+
+      unsubscribe();
     };
   }, [
     router,
+    safeNextPath,
   ]);
 
   /* =======================================================
-     Google Login
+     Email login
      ======================================================= */
 
-  async function handleGoogleLogin() {
+  async function handleEmailLogin(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
     if (
-      loggingIn
+      signingIn
     ) {
       return;
     }
 
     try {
-      setLoggingIn(
+      setSigningIn(
         true
       );
 
       setError("");
 
-      const user =
-        await loginWithGoogle();
+      const normalizedEmail =
+        email
+          .trim()
+          .toLowerCase();
+
+      if (
+        !normalizedEmail
+      ) {
+        throw new Error(
+          "メールアドレスを入力してください。"
+        );
+      }
+
+      if (
+        !password
+      ) {
+        throw new Error(
+          "パスワードを入力してください。"
+        );
+      }
+
+      const credential =
+        await signInWithEmailAndPassword(
+          auth,
+          normalizedEmail,
+          password
+        );
+
+      const appUser =
+        await getAppUser(
+          credential.user
+        );
+
+      if (
+        !appUser
+      ) {
+        throw new Error(
+          "ユーザー情報が登録されていません。管理者に確認してください。"
+        );
+      }
+
+      if (
+        appUser.active ===
+        false
+      ) {
+        throw new Error(
+          "このアカウントは現在利用できません。"
+        );
+      }
 
       router.replace(
-        getDashboardPath(
-          user.role
+        safeNextPath ??
+          getDashboardPath(
+            appUser.role
+          )
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Email login error:",
+        error
+      );
+
+      setError(
+        getLoginErrorMessage(
+          error
         )
+      );
+    } finally {
+      setSigningIn(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Google login
+     ======================================================= */
+
+  async function handleGoogleLogin() {
+    if (
+      signingIn
+    ) {
+      return;
+    }
+
+    try {
+      setSigningIn(
+        true
+      );
+
+      setError("");
+
+      const credential =
+        await signInWithPopup(
+          auth,
+          googleProvider
+        );
+
+      const appUser =
+        await getAppUser(
+          credential.user
+        );
+
+      if (
+        !appUser
+      ) {
+        /*
+         * Firebase Authenticationには
+         * ログインできても、アプリ側ユーザーが
+         * 登録されていなければ利用させない。
+         */
+        throw new Error(
+          "アプリ側のユーザー登録がありません。管理者にアカウント登録を依頼してください。"
+        );
+      }
+
+      if (
+        appUser.active ===
+        false
+      ) {
+        throw new Error(
+          "このアカウントは現在利用できません。"
+        );
+      }
+
+      router.replace(
+        safeNextPath ??
+          getDashboardPath(
+            appUser.role
+          )
       );
     } catch (
       error
@@ -131,94 +367,114 @@ export default function LoginPage() {
           error
         )
       );
-
-      setLoggingIn(
+    } finally {
+      setSigningIn(
         false
       );
     }
   }
 
   /* =======================================================
-     Session checking
+     Loading
      ======================================================= */
 
   if (
     loading
   ) {
     return (
-      <main className="loginPage">
-        <section className="loginCard">
-          <div
-            className="loginSystemName"
-          >
-            テストシステム
-          </div>
+      <LoginShell>
+        <div
+          style={{
+            textAlign:
+              "center",
 
-          <div
-            className="loginLoading"
+            padding:
+              40,
+          }}
+        >
+          <strong>
+            ログイン状態を確認しています
+          </strong>
+
+          <p
+            className="muted"
+            style={{
+              marginTop:
+                7,
+
+              fontSize:
+                12,
+            }}
           >
-            ログイン状態を確認しています...
-          </div>
-        </section>
-      </main>
+            しばらくお待ちください。
+          </p>
+        </div>
+      </LoginShell>
     );
   }
 
   /* =======================================================
-     Login
+     Render
      ======================================================= */
 
   return (
-    <main className="loginPage">
-      <section className="loginCard">
+    <LoginShell>
+      <div>
+        <header
+          style={{
+            marginBottom:
+              26,
+          }}
+        >
+          <div
+            style={{
+              fontSize:
+                12,
 
-        <div className="loginHeader">
-          <div className="loginSystemName">
+              color:
+                "#777",
+
+              marginBottom:
+                6,
+            }}
+          >
             テストシステム
           </div>
 
-          <h1>
+          <h1
+            style={{
+              margin:
+                0,
+
+              fontSize:
+                28,
+            }}
+          >
             ログイン
           </h1>
 
-          <p>
-            登録済みのGoogleアカウントで
-            <br />
-            ログインしてください。
+          <p
+            className="muted"
+            style={{
+              margin:
+                "8px 0 0",
+
+              fontSize:
+                13,
+            }}
+          >
+            アカウント情報を入力してください。
           </p>
-        </div>
-
-        <button
-          type="button"
-          className="googleLoginButton"
-          disabled={
-            loggingIn
-          }
-          onClick={
-            handleGoogleLogin
-          }
-          aria-busy={
-            loggingIn
-          }
-        >
-          <img
-            src="/google-logo.svg"
-            alt=""
-            width={20}
-            height={20}
-          />
-
-          <span>
-            {loggingIn
-              ? "ログインしています..."
-              : "Googleでログイン"}
-          </span>
-        </button>
+        </header>
 
         {error && (
           <div
-            className="loginError"
+            className="errorMessage"
             role="alert"
+            style={{
+              marginBottom:
+                16,
+            }}
           >
             {
               error
@@ -226,23 +482,402 @@ export default function LoginPage() {
           </div>
         )}
 
-        <p className="loginNotice">
-          登録済みユーザーのみ利用できます。
-        </p>
+        {/* ==================================================
+            Google
+            ================================================== */}
 
+        <button
+          type="button"
+          onClick={
+            handleGoogleLogin
+          }
+          disabled={
+            signingIn
+          }
+          style={{
+            width:
+              "100%",
+
+            padding:
+              "12px 14px",
+
+            border:
+              "1px solid #ccc",
+
+            borderRadius:
+              7,
+
+            background:
+              "#fff",
+
+            cursor:
+              signingIn
+                ? "default"
+                : "pointer",
+
+            fontSize:
+              14,
+
+            fontWeight:
+              600,
+          }}
+        >
+          {signingIn
+            ? "ログイン中..."
+            : "Googleでログイン"}
+        </button>
+
+        {/* ==================================================
+            Divider
+            ================================================== */}
+
+        <div
+          style={{
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            gap:
+              10,
+
+            margin:
+              "22px 0",
+
+            color:
+              "#999",
+
+            fontSize:
+              11,
+          }}
+        >
+          <span
+            style={{
+              flex:
+                1,
+
+              height:
+                1,
+
+              background:
+                "#eee",
+            }}
+          />
+
+          <span>
+            または
+          </span>
+
+          <span
+            style={{
+              flex:
+                1,
+
+              height:
+                1,
+
+              background:
+                "#eee",
+            }}
+          />
+        </div>
+
+        {/* ==================================================
+            Email / Password
+            ================================================== */}
+
+        <form
+          onSubmit={
+            handleEmailLogin
+          }
+        >
+          <label
+            style={{
+              display:
+                "block",
+            }}
+          >
+            <span
+              style={{
+                display:
+                  "block",
+
+                marginBottom:
+                  6,
+
+                fontSize:
+                  12,
+
+                fontWeight:
+                  600,
+              }}
+            >
+              メールアドレス
+            </span>
+
+            <input
+              type="email"
+              value={
+                email
+              }
+              onChange={(
+                event
+              ) =>
+                setEmail(
+                  event.target
+                    .value
+                )
+              }
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={
+                false
+              }
+              placeholder="example@example.com"
+              disabled={
+                signingIn
+              }
+              style={{
+                width:
+                  "100%",
+              }}
+            />
+          </label>
+
+          <label
+            style={{
+              display:
+                "block",
+
+              marginTop:
+                16,
+            }}
+          >
+            <span
+              style={{
+                display:
+                  "block",
+
+                marginBottom:
+                  6,
+
+                fontSize:
+                  12,
+
+                fontWeight:
+                  600,
+              }}
+            >
+              パスワード
+            </span>
+
+            <div
+              style={{
+                position:
+                  "relative",
+              }}
+            >
+              <input
+                type={
+                  showPassword
+                    ? "text"
+                    : "password"
+                }
+                value={
+                  password
+                }
+                onChange={(
+                  event
+                ) =>
+                  setPassword(
+                    event.target
+                      .value
+                  )
+                }
+                autoComplete="current-password"
+                placeholder="パスワード"
+                disabled={
+                  signingIn
+                }
+                style={{
+                  width:
+                    "100%",
+
+                  paddingRight:
+                    80,
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPassword(
+                    (
+                      current
+                    ) =>
+                      !current
+                  )
+                }
+                disabled={
+                  signingIn
+                }
+                style={{
+                  position:
+                    "absolute",
+
+                  right:
+                    7,
+
+                  top:
+                    "50%",
+
+                  transform:
+                    "translateY(-50%)",
+
+                  border:
+                    0,
+
+                  background:
+                    "transparent",
+
+                  cursor:
+                    "pointer",
+
+                  fontSize:
+                    11,
+
+                  color:
+                    "#666",
+                }}
+              >
+                {showPassword
+                  ? "隠す"
+                  : "表示"}
+              </button>
+            </div>
+          </label>
+
+          <button
+            type="submit"
+            disabled={
+              signingIn
+            }
+            className="button primary"
+            style={{
+              width:
+                "100%",
+
+              marginTop:
+                22,
+
+              padding:
+                "12px 14px",
+            }}
+          >
+            {signingIn
+              ? "ログイン中..."
+              : "ログイン"}
+          </button>
+        </form>
+
+        {/* ==================================================
+            Session notice
+            ================================================== */}
+
+        <p
+          className="muted"
+          style={{
+            marginTop:
+              18,
+
+            fontSize:
+              11,
+
+            lineHeight:
+              1.7,
+
+            textAlign:
+              "center",
+          }}
+        >
+          ログイン状態は保持されます。
+          <br />
+          次回アクセス時もログイン状態を確認します。
+        </p>
+      </div>
+    </LoginShell>
+  );
+}
+
+/* =========================================================
+   Shell
+   ========================================================= */
+
+function LoginShell({
+  children,
+}: {
+  children:
+    React.ReactNode;
+}) {
+  return (
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        padding:
+          24,
+
+        background:
+          "#f7f7f7",
+      }}
+    >
+      <section
+        style={{
+          width:
+            "100%",
+
+          maxWidth:
+            430,
+
+          padding:
+            32,
+
+          background:
+            "#fff",
+
+          border:
+            "1px solid #e5e5e5",
+
+          borderRadius:
+            12,
+
+          boxShadow:
+            "0 8px 30px rgba(0,0,0,.04)",
+        }}
+      >
+        {children}
       </section>
     </main>
   );
 }
 
 /* =========================================================
-   Dashboard by role
+   Dashboard
    ========================================================= */
 
 function getDashboardPath(
-  role:
-    | string
-    | null
+  role: UserRole
 ) {
   switch (
     role
@@ -265,54 +900,112 @@ function getDashboardPath(
 }
 
 /* =========================================================
-   Login error
+   Safe next
+   ========================================================= */
+
+function getSafeNextPath(
+  value:
+    | string
+    | null
+) {
+  if (
+    !value
+  ) {
+    return null;
+  }
+
+  /*
+   * 外部URL禁止。
+   */
+  if (
+    !value.startsWith(
+      "/"
+    )
+  ) {
+    return null;
+  }
+
+  /*
+   * //example.com のような
+   * protocol-relative URLも禁止。
+   */
+  if (
+    value.startsWith(
+      "//"
+    )
+  ) {
+    return null;
+  }
+
+  /*
+   * ログインページへのループ防止。
+   */
+  if (
+    value ===
+      "/login" ||
+    value.startsWith(
+      "/login?"
+    )
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
+/* =========================================================
+   Error
    ========================================================= */
 
 function getLoginErrorMessage(
   error: unknown
-): string {
-  if (
-    error instanceof Error
-  ) {
-    return error.message;
-  }
-
-  if (
-    error &&
+) {
+  const code =
     typeof error ===
-      "object"
+    "object" &&
+    error !== null &&
+    "code" in
+      error
+      ? String(
+          (
+            error as {
+              code?: unknown;
+            }
+          ).code ??
+            ""
+        )
+      : "";
+
+  switch (
+    code
   ) {
-    const value =
-      error as {
-        code?: string;
-        message?: string;
-      };
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "メールアドレスまたはパスワードが正しくありません。";
 
-    switch (
-      value.code
-    ) {
-      case "auth/popup-closed-by-user":
-        return "Googleログインをキャンセルしました。";
+    case "auth/invalid-email":
+      return "メールアドレスの形式が正しくありません。";
 
-      case "auth/popup-blocked":
-        return "Googleログイン画面がブロックされました。ポップアップを許可してください。";
+    case "auth/user-disabled":
+      return "このアカウントは利用停止されています。";
 
-      case "auth/unauthorized-domain":
-        return "現在のサイトがFirebase Authenticationの承認済みドメインに登録されていません。";
+    case "auth/popup-closed-by-user":
+      return "Googleログインをキャンセルしました。";
 
-      case "auth/operation-not-allowed":
-        return "FirebaseでGoogleログインが有効になっていません。";
+    case "auth/popup-blocked":
+      return "ログイン画面がブロックされました。ブラウザのポップアップ設定を確認してください。";
 
-      case "auth/network-request-failed":
-        return "ネットワーク通信に失敗しました。";
+    case "auth/network-request-failed":
+      return "ネットワークエラーが発生しました。通信状態を確認してください。";
 
-      default:
-        return (
-          value.message ??
-          "Googleログインに失敗しました。"
-        );
-    }
+    default:
+      if (
+        error instanceof Error
+      ) {
+        return error.message;
+      }
+
+      return "ログインできませんでした。時間をおいてもう一度お試しください。";
   }
-
-  return "Googleログインに失敗しました。";
 }
