@@ -16,216 +16,115 @@ import {
   db,
 } from "@/lib/firebase";
 
+import type {
+  FirstReview,
+  GradingDocument,
+  GradingMark,
+  GradingResult,
+  ReviewStatus,
+  SecondReview,
+} from "@/lib/types";
+
 /* =========================================================
    Types
    ========================================================= */
 
-export type GradingMark =
-  | "○"
-  | "△"
-  | "×";
+export type SaveReviewInput = {
+  answerId: string;
 
-export type ReviewType =
-  | "first"
-  | "second";
+  testId: string;
 
-export type GradingResult = {
+  subjectId: string;
+
+  studentNumber: string;
+
+  reviewerId: string;
+
+  results: GradingResult[];
+
+  internalNote?: string;
+
+  publicAnnotation?: string;
+};
+
+export type GradingChange = {
   questionId: string;
 
-  /*
-   * 問題番号は、元データでは
-   * "1"
-   * "1-1"
-   * "問1"
-   * などもあり得るためstring。
-   */
   questionNumber: string;
 
-  mark: GradingMark;
+  before: number;
 
-  score: number;
+  after: number;
 
-  maxScore: number;
-
-  answerText: string;
-
-  confidence: number;
-
-  reviewRequired: boolean;
-
-  reason?: string;
-
-  rubric?: string;
-};
-
-export type GradingDocument = {
-  id: string;
-
-  results: GradingResult[];
-
-  totalScore: number;
-
-  totalMaxScore: number;
-
-  status:
-    | "pending"
-    | "reviewing"
-    | "completed"
-    | "error"
-    | string;
-
-  reviewRequired: boolean;
-
-  internalNote: string;
-
-  publicAnnotation: string;
-
-  createdAt?: unknown;
-
-  updatedAt?: unknown;
-};
-
-export type FirstReview = {
-  id: string;
-
-  answerId: string;
-
-  testId: string;
-
-  subjectId: string;
-
-  studentNumber: string;
-
-  reviewerId: string;
-
-  results: GradingResult[];
-
-  totalScore: number;
-
-  totalMaxScore: number;
-
-  internalNote: string;
-
-  publicAnnotation: string;
-
-  status:
-    | "reviewing"
-    | "completed"
-    | "returned";
-
-  createdAt?: unknown;
-
-  updatedAt?: unknown;
-};
-
-export type SecondReview = {
-  id: string;
-
-  answerId: string;
-
-  testId: string;
-
-  subjectId: string;
-
-  studentNumber: string;
-
-  reviewerId: string;
-
-  results: GradingResult[];
-
-  totalScore: number;
-
-  totalMaxScore: number;
-
-  disagreement: boolean;
-
-  internalNote: string;
-
-  publicAnnotation: string;
-
-  status:
-    | "reviewing"
-    | "completed"
-    | "returned";
-
-  createdAt?: unknown;
-
-  updatedAt?: unknown;
+  reason: string;
 };
 
 /* =========================================================
-   採点結果取得
+   Get automatic grading result
    ========================================================= */
 
 export async function getGradingResult(
   answerId: string
 ): Promise<GradingDocument | null> {
-  if (
-    !answerId.trim()
-  ) {
-    throw new Error(
-      "answerIdが指定されていません。"
-    );
-  }
-
-  const snapshot =
-    await getDoc(
-      doc(
-        db,
-        "gradingResults",
-        answerId
-      )
-    );
-
-  if (
-    !snapshot.exists()
-  ) {
+  if (!answerId.trim()) {
     return null;
   }
 
-  const data =
-    snapshot.data();
+  const snapshot = await getDoc(
+    doc(
+      db,
+      "gradingResults",
+      answerId
+    )
+  );
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const data = snapshot.data();
 
   return {
-    id:
-      snapshot.id,
+    id: snapshot.id,
+
+    answerId:
+      stringValue(
+        data.answerId
+      ) || answerId,
 
     results:
-      normalizeGradingResults(
+      normalizeResults(
         data.results
       ),
 
     totalScore:
-      toSafeNumber(
+      safeNumber(
         data.totalScore
       ),
 
     totalMaxScore:
-      toSafeNumber(
+      safeNumber(
         data.totalMaxScore
       ),
 
     status:
-      typeof data.status ===
-      "string"
-        ? data.status
-        : "pending",
+      stringValue(
+        data.status
+      ) || "pending",
 
     reviewRequired:
       data.reviewRequired ===
       true,
 
     internalNote:
-      typeof data.internalNote ===
-      "string"
-        ? data.internalNote
-        : "",
+      stringValue(
+        data.internalNote
+      ),
 
     publicAnnotation:
-      typeof data.publicAnnotation ===
-      "string"
-        ? data.publicAnnotation
-        : "",
+      stringValue(
+        data.publicAnnotation
+      ),
 
     createdAt:
       data.createdAt,
@@ -236,59 +135,50 @@ export async function getGradingResult(
 }
 
 /* =========================================================
-   一次確認取得
+   Get first review
    ========================================================= */
 
 export async function getFirstReview(
   answerId: string
 ): Promise<FirstReview | null> {
-  if (
-    !answerId.trim()
-  ) {
-    throw new Error(
-      "answerIdが指定されていません。"
-    );
-  }
-
-  const reviewQuery =
-    query(
-      collection(
-        db,
-        "firstReviews"
-      ),
-
-      where(
-        "answerId",
-        "==",
-        answerId
-      )
-    );
-
-  const snapshot =
-    await getDocs(
-      reviewQuery
-    );
-
-  if (
-    snapshot.empty
-  ) {
+  if (!answerId.trim()) {
     return null;
   }
 
-  const item =
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "firstReviews"
+        ),
+
+        where(
+          "answerId",
+          "==",
+          answerId
+        )
+      )
+    );
+
+  if (snapshot.empty) {
+    return null;
+  }
+
+  const document =
     snapshot.docs[0];
 
   const data =
-    item.data();
+    document.data();
 
   return {
     id:
-      item.id,
+      document.id,
 
     answerId:
       stringValue(
         data.answerId
-      ),
+      ) || answerId,
 
     testId:
       stringValue(
@@ -311,17 +201,17 @@ export async function getFirstReview(
       ),
 
     results:
-      normalizeGradingResults(
+      normalizeResults(
         data.results
       ),
 
     totalScore:
-      toSafeNumber(
+      safeNumber(
         data.totalScore
       ),
 
     totalMaxScore:
-      toSafeNumber(
+      safeNumber(
         data.totalMaxScore
       ),
 
@@ -349,59 +239,50 @@ export async function getFirstReview(
 }
 
 /* =========================================================
-   二次確認取得
+   Get second review
    ========================================================= */
 
 export async function getSecondReview(
   answerId: string
 ): Promise<SecondReview | null> {
-  if (
-    !answerId.trim()
-  ) {
-    throw new Error(
-      "answerIdが指定されていません。"
-    );
-  }
-
-  const reviewQuery =
-    query(
-      collection(
-        db,
-        "secondReviews"
-      ),
-
-      where(
-        "answerId",
-        "==",
-        answerId
-      )
-    );
-
-  const snapshot =
-    await getDocs(
-      reviewQuery
-    );
-
-  if (
-    snapshot.empty
-  ) {
+  if (!answerId.trim()) {
     return null;
   }
 
-  const item =
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "secondReviews"
+        ),
+
+        where(
+          "answerId",
+          "==",
+          answerId
+        )
+      )
+    );
+
+  if (snapshot.empty) {
+    return null;
+  }
+
+  const document =
     snapshot.docs[0];
 
   const data =
-    item.data();
+    document.data();
 
   return {
     id:
-      item.id,
+      document.id,
 
     answerId:
       stringValue(
         data.answerId
-      ),
+      ) || answerId,
 
     testId:
       stringValue(
@@ -424,17 +305,17 @@ export async function getSecondReview(
       ),
 
     results:
-      normalizeGradingResults(
+      normalizeResults(
         data.results
       ),
 
     totalScore:
-      toSafeNumber(
+      safeNumber(
         data.totalScore
       ),
 
     totalMaxScore:
-      toSafeNumber(
+      safeNumber(
         data.totalMaxScore
       ),
 
@@ -466,31 +347,34 @@ export async function getSecondReview(
 }
 
 /* =========================================================
-   一次確認保存
+   Save first review
    ========================================================= */
 
 export async function saveFirstReview(
-  input: {
-    answerId: string;
-
-    testId: string;
-
-    subjectId: string;
-
-    studentNumber: string;
-
-    reviewerId: string;
-
-    results: GradingResult[];
-
-    internalNote?: string;
-
-    publicAnnotation?: string;
-  }
+  input: SaveReviewInput
 ): Promise<string> {
   validateReviewInput(
     input
   );
+
+  const previous =
+    await getFirstReview(
+      input.answerId
+    );
+
+  const reference =
+    previous
+      ? doc(
+          db,
+          "firstReviews",
+          previous.id
+        )
+      : doc(
+          collection(
+            db,
+            "firstReviews"
+          )
+        );
 
   const totalScore =
     calculateTotalScore(
@@ -501,25 +385,6 @@ export async function saveFirstReview(
     calculateTotalMaxScore(
       input.results
     );
-
-  const existing =
-    await getFirstReview(
-      input.answerId
-    );
-
-  const reference =
-    existing
-      ? doc(
-          db,
-          "firstReviews",
-          existing.id
-        )
-      : doc(
-          collection(
-            db,
-            "firstReviews"
-          )
-        );
 
   const batch =
     writeBatch(
@@ -565,7 +430,7 @@ export async function saveFirstReview(
       updatedAt:
         serverTimestamp(),
 
-      ...(existing
+      ...(previous
         ? {}
         : {
             createdAt:
@@ -578,39 +443,39 @@ export async function saveFirstReview(
     }
   );
 
-  await batch.commit();
+  batch.update(
+    doc(
+      db,
+      "answers",
+      input.answerId
+    ),
+    {
+      status:
+        "second_review",
 
-  await updateAnswerAfterFirstReview(
-    input.answerId,
-    totalScore,
-    totalMaxScore
+      totalScore,
+
+      totalMaxScore,
+
+      reviewRequired:
+        false,
+
+      updatedAt:
+        serverTimestamp(),
+    }
   );
+
+  await batch.commit();
 
   return reference.id;
 }
 
 /* =========================================================
-   二次確認保存
+   Save second review
    ========================================================= */
 
 export async function saveSecondReview(
-  input: {
-    answerId: string;
-
-    testId: string;
-
-    subjectId: string;
-
-    studentNumber: string;
-
-    reviewerId: string;
-
-    results: GradingResult[];
-
-    internalNote?: string;
-
-    publicAnnotation?: string;
-  }
+  input: SaveReviewInput
 ): Promise<string> {
   validateReviewInput(
     input
@@ -627,7 +492,26 @@ export async function saveSecondReview(
           firstReview.results,
           input.results
         )
-      : true;
+      : false;
+
+  const previous =
+    await getSecondReview(
+      input.answerId
+    );
+
+  const reference =
+    previous
+      ? doc(
+          db,
+          "secondReviews",
+          previous.id
+        )
+      : doc(
+          collection(
+            db,
+            "secondReviews"
+          )
+        );
 
   const totalScore =
     calculateTotalScore(
@@ -638,25 +522,6 @@ export async function saveSecondReview(
     calculateTotalMaxScore(
       input.results
     );
-
-  const existing =
-    await getSecondReview(
-      input.answerId
-    );
-
-  const reference =
-    existing
-      ? doc(
-          db,
-          "secondReviews",
-          existing.id
-        )
-      : doc(
-          collection(
-            db,
-            "secondReviews"
-          )
-        );
 
   const batch =
     writeBatch(
@@ -704,7 +569,7 @@ export async function saveSecondReview(
       updatedAt:
         serverTimestamp(),
 
-      ...(existing
+      ...(previous
         ? {}
         : {
             createdAt:
@@ -717,71 +582,116 @@ export async function saveSecondReview(
     }
   );
 
-  await batch.commit();
-
-  await updateAnswerAfterSecondReview(
-    input.answerId,
-    totalScore,
-    totalMaxScore,
-    disagreement
-  );
-
-  return reference.id;
-}
-
-/* =========================================================
-   一次確認差し戻し
-   ========================================================= */
-
-export async function returnToFirstReview(
-  answerId: string
-) {
-  const secondReview =
-    await getSecondReview(
-      answerId
-    );
-
-  if (
-    secondReview
-  ) {
-    await updateDoc(
-      doc(
-        db,
-        "secondReviews",
-        secondReview.id
-      ),
-      {
-        status:
-          "returned",
-
-        updatedAt:
-          serverTimestamp(),
-      }
-    );
-  }
-
-  await updateDoc(
+  /*
+   * 一次・二次で相違がある場合は
+   * 採点確定には進めない。
+   */
+  batch.update(
     doc(
       db,
       "answers",
-      answerId
+      input.answerId
     ),
     {
       status:
-        "first_review",
+        disagreement
+          ? "first_review"
+          : "second_review",
+
+      totalScore,
+
+      totalMaxScore,
+
+      reviewRequired:
+        disagreement,
+
+      reviewDisagreement:
+        disagreement,
 
       updatedAt:
         serverTimestamp(),
     }
   );
+
+  await batch.commit();
+
+  return reference.id;
 }
 
 /* =========================================================
-   採点確定
+   Calculate changes
+   ========================================================= */
+
+export function calculateGradingChanges(
+  before: GradingResult[],
+  after: GradingResult[]
+): GradingChange[] {
+  const changes: GradingChange[] =
+    [];
+
+  for (
+    const afterResult of
+      after
+  ) {
+    const beforeResult =
+      before.find(
+        (
+          item
+        ) =>
+          item.questionId ===
+          afterResult.questionId
+      );
+
+    if (
+      !beforeResult
+    ) {
+      continue;
+    }
+
+    const scoreChanged =
+      beforeResult.score !==
+      afterResult.score;
+
+    const markChanged =
+      beforeResult.mark !==
+      afterResult.mark;
+
+    if (
+      !scoreChanged &&
+      !markChanged
+    ) {
+      continue;
+    }
+
+    changes.push({
+      questionId:
+        afterResult.questionId,
+
+      questionNumber:
+        afterResult.questionNumber,
+
+      before:
+        beforeResult.score,
+
+      after:
+        afterResult.score,
+
+      reason:
+        afterResult.reason ??
+        "",
+    });
+  }
+
+  return changes;
+}
+
+/* =========================================================
+   Confirm grading
    ========================================================= */
 
 export async function confirmGrading(
-  answerIds: string[]
+  answerIds: string[],
+  confirmedBy: string
 ) {
   if (
     answerIds.length ===
@@ -792,6 +702,14 @@ export async function confirmGrading(
     );
   }
 
+  if (
+    !confirmedBy.trim()
+  ) {
+    throw new Error(
+      "確定者が指定されていません。"
+    );
+  }
+
   const uniqueIds =
     Array.from(
       new Set(
@@ -799,16 +717,23 @@ export async function confirmGrading(
       )
     );
 
+  /*
+   * 全答案を事前確認。
+   */
   for (
     const answerId of
       uniqueIds
   ) {
-    await validateAnswerForConfirmation(
+    await validateConfirmation(
       answerId
     );
   }
 
-  const BATCH_SIZE =
+  /*
+   * Firestore Batchの上限を
+   * 超えないよう400件単位。
+   */
+  const batchSize =
     400;
 
   for (
@@ -816,23 +741,23 @@ export async function confirmGrading(
     start <
     uniqueIds.length;
     start +=
-      BATCH_SIZE
+      batchSize
   ) {
     const batch =
       writeBatch(
         db
       );
 
-    const chunk =
+    const current =
       uniqueIds.slice(
         start,
         start +
-          BATCH_SIZE
+          batchSize
       );
 
     for (
       const answerId of
-        chunk
+        current
     ) {
       batch.update(
         doc(
@@ -847,6 +772,8 @@ export async function confirmGrading(
           confirmedAt:
             serverTimestamp(),
 
+          confirmedBy,
+
           updatedAt:
             serverTimestamp(),
         }
@@ -858,25 +785,12 @@ export async function confirmGrading(
 }
 
 /* =========================================================
-   採点確定前チェック
+   Validate confirmation
    ========================================================= */
 
-async function validateAnswerForConfirmation(
+async function validateConfirmation(
   answerId: string
 ) {
-  const answer =
-    await getGradingResult(
-      answerId
-    );
-
-  if (
-    !answer
-  ) {
-    throw new Error(
-      `採点結果がありません: ${answerId}`
-    );
-  }
-
   const first =
     await getFirstReview(
       answerId
@@ -904,13 +818,25 @@ async function validateAnswerForConfirmation(
   }
 
   if (
-    second.disagreement
+    second.status !==
+    "completed"
   ) {
     throw new Error(
-      `一次・二次確認の判定が一致していません: ${answerId}`
+      `二次確認が完了していません: ${answerId}`
     );
   }
 
+  if (
+    second.disagreement
+  ) {
+    throw new Error(
+      `一次確認と二次確認の内容が一致していません: ${answerId}`
+    );
+  }
+
+  /*
+   * 得点の範囲チェック。
+   */
   for (
     const result of
       second.results
@@ -922,14 +848,14 @@ async function validateAnswerForConfirmation(
         result.maxScore
     ) {
       throw new Error(
-        `問題 ${result.questionNumber} の得点が不正です: ${answerId}`
+        `問題${result.questionNumber}の得点が不正です。`
       );
     }
   }
 }
 
 /* =========================================================
-   採点公開
+   Publish
    ========================================================= */
 
 export async function publishGrading(
@@ -939,9 +865,7 @@ export async function publishGrading(
     answerIds.length ===
     0
   ) {
-    throw new Error(
-      "公開する答案がありません。"
-    );
+    return;
   }
 
   const uniqueIds =
@@ -951,25 +875,7 @@ export async function publishGrading(
       )
     );
 
-  for (
-    const answerId of
-      uniqueIds
-  ) {
-    const answer =
-      await getGradingResult(
-        answerId
-      );
-
-    if (
-      !answer
-    ) {
-      throw new Error(
-        `採点結果がありません: ${answerId}`
-      );
-    }
-  }
-
-  const BATCH_SIZE =
+  const batchSize =
     400;
 
   for (
@@ -977,23 +883,23 @@ export async function publishGrading(
     start <
     uniqueIds.length;
     start +=
-      BATCH_SIZE
+      batchSize
   ) {
     const batch =
       writeBatch(
         db
       );
 
-    const chunk =
+    const current =
       uniqueIds.slice(
         start,
         start +
-          BATCH_SIZE
+          batchSize
       );
 
     for (
       const answerId of
-        chunk
+        current
     ) {
       batch.update(
         doc(
@@ -1019,10 +925,93 @@ export async function publishGrading(
 }
 
 /* =========================================================
-   Score
+   Return to first review
    ========================================================= */
 
-function calculateTotalScore(
+export async function returnToFirstReview(
+  answerId: string
+) {
+  const second =
+    await getSecondReview(
+      answerId
+    );
+
+  const batch =
+    writeBatch(
+      db
+    );
+
+  if (
+    second
+  ) {
+    batch.update(
+      doc(
+        db,
+        "secondReviews",
+        second.id
+      ),
+      {
+        status:
+          "returned",
+
+        updatedAt:
+          serverTimestamp(),
+      }
+    );
+  }
+
+  batch.update(
+    doc(
+      db,
+      "answers",
+      answerId
+    ),
+    {
+      status:
+        "first_review",
+
+      reviewRequired:
+        true,
+
+      updatedAt:
+        serverTimestamp(),
+    }
+  );
+
+  await batch.commit();
+}
+
+/* =========================================================
+   Return to second review
+   ========================================================= */
+
+export async function returnToSecondReview(
+  answerId: string
+) {
+  await updateDoc(
+    doc(
+      db,
+      "answers",
+      answerId
+    ),
+    {
+      status:
+        "second_review",
+
+      reviewRequired:
+        true,
+
+      updatedAt:
+        serverTimestamp(),
+    }
+  );
+}
+
+/* =========================================================
+   Calculate total
+   ========================================================= */
+
+export function calculateTotalScore(
   results: GradingResult[]
 ) {
   return results.reduce(
@@ -1039,7 +1028,7 @@ function calculateTotalScore(
   );
 }
 
-function calculateTotalMaxScore(
+export function calculateTotalMaxScore(
   results: GradingResult[]
 ) {
   return results.reduce(
@@ -1050,7 +1039,7 @@ function calculateTotalMaxScore(
       total +
       Math.max(
         0,
-        toSafeNumber(
+        safeNumber(
           result.maxScore
         )
       ),
@@ -1058,37 +1047,11 @@ function calculateTotalMaxScore(
   );
 }
 
-function normalizeScore(
-  score: number,
-  maxScore: number
-) {
-  const safeScore =
-    toSafeNumber(
-      score
-    );
-
-  const safeMax =
-    Math.max(
-      0,
-      toSafeNumber(
-        maxScore
-      )
-    );
-
-  return Math.min(
-    safeMax,
-    Math.max(
-      0,
-      safeScore
-    )
-  );
-}
-
 /* =========================================================
-   一次・二次の差異
+   Disagreement
    ========================================================= */
 
-function hasDisagreement(
+export function hasDisagreement(
   first: GradingResult[],
   second: GradingResult[]
 ) {
@@ -1137,63 +1100,91 @@ function hasDisagreement(
 }
 
 /* =========================================================
-   答案ステータス
+   Normalize results
    ========================================================= */
 
-async function updateAnswerAfterFirstReview(
-  answerId: string,
-  score: number,
-  maxScore: number
-) {
-  await updateDoc(
-    doc(
-      db,
-      "answers",
-      answerId
-    ),
-    {
-      status:
-        "first_review",
+function normalizeResults(
+  value: unknown
+): GradingResult[] {
+  if (
+    !Array.isArray(
+      value
+    )
+  ) {
+    return [];
+  }
 
-      firstReviewScore:
-        score,
+  return value.map(
+    (
+      value,
+      index
+    ) => {
+      const data =
+        value &&
+        typeof value ===
+          "object"
+          ? value as Record<
+              string,
+              unknown
+            >
+          : {};
 
-      firstReviewMaxScore:
-        maxScore,
+      return {
+        questionId:
+          stringValue(
+            data.questionId
+          ) ||
+          `question-${index + 1}`,
 
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
-}
+        questionNumber:
+          stringValue(
+            data.questionNumber
+          ) ||
+          String(
+            index + 1
+          ),
 
-async function updateAnswerAfterSecondReview(
-  answerId: string,
-  score: number,
-  maxScore: number,
-  disagreement: boolean
-) {
-  await updateDoc(
-    doc(
-      db,
-      "answers",
-      answerId
-    ),
-    {
-      status:
-        "second_review",
+        answerText:
+          stringValue(
+            data.answerText
+          ),
 
-      secondReviewScore:
-        score,
+        mark:
+          normalizeMark(
+            data.mark
+          ),
 
-      secondReviewMaxScore:
-        maxScore,
+        score:
+          safeNumber(
+            data.score
+          ),
 
-      reviewDisagreement:
-        disagreement,
+        maxScore:
+          safeNumber(
+            data.maxScore
+          ),
 
-      updatedAt:
-        serverTimestamp(),
+        confidence:
+          safeNumber(
+            data.confidence
+          ),
+
+        reviewRequired:
+          data.reviewRequired ===
+          true,
+
+        reason:
+          typeof data.reason ===
+          "string"
+            ? data.reason
+            : undefined,
+
+        rubric:
+          typeof data.rubric ===
+          "string"
+            ? data.rubric
+            : undefined,
+      };
     }
   );
 }
@@ -1203,19 +1194,7 @@ async function updateAnswerAfterSecondReview(
    ========================================================= */
 
 function validateReviewInput(
-  input: {
-    answerId: string;
-
-    testId: string;
-
-    subjectId: string;
-
-    studentNumber: string;
-
-    reviewerId: string;
-
-    results: GradingResult[];
-  }
+  input: SaveReviewInput
 ) {
   if (
     !input.answerId.trim()
@@ -1242,6 +1221,14 @@ function validateReviewInput(
   }
 
   if (
+    !input.reviewerId.trim()
+  ) {
+    throw new Error(
+      "確認者IDがありません。"
+    );
+  }
+
+  if (
     !/^\d{6}$/.test(
       input.studentNumber
     )
@@ -1252,20 +1239,12 @@ function validateReviewInput(
   }
 
   if (
-    !input.reviewerId.trim()
-  ) {
-    throw new Error(
-      "採点者IDがありません。"
-    );
-  }
-
-  if (
     !Array.isArray(
       input.results
     )
   ) {
     throw new Error(
-      "採点結果が不正です。"
+      "採点結果がありません。"
     );
   }
 
@@ -1273,131 +1252,30 @@ function validateReviewInput(
     const result of
       input.results
   ) {
-    const score =
-      toSafeNumber(
-        result.score
-      );
-
-    const maxScore =
-      toSafeNumber(
-        result.maxScore
-      );
-
     if (
-      score <
+      result.score <
         0 ||
-      score >
-        maxScore
+      result.score >
+        result.maxScore
     ) {
       throw new Error(
-        `問題 ${result.questionNumber} の得点が不正です。`
+        `問題${result.questionNumber}の得点が不正です。`
       );
     }
   }
 }
 
 /* =========================================================
-   Result normalization
+   Helpers
    ========================================================= */
-
-function normalizeGradingResults(
-  value: unknown
-): GradingResult[] {
-  if (
-    !Array.isArray(
-      value
-    )
-  ) {
-    return [];
-  }
-
-  return value.map(
-    (
-      item,
-      index
-    ) => {
-      const data =
-        item &&
-        typeof item ===
-          "object"
-          ? (
-              item as Record<
-                string,
-                unknown
-              >
-            )
-          : {};
-
-      return {
-        questionId:
-          stringValue(
-            data.questionId
-          ) ||
-          `question-${index + 1}`,
-
-        questionNumber:
-          stringValue(
-            data.questionNumber
-          ) ||
-          String(
-            index + 1
-          ),
-
-        mark:
-          normalizeMark(
-            data.mark
-          ),
-
-        score:
-          toSafeNumber(
-            data.score
-          ),
-
-        maxScore:
-          toSafeNumber(
-            data.maxScore
-          ),
-
-        answerText:
-          stringValue(
-            data.answerText
-          ),
-
-        confidence:
-          toSafeNumber(
-            data.confidence
-          ),
-
-        reviewRequired:
-          data.reviewRequired ===
-          true,
-
-        reason:
-          typeof data.reason ===
-          "string"
-            ? data.reason
-            : undefined,
-
-        rubric:
-          typeof data.rubric ===
-          "string"
-            ? data.rubric
-            : undefined,
-      };
-    }
-  );
-}
 
 function normalizeMark(
   value: unknown
 ): GradingMark {
   if (
-    value ===
-      "○" ||
-    value ===
-      "△" ||
-    value ===
-      "×"
+    value === "○" ||
+    value === "△" ||
+    value === "×"
   ) {
     return value;
   }
@@ -1407,10 +1285,7 @@ function normalizeMark(
 
 function normalizeReviewStatus(
   value: unknown
-):
-  | "reviewing"
-  | "completed"
-  | "returned" {
+): ReviewStatus {
   if (
     value ===
       "reviewing" ||
@@ -1425,9 +1300,28 @@ function normalizeReviewStatus(
   return "reviewing";
 }
 
-/* =========================================================
-   Primitive helpers
-   ========================================================= */
+function normalizeScore(
+  score: number,
+  maxScore: number
+) {
+  const safeMax =
+    Math.max(
+      0,
+      safeNumber(
+        maxScore
+      )
+    );
+
+  return Math.min(
+    safeMax,
+    Math.max(
+      0,
+      safeNumber(
+        score
+      )
+    )
+  );
+}
 
 function stringValue(
   value: unknown
@@ -1438,7 +1332,7 @@ function stringValue(
     : "";
 }
 
-function toSafeNumber(
+function safeNumber(
   value: unknown
 ) {
   const number =
