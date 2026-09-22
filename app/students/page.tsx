@@ -469,6 +469,65 @@ export default function StudentsPage() {
   }
 
   /* =======================================================
+     CSV template download
+     ======================================================= */
+
+  function downloadCSVTemplate() {
+    const csv = [
+      [
+        "生徒番号",
+        "氏名",
+        "学年",
+        "クラス",
+        "校舎ID",
+        "校舎名",
+      ],
+      [
+        "123456",
+        "山田太郎",
+        "中学2年",
+        "A",
+        "school001",
+        "本校",
+      ],
+    ]
+      .map(
+        (row) =>
+          row
+            .map(
+              (value) =>
+                csvEscape(value)
+            )
+            .join(",")
+      )
+      .join("\r\n");
+
+    const blob =
+      new Blob(
+        ["\\uFEFF" + csv],
+        {
+          type:
+            "text/csv;charset=utf-8;",
+        }
+      );
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const anchor =
+      document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = "生徒登録CSVテンプレート.csv";
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    URL.revokeObjectURL(url);
+  }
+
+  /* =======================================================
      CSV select
      ======================================================= */
 
@@ -1324,6 +1383,16 @@ export default function StudentsPage() {
                   handleCSVChange
                 }
               />
+
+              <button
+                type="button"
+                className="button"
+                onClick={
+                  downloadCSVTemplate
+                }
+              >
+                CSVテンプレート
+              </button>
 
               <button
                 type="button"
