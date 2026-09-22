@@ -9,16 +9,6 @@ import {
 import Link from "next/link";
 
 import {
-  collection,
-  doc,
-  getDocs,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-
-import {
   auth,
   db,
 } from "@/lib/firebase";
@@ -34,6 +24,14 @@ import {
   testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
+
+import {
+  collection,
+  doc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
 
 import type {
   Retest,
@@ -62,84 +60,109 @@ export default function RetestsPage() {
   const [
     role,
     setRole,
-  ] =
-    useState<UserRole | null>(
-      null
-    );
+  ] = useState<UserRole | null>(
+    null
+  );
 
   const [
     retests,
     setRetests,
-  ] =
-    useState<RetestRow[]>(
-      []
-    );
+  ] = useState<RetestRow[]>(
+    []
+  );
 
   const [
     students,
     setStudents,
-  ] =
-    useState<Student[]>(
-      []
-    );
+  ] = useState<Student[]>(
+    []
+  );
 
   const [
     tests,
     setTests,
-  ] =
-    useState<Test[]>(
-      []
-    );
+  ] = useState<Test[]>(
+    []
+  );
 
   const [
     loading,
     setLoading,
-  ] =
-    useState(true);
+  ] = useState(true);
+
+  const [
+    saving,
+    setSaving,
+  ] = useState(false);
 
   const [
     error,
     setError,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     message,
     setMessage,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     search,
     setSearch,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     statusFilter,
     setStatusFilter,
-  ] =
-    useState<
-      "all" | RetestStatus
-    >(
-      "all"
-    );
+  ] = useState<
+    "all" | RetestStatus
+  >(
+    "all"
+  );
 
   const [
     selectedId,
     setSelectedId,
-  ] =
-    useState<
-      string | null
-    >(
-      null
-    );
+  ] = useState<
+    string | null
+  >(null);
+
+  /* =======================================================
+     Create form
+     ======================================================= */
+
+  const [
+    showCreate,
+    setShowCreate,
+  ] = useState(false);
+
+  const [
+    studentId,
+    setStudentId,
+  ] = useState("");
+
+  const [
+    originalTestId,
+    setOriginalTestId,
+  ] = useState("");
+
+  const [
+    scheduledDate,
+    setScheduledDate,
+  ] = useState("");
+
+  /* =======================================================
+     Edit score
+     ======================================================= */
 
   const [
     score,
     setScore,
-  ] =
-    useState("");
+  ] = useState("");
+
+  const [
+    editNote,
+    setEditNote,
+  ] = useState("");
 
   /* =======================================================
      Load
@@ -152,6 +175,7 @@ export default function RetestsPage() {
   async function loadPage() {
     try {
       setLoading(true);
+
       setError("");
 
       const user =
@@ -170,7 +194,7 @@ export default function RetestsPage() {
         "生徒"
       ) {
         throw new Error(
-          "追試管理は職員のみ利用できます。"
+          "追試管理を利用する権限がありません。"
         );
       }
 
@@ -187,23 +211,22 @@ export default function RetestsPage() {
       );
 
       const scopeUser:
-        FirestoreUser =
-        {
-          uid:
-            user.uid,
+        FirestoreUser = {
+        uid:
+          user.uid,
 
-          organizationId:
-            user.organizationId,
+        organizationId:
+          user.organizationId,
 
-          role:
-            user.role,
+        role:
+          user.role,
 
-          schoolIds:
-            user.schoolIds,
+        schoolIds:
+          user.schoolIds,
 
-          studentId:
-            user.studentId,
-        };
+        studentId:
+          user.studentId,
+      };
 
       const [
         retestDocuments,
@@ -253,17 +276,32 @@ export default function RetestsPage() {
         );
 
       const loadedRetests =
-        retestDocuments.map(
-          (
-            item
-          ) =>
-            normalizeRetest(
-              item.id,
-              item.data,
-              loadedStudents,
-              loadedTests
-            )
-        );
+        retestDocuments
+          .map(
+            (
+              item
+            ) =>
+              normalizeRetest(
+                item.id,
+                item.data,
+                loadedStudents,
+                loadedTests
+              )
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              getTime(
+                b.updatedAt ??
+                  b.createdAt
+              ) -
+              getTime(
+                a.updatedAt ??
+                  a.createdAt
+              )
+          );
 
       setStudents(
         loadedStudents
@@ -285,9 +323,9 @@ export default function RetestsPage() {
             current &&
             loadedRetests.some(
               (
-                retest
+                item
               ) =>
-                retest.id ===
+                item.id ===
                 current
             )
           ) {
@@ -304,7 +342,7 @@ export default function RetestsPage() {
       error
     ) {
       console.error(
-        "Retest page error:",
+        "Retest load error:",
         error
       );
 
@@ -385,41 +423,335 @@ export default function RetestsPage() {
     null;
 
   /* =======================================================
-     Select
+     Statistics
      ======================================================= */
 
-  useEffect(() => {
-    if (
-      selected
-    ) {
-      setScore(
-        selected.manualScore ===
-          null
-          ? ""
-          : String(
-              selected.manualScore
-            )
-      );
-    } else {
-      setScore("");
-    }
-  }, [
-    selectedId,
-  ]);
+  const untestedCount =
+    retests.filter(
+      (
+        item
+      ) =>
+        item.status ===
+        "未受験"
+    ).length;
+
+  const waitingCount =
+    retests.filter(
+      (
+        item
+      ) =>
+        item.status ===
+        "採点待ち"
+    ).length;
+
+  const gradedCount =
+    retests.filter(
+      (
+        item
+      ) =>
+        item.status ===
+        "採点済み"
+    ).length;
+
+  const confirmedCount =
+    retests.filter(
+      (
+        item
+      ) =>
+        item.status ===
+        "確定"
+    ).length;
 
   /* =======================================================
-     Manual score
+     Create
      ======================================================= */
 
-  async function saveScore() {
+  async function createRetest() {
+    if (saving) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      setError("");
+
+      setMessage("");
+
+      const user =
+        await getAppUser();
+
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者"
+      ) {
+        throw new Error(
+          "追試を作成する権限がありません。"
+        );
+      }
+
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織がありません。"
+        );
+      }
+
+      if (!studentId) {
+        throw new Error(
+          "生徒を選択してください。"
+        );
+      }
+
+      if (!originalTestId) {
+        throw new Error(
+          "元テストを選択してください。"
+        );
+      }
+
+      const student =
+        students.find(
+          (
+            item
+          ) =>
+            item.id ===
+            studentId
+        );
+
+      if (!student) {
+        throw new Error(
+          "生徒が見つかりません。"
+        );
+      }
+
+      if (
+        user.role ===
+        "校舎管理者" &&
+        !user.schoolIds.includes(
+          student.schoolId
+        )
+      ) {
+        throw new Error(
+          "所属校舎外の生徒には追試を作成できません。"
+        );
+      }
+
+      const originalTest =
+        tests.find(
+          (
+            item
+          ) =>
+            item.id ===
+              originalTestId ||
+            item.testId ===
+              originalTestId
+        );
+
+      if (!originalTest) {
+        throw new Error(
+          "元テストが見つかりません。"
+        );
+      }
+
+      /*
+       * 追試テストを新規作成。
+       *
+       * 元テストの設定を引き継ぐが、
+       * isRetest=trueにする。
+       */
+      const retestTestRef =
+        doc(
+          collection(
+            db,
+            "tests"
+          )
+        );
+
+      await setDoc(
+        retestTestRef,
+        {
+          organizationId:
+            user.organizationId,
+
+          schoolId:
+            student.schoolId,
+
+          testId:
+            retestTestRef.id,
+
+          name:
+            `${originalTest.name}（追試）`,
+
+          subject:
+            originalTest.subject,
+
+          grade:
+            originalTest.grade,
+
+          className:
+            student.className,
+
+          examDate:
+            scheduledDate,
+
+          totalScore:
+            originalTest.totalScore,
+
+          active:
+            true,
+
+          isRetest:
+            true,
+
+          originalTestId:
+            originalTest.id,
+
+          /*
+           * 追試は自動採点しない。
+           */
+          automaticGrading:
+            false,
+
+          createdBy:
+            user.uid,
+
+          createdAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      /*
+       * Retestレコード。
+       */
+      const retestRef =
+        doc(
+          collection(
+            db,
+            "retests"
+          )
+        );
+
+      await setDoc(
+        retestRef,
+        {
+          organizationId:
+            user.organizationId,
+
+          schoolId:
+            student.schoolId,
+
+          originalTestId:
+            originalTest.id,
+
+          studentId:
+            student.id,
+
+          studentNumber:
+            student.studentNumber,
+
+          retestTestId:
+            retestTestRef.id,
+
+          scheduledDate:
+            scheduledDate,
+
+          status:
+            "未受験",
+
+          manualScore:
+            null,
+
+          manualMaxScore:
+            originalTest.totalScore,
+
+          finalized:
+            false,
+
+          appliedToResult:
+            false,
+
+          createdBy:
+            user.uid,
+
+          createdAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      /*
+       * 追試テストの問題は、
+       * 元テストの問題をコピーする必要がある。
+       *
+       * この画面ではテスト本体だけを作り、
+       * 問題コピーは後続処理で行えるよう
+       * originalTestIdを保持する。
+       */
+
+      setMessage(
+        "追試を作成しました。"
+      );
+
+      setShowCreate(
+        false
+      );
+
+      setStudentId("");
+
+      setOriginalTestId("");
+
+      setScheduledDate("");
+
+      await loadPage();
+    } catch (
+      error
+    ) {
+      console.error(
+        "Create retest error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "追試を作成できませんでした。"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /* =======================================================
+     Save manual score
+     ======================================================= */
+
+  async function saveManualScore() {
     if (
-      !selected
+      !selected ||
+      saving
     ) {
       return;
     }
 
     try {
+      setSaving(true);
+
       setError("");
+
       setMessage("");
 
       const user =
@@ -440,6 +772,15 @@ export default function RetestsPage() {
         );
       }
 
+      if (
+        selected.status ===
+        "確定"
+      ) {
+        throw new Error(
+          "確定済みの追試は変更できません。"
+        );
+      }
+
       const numericScore =
         Number(
           score
@@ -451,7 +792,7 @@ export default function RetestsPage() {
         )
       ) {
         throw new Error(
-          "点数を入力してください。"
+          "得点を入力してください。"
         );
       }
 
@@ -462,7 +803,7 @@ export default function RetestsPage() {
           selected.manualMaxScore
       ) {
         throw new Error(
-          `点数は0〜${selected.manualMaxScore}の範囲で入力してください。`
+          `得点は0〜${selected.manualMaxScore}点で入力してください。`
         );
       }
 
@@ -479,29 +820,41 @@ export default function RetestsPage() {
           status:
             "採点済み",
 
+          finalized:
+            false,
+
           updatedAt:
             serverTimestamp(),
+
+          internalNote:
+            editNote.trim(),
         }
       );
 
       setMessage(
-        "追試の採点結果を保存しました。"
+        "追試の手動採点結果を保存しました。"
       );
+
+      setScore("");
+
+      setEditNote("");
 
       await loadPage();
     } catch (
       error
     ) {
       console.error(
-        "Retest scoring error:",
+        "Retest score error:",
         error
       );
 
       setError(
         error instanceof Error
           ? error.message
-          : "追試の採点に失敗しました。"
+          : "追試の採点結果を保存できませんでした。"
       );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -511,13 +864,17 @@ export default function RetestsPage() {
 
   async function finalizeRetest() {
     if (
-      !selected
+      !selected ||
+      saving
     ) {
       return;
     }
 
     try {
+      setSaving(true);
+
       setError("");
+
       setMessage("");
 
       const user =
@@ -530,11 +887,22 @@ export default function RetestsPage() {
       }
 
       if (
-        user.role ===
-        "生徒"
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者"
       ) {
         throw new Error(
           "追試を確定する権限がありません。"
+        );
+      }
+
+      if (
+        selected.status !==
+        "採点済み"
+      ) {
+        throw new Error(
+          "採点済みの追試だけ確定できます。"
         );
       }
 
@@ -543,8 +911,17 @@ export default function RetestsPage() {
         null
       ) {
         throw new Error(
-          "先に手採点を完了してください。"
+          "得点がありません。"
         );
+      }
+
+      const confirmed =
+        window.confirm(
+          "この追試の採点結果を確定しますか？"
+        );
+
+      if (!confirmed) {
+        return;
       }
 
       await updateDoc(
@@ -559,9 +936,6 @@ export default function RetestsPage() {
 
           finalized:
             true,
-
-          appliedToResult:
-            false,
 
           updatedAt:
             serverTimestamp(),
@@ -586,61 +960,217 @@ export default function RetestsPage() {
           ? error.message
           : "追試を確定できませんでした。"
       );
+    } finally {
+      setSaving(false);
     }
   }
 
   /* =======================================================
-     Summary
+     Apply to result
      ======================================================= */
 
-  const waiting =
-    retests.filter(
-      (
-        retest
-      ) =>
-        retest.status ===
-        "未受験"
-    ).length;
+  async function applyRetestResult() {
+    if (
+      !selected ||
+      saving
+    ) {
+      return;
+    }
 
-  const scoring =
-    retests.filter(
-      (
-        retest
-      ) =>
-        retest.status ===
-        "採点待ち"
-    ).length;
+    try {
+      setSaving(true);
 
-  const scored =
-    retests.filter(
-      (
-        retest
-      ) =>
-        retest.status ===
-        "採点済み"
-    ).length;
+      setError("");
 
-  const finalized =
-    retests.filter(
-      (
-        retest
-      ) =>
-        retest.status ===
+      setMessage("");
+
+      const user =
+        await getAppUser();
+
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者"
+      ) {
+        throw new Error(
+          "成績反映を操作する権限がありません。"
+        );
+      }
+
+      if (
+        selected.status !==
         "確定"
-    ).length;
+      ) {
+        throw new Error(
+          "確定済みの追試だけ成績へ反映できます。"
+        );
+      }
+
+      if (
+        selected.appliedToResult
+      ) {
+        throw new Error(
+          "この追試はすでに成績へ反映されています。"
+        );
+      }
+
+      if (
+        selected.manualScore ===
+        null
+      ) {
+        throw new Error(
+          "追試得点がありません。"
+        );
+      }
+
+      /*
+       * ここでは通常成績を上書きしない。
+       *
+       * 追試結果として別レコードを作成。
+       */
+      const resultRef =
+        doc(
+          collection(
+            db,
+            "results"
+          )
+        );
+
+      const test =
+        tests.find(
+          (
+            item
+          ) =>
+            item.id ===
+              selected.retestTestId ||
+            item.testId ===
+              selected.retestTestId
+        );
+
+      await setDoc(
+        resultRef,
+        {
+          organizationId:
+            selected.organizationId,
+
+          schoolId:
+            selected.schoolId,
+
+          answerId:
+            null,
+
+          retestId:
+            selected.id,
+
+          studentId:
+            selected.studentId,
+
+          studentNumber:
+            selected.studentNumber,
+
+          testId:
+            selected.retestTestId,
+
+          testName:
+            test?.name ??
+            selected.retestTestName,
+
+          subject:
+            test?.subject ??
+            "",
+
+          score:
+            selected.manualScore,
+
+          maxScore:
+            selected.manualMaxScore,
+
+          percentage:
+            selected.manualMaxScore >
+            0
+              ? selected.manualScore /
+                  selected.manualMaxScore *
+                100
+              : 0,
+
+          average:
+            null,
+
+          deviationScore:
+            null,
+
+          rank:
+            null,
+
+          population:
+            null,
+
+          source:
+            "追試",
+
+          createdAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      await updateDoc(
+        doc(
+          db,
+          "retests",
+          selected.id
+        ),
+        {
+          appliedToResult:
+            true,
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        "追試結果を成績へ反映しました。"
+      );
+
+      await loadPage();
+    } catch (
+      error
+    ) {
+      console.error(
+        "Apply retest result error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "追試結果を成績へ反映できませんでした。"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   /* =======================================================
      Loading
      ======================================================= */
 
-  if (
-    loading
-  ) {
+  if (loading) {
     return (
       <main className="page">
         <section className="content">
           <h1>
-            追試
+            追試管理
           </h1>
 
           <p>
@@ -659,33 +1189,54 @@ export default function RetestsPage() {
     <main className="page">
       <section className="content">
 
+        {/* ==================================================
+            Header
+            ================================================== */}
+
         <header className="pageHeader">
           <div>
             <h1>
-              追試
+              追試管理
             </h1>
 
             <p className="muted">
-              追試は自動採点せず、講師が手採点します。
+              通常テストとは分離して追試を管理します。
             </p>
           </div>
 
-          <Link
-            href="/results/teacher"
-            className="button"
-          >
-            成績
-          </Link>
+          {(role ===
+            "本部管理者" ||
+            role ===
+              "校舎管理者") && (
+            <button
+              type="button"
+              className="button primary"
+              onClick={() =>
+                setShowCreate(
+                  (
+                    current
+                  ) =>
+                    !current
+                )
+              }
+            >
+              {showCreate
+                ? "作成画面を閉じる"
+                : "追試を作成"}
+            </button>
+          )}
         </header>
+
+        {/* ==================================================
+            Messages
+            ================================================== */}
 
         {error && (
           <div
             className="errorMessage"
             role="alert"
           >
-            {
-              error
-            }
+            {error}
           </div>
         )}
 
@@ -694,14 +1245,12 @@ export default function RetestsPage() {
             className="successMessage"
             role="status"
           >
-            {
-              message
-            }
+            {message}
           </div>
         )}
 
         {/* ==================================================
-            Summary
+            Statistics
             ================================================== */}
 
         <div
@@ -713,53 +1262,309 @@ export default function RetestsPage() {
               "repeat(4, minmax(0, 1fr))",
 
             gap:
-              12,
+              10,
 
             marginBottom:
-              18,
+              16,
           }}
         >
-          <SummaryCard
+          <StatCard
             label="未受験"
             value={
-              waiting
+              untestedCount
             }
           />
 
-          <SummaryCard
+          <StatCard
             label="採点待ち"
             value={
-              scoring
+              waitingCount
             }
           />
 
-          <SummaryCard
+          <StatCard
             label="採点済み"
             value={
-              scored
+              gradedCount
             }
           />
 
-          <SummaryCard
+          <StatCard
             label="確定"
             value={
-              finalized
+              confirmedCount
             }
           />
         </div>
 
         {/* ==================================================
-            Filters
+            Create
             ================================================== */}
 
-        <section className="card">
+        {showCreate && (
+          <section className="card">
+            <h2>
+              追試作成
+            </h2>
+
+            <p
+              className="muted"
+              style={{
+                fontSize:
+                  12,
+              }}
+            >
+              追試は元テストを基準に作成され、自動採点は行いません。
+            </p>
+
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  "1fr 1fr 180px",
+
+                gap:
+                  10,
+
+                marginTop:
+                  14,
+              }}
+            >
+              <label>
+                <span
+                  style={{
+                    display:
+                      "block",
+
+                    marginBottom:
+                      5,
+
+                    fontSize:
+                      11,
+
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  生徒
+                </span>
+
+                <select
+                  value={
+                    studentId
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setStudentId(
+                      event.target
+                        .value
+                    )
+                  }
+                  style={{
+                    width:
+                      "100%",
+                  }}
+                >
+                  <option value="">
+                    生徒を選択
+                  </option>
+
+                  {students
+                    .filter(
+                      (
+                        student
+                      ) =>
+                        student.active
+                    )
+                    .map(
+                      (
+                        student
+                      ) => (
+                        <option
+                          key={
+                            student.id
+                          }
+                          value={
+                            student.id
+                          }
+                        >
+                          {
+                            student.studentNumber
+                          }
+                          {" - "}
+                          {
+                            student.name
+                          }
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                <span
+                  style={{
+                    display:
+                      "block",
+
+                    marginBottom:
+                      5,
+
+                    fontSize:
+                      11,
+
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  元テスト
+                </span>
+
+                <select
+                  value={
+                    originalTestId
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setOriginalTestId(
+                      event.target
+                        .value
+                    )
+                  }
+                  style={{
+                    width:
+                      "100%",
+                  }}
+                >
+                  <option value="">
+                    元テストを選択
+                  </option>
+
+                  {tests
+                    .filter(
+                      (
+                        test
+                      ) =>
+                        test.active &&
+                        !test.isRetest
+                    )
+                    .map(
+                      (
+                        test
+                      ) => (
+                        <option
+                          key={
+                            test.id
+                          }
+                          value={
+                            test.id
+                          }
+                        >
+                          {
+                            test.name
+                          }
+                          {" / "}
+                          {
+                            test.subject
+                          }
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                <span
+                  style={{
+                    display:
+                      "block",
+
+                    marginBottom:
+                      5,
+
+                    fontSize:
+                      11,
+
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  予定日
+                </span>
+
+                <input
+                  type="date"
+                  value={
+                    scheduledDate
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setScheduledDate(
+                      event.target
+                        .value
+                    )
+                  }
+                  style={{
+                    width:
+                      "100%",
+                  }}
+                />
+              </label>
+            </div>
+
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "flex-end",
+
+                marginTop:
+                  14,
+              }}
+            >
+              <button
+                type="button"
+                className="button primary"
+                disabled={
+                  saving
+                }
+                onClick={
+                  createRetest
+                }
+              >
+                {saving
+                  ? "作成中..."
+                  : "追試を作成"}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ==================================================
+            Filter
+            ================================================== */}
+
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
           <div
             style={{
               display:
                 "grid",
 
               gridTemplateColumns:
-                "1fr 220px",
+                "1fr 200px",
 
               gap:
                 10,
@@ -777,7 +1582,7 @@ export default function RetestsPage() {
                     .value
                 )
               }
-              placeholder="生徒番号・氏名・テスト名"
+              placeholder="生徒番号・氏名・元テスト・追試テスト"
             />
 
             <select
@@ -828,7 +1633,7 @@ export default function RetestsPage() {
               "grid",
 
             gridTemplateColumns:
-              "minmax(0, 1.1fr) minmax(360px, .9fr)",
+              "minmax(360px, 1fr) minmax(400px, 1fr)",
 
             gap:
               18,
@@ -840,220 +1645,400 @@ export default function RetestsPage() {
               "start",
           }}
         >
-          {/* List */}
+
+          {/* ================================================
+              List
+              ================================================ */}
 
           <section className="card">
-            <h2>
-              追試一覧
-            </h2>
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                marginBottom:
+                  12,
+              }}
+            >
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                追試一覧
+              </h2>
+
+              <span
+                className="muted"
+                style={{
+                  fontSize:
+                    11,
+                }}
+              >
+                {
+                  filtered.length
+                }
+                件
+              </span>
+            </div>
 
             {filtered.length ===
             0 ? (
-              <EmptyState />
+              <EmptyList />
             ) : (
-              <div
-                style={{
-                  overflowX:
-                    "auto",
-                }}
-              >
-                <table className="dataTable">
-                  <thead>
-                    <tr>
-                      <th>
-                        生徒
-                      </th>
+              filtered.map(
+                (
+                  retest
+                ) => (
+                  <button
+                    key={
+                      retest.id
+                    }
+                    type="button"
+                    onClick={() => {
+                      setSelectedId(
+                        retest.id
+                      );
 
-                      <th>
-                        元テスト
-                      </th>
-
-                      <th>
-                        追試
-                      </th>
-
-                      <th>
-                        状態
-                      </th>
-
-                      <th>
-                        得点
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filtered.map(
-                      (
-                        retest
-                      ) => (
-                        <tr
-                          key={
-                            retest.id
-                          }
-                          onClick={() =>
-                            setSelectedId(
-                              retest.id
+                      setScore(
+                        retest.manualScore ===
+                          null
+                          ? ""
+                          : String(
+                              retest.manualScore
                             )
-                          }
-                          style={{
-                            cursor:
-                              "pointer",
+                      );
 
-                            background:
-                              selectedId ===
-                              retest.id
-                                ? "#f5f5f5"
-                                : undefined,
-                          }}
-                        >
-                          <td>
-                            <strong>
-                              {
-                                retest.studentName
-                              }
-                            </strong>
+                      setEditNote("");
+                    }}
+                    style={{
+                      display:
+                        "block",
 
-                            <div
-                              className="muted"
-                              style={{
-                                fontSize:
-                                  11,
-                              }}
-                            >
-                              {
-                                retest.studentNumber
-                              }
-                            </div>
-                          </td>
+                      width:
+                        "100%",
 
-                          <td>
-                            {
-                              retest.originalTestName
-                            }
-                          </td>
+                      marginBottom:
+                        8,
 
-                          <td>
-                            {
-                              retest.retestTestName
-                            }
-                          </td>
+                      padding:
+                        14,
 
-                          <td>
-                            <StatusBadge
-                              status={
-                                retest.status
-                              }
-                            />
-                          </td>
+                      border:
+                        selectedId ===
+                        retest.id
+                          ? "2px solid #111"
+                          : "1px solid #ddd",
 
-                          <td>
-                            {retest.manualScore ===
-                            null
-                              ? "—"
-                              : `${retest.manualScore} / ${retest.manualMaxScore}`}
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      borderRadius:
+                        8,
+
+                      background:
+                        selectedId ===
+                        retest.id
+                          ? "#f7f7f7"
+                          : "#fff",
+
+                      textAlign:
+                        "left",
+
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display:
+                          "flex",
+
+                        justifyContent:
+                          "space-between",
+
+                        gap:
+                          10,
+                      }}
+                    >
+                      <strong>
+                        {
+                          retest.studentName
+                        }
+                      </strong>
+
+                      <StatusBadge
+                        status={
+                          retest.status
+                        }
+                      />
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          5,
+
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      {
+                        retest.studentNumber
+                      }
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          8,
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      元：
+                      {
+                        retest.originalTestName
+                      }
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          3,
+
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      追試：
+                      {
+                        retest.retestTestName
+                      }
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          9,
+
+                        display:
+                          "flex",
+
+                        gap:
+                          7,
+                      }}
+                    >
+                      <MiniStat
+                        label="予定日"
+                        value={
+                          retest.scheduledDate ||
+                          "未設定"
+                        }
+                      />
+
+                      <MiniStat
+                        label="得点"
+                        value={
+                          retest.manualScore ===
+                          null
+                            ? "未採点"
+                            : `${retest.manualScore}/${retest.manualMaxScore}`
+                        }
+                      />
+                    </div>
+                  </button>
+                )
+              )
             )}
           </section>
 
-          {/* Detail */}
+          {/* ================================================
+              Detail
+              ================================================ */}
 
           <section className="card">
             {!selected ? (
               <EmptyDetail />
             ) : (
               <>
-                <h2>
-                  追試採点
-                </h2>
-
-                <div
+                <header
                   style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "1fr 1fr",
-
-                    gap:
-                      10,
-
-                    marginTop:
+                    paddingBottom:
                       16,
+
+                    borderBottom:
+                      "1px solid #eee",
                   }}
                 >
-                  <Info
-                    label="生徒"
-                    value={
+                  <div
+                    className="muted"
+                    style={{
+                      fontSize:
+                        11,
+                    }}
+                  >
+                    追試
+                  </div>
+
+                  <h2
+                    style={{
+                      margin:
+                        "5px 0 0",
+                    }}
+                  >
+                    {
                       selected.studentName
                     }
-                  />
+                  </h2>
 
-                  <Info
-                    label="生徒番号"
-                    value={
+                  <p
+                    className="muted"
+                    style={{
+                      margin:
+                        "5px 0 0",
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
                       selected.studentNumber
                     }
-                  />
+                  </p>
+                </header>
 
-                  <Info
-                    label="元テスト"
-                    value={
-                      selected.originalTestName
-                    }
-                  />
-
-                  <Info
-                    label="追試"
-                    value={
-                      selected.retestTestName
-                    }
-                  />
-                </div>
-
-                {/* Manual grading */}
+                {/* ==========================================
+                    Information
+                    ========================================== */}
 
                 <section
                   style={{
                     marginTop:
-                      22,
+                      18,
+                  }}
+                >
+                  <div
+                    style={{
+                      display:
+                        "grid",
+
+                      gridTemplateColumns:
+                        "1fr 1fr",
+
+                      gap:
+                        10,
+                    }}
+                  >
+                    <InfoCard
+                      label="元テスト"
+                      value={
+                        selected.originalTestName
+                      }
+                    />
+
+                    <InfoCard
+                      label="追試テスト"
+                      value={
+                        selected.retestTestName
+                      }
+                    />
+
+                    <InfoCard
+                      label="予定日"
+                      value={
+                        selected.scheduledDate ||
+                        "未設定"
+                      }
+                    />
+
+                    <InfoCard
+                      label="状態"
+                      value={
+                        getStatusLabel(
+                          selected.status
+                        )
+                      }
+                    />
+
+                    <InfoCard
+                      label="満点"
+                      value={
+                        String(
+                          selected.manualMaxScore
+                        )
+                      }
+                    />
+
+                    <InfoCard
+                      label="成績反映"
+                      value={
+                        selected.appliedToResult
+                          ? "反映済み"
+                          : "未反映"
+                      }
+                    />
+                  </div>
+                </section>
+
+                {/* ==========================================
+                    Manual grading
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      20,
                   }}
                 >
                   <h3>
-                    手採点
+                    手動採点
                   </h3>
 
                   <p
                     className="muted"
                     style={{
                       fontSize:
-                        12,
+                        11,
+
+                      margin:
+                        "5px 0 0",
                     }}
                   >
-                    追試は自動採点せず、講師が点数を入力します。
+                    追試は自動採点せず、担当者が手動で採点します。
                   </p>
 
-                  <div
+                  <label
                     style={{
                       display:
-                        "flex",
-
-                      alignItems:
-                        "center",
-
-                      gap:
-                        8,
+                        "block",
 
                       marginTop:
-                        12,
+                        14,
                     }}
                   >
+                    <span
+                      style={{
+                        display:
+                          "block",
+
+                        marginBottom:
+                          5,
+
+                        fontSize:
+                          11,
+
+                        fontWeight:
+                          600,
+                      }}
+                    >
+                      得点
+                    </span>
+
                     <input
                       type="number"
                       min={
@@ -1079,126 +2064,177 @@ export default function RetestsPage() {
                       }
                       style={{
                         width:
-                          120,
-
-                        fontSize:
-                          20,
+                          "100%",
                       }}
                     />
+                  </label>
 
-                    <span>
-                      /
-                      {
-                        selected.manualMaxScore
-                      }
-                      点
-                    </span>
-                  </div>
+                  <label
+                    style={{
+                      display:
+                        "block",
 
-                  {selected.status !==
-                    "確定" && (
-                    <button
-                      type="button"
-                      className="button primary"
+                      marginTop:
+                        12,
+                    }}
+                  >
+                    <span
                       style={{
-                        marginTop:
-                          14,
+                        display:
+                          "block",
+
+                        marginBottom:
+                          5,
+
+                        fontSize:
+                          11,
                       }}
-                      onClick={
-                        saveScore
-                      }
                     >
-                      採点結果を保存
-                    </button>
-                  )}
+                      内部メモ
+                    </span>
+
+                    <textarea
+                      value={
+                        editNote
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setEditNote(
+                          event.target
+                            .value
+                        )
+                      }
+                      rows={
+                        3
+                      }
+                      disabled={
+                        selected.status ===
+                        "確定"
+                      }
+                      style={{
+                        width:
+                          "100%",
+                      }}
+                    />
+                  </label>
                 </section>
 
-                {/* Finalize */}
+                {/* ==========================================
+                    Actions
+                    ========================================== */}
 
-                {selected.status ===
-                  "採点済み" && (
-                  <section
-                    style={{
-                      marginTop:
-                        24,
+                <section
+                  style={{
+                    marginTop:
+                      20,
 
-                      paddingTop:
-                        20,
+                    paddingTop:
+                      18,
 
-                      borderTop:
-                        "1px solid #eee",
-                    }}
-                  >
-                    <h3>
-                      追試確定
-                    </h3>
-
-                    <p
-                      className="muted"
-                      style={{
-                        fontSize:
-                          12,
-                      }}
-                    >
-                      確定後は追試結果を成績集計へ反映できる状態になります。
-                    </p>
-
-                    <button
-                      type="button"
-                      className="button primary"
-                      style={{
-                        marginTop:
-                          10,
-                      }}
-                      onClick={
-                        finalizeRetest
-                      }
-                    >
-                      追試を確定
-                    </button>
-                  </section>
-                )}
-
-                {selected.status ===
-                  "確定" && (
+                    borderTop:
+                      "1px solid #eee",
+                  }}
+                >
                   <div
                     style={{
-                      marginTop:
-                        22,
+                      display:
+                        "flex",
 
-                      padding:
-                        14,
+                      flexWrap:
+                        "wrap",
 
-                      borderRadius:
+                      gap:
                         8,
-
-                      background:
-                        "#f1f8f2",
                     }}
                   >
-                    <strong>
-                      追試は確定済みです。
-                    </strong>
+                    {selected.status !==
+                      "確定" && (
+                      <button
+                        type="button"
+                        className="button primary"
+                        disabled={
+                          saving
+                        }
+                        onClick={
+                          saveManualScore
+                        }
+                      >
+                        {saving
+                          ? "保存中..."
+                          : "採点結果を保存"}
+                      </button>
+                    )}
 
-                    <p
-                      className="muted"
+                    {(role ===
+                      "本部管理者" ||
+                      role ===
+                        "校舎管理者") &&
+                      selected.status ===
+                        "採点済み" && (
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={
+                            saving
+                          }
+                          onClick={
+                            finalizeRetest
+                          }
+                        >
+                          {saving
+                            ? "処理中..."
+                            : "追試を確定"}
+                        </button>
+                      )}
+
+                    {(role ===
+                      "本部管理者" ||
+                      role ===
+                        "校舎管理者") &&
+                      selected.status ===
+                        "確定" &&
+                      !selected.appliedToResult && (
+                        <button
+                          type="button"
+                          className="button primary"
+                          disabled={
+                            saving
+                          }
+                          onClick={
+                            applyRetestResult
+                          }
+                        >
+                          {saving
+                            ? "反映中..."
+                            : "成績へ反映"}
+                        </button>
+                      )}
+                  </div>
+
+                  {selected.appliedToResult && (
+                    <div
                       style={{
-                        margin:
-                          "5px 0 0",
+                        marginTop:
+                          12,
+
+                        padding:
+                          10,
+
+                        background:
+                          "#e8f5e9",
+
+                        borderRadius:
+                          7,
 
                         fontSize:
-                          12,
+                          11,
                       }}
                     >
-                      成績反映状態：
-                      {
-                        selected.appliedToResult
-                          ? "反映済み"
-                          : "未反映"
-                      }
-                    </p>
-                  </div>
-                )}
+                      この追試結果は成績へ反映済みです。
+                    </div>
+                  )}
+                </section>
               </>
             )}
           </section>
@@ -1209,7 +2245,300 @@ export default function RetestsPage() {
 }
 
 /* =========================================================
-   Normalize
+   Status
+   ========================================================= */
+
+function StatusBadge({
+  status,
+}: {
+  status: RetestStatus;
+}) {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
+        background:
+          status ===
+          "確定"
+            ? "#e8f5e9"
+            : status ===
+                "採点済み"
+              ? "#eef4ff"
+              : "#f1f1f1",
+
+        fontSize:
+          10,
+
+        whiteSpace:
+          "nowrap",
+      }}
+    >
+      {
+        getStatusLabel(
+          status
+        )
+      }
+    </span>
+  );
+}
+
+function getStatusLabel(
+  status: RetestStatus
+) {
+  switch (
+    status
+  ) {
+    case "未受験":
+      return "未受験";
+
+    case "採点待ち":
+      return "採点待ち";
+
+    case "採点済み":
+      return "採点済み";
+
+    case "確定":
+      return "確定";
+
+    default:
+      return "未設定";
+  }
+}
+
+/* =========================================================
+   Statistics
+   ========================================================= */
+
+function StatCard({
+  label,
+  value,
+}: {
+  label: string;
+
+  value: number;
+}) {
+  return (
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+
+          fontSize:
+            22,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
+  );
+}
+
+/* =========================================================
+   Info
+   ========================================================= */
+
+function InfoCard({
+  label,
+  value,
+}: {
+  label: string;
+
+  value: string;
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          11,
+
+        background:
+          "#f7f7f7",
+
+        borderRadius:
+          7,
+      }}
+    >
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+
+          fontSize:
+            13,
+        }}
+      >
+        {
+          value ||
+          "—"
+        }
+      </strong>
+    </div>
+  );
+}
+
+/* =========================================================
+   Mini stat
+   ========================================================= */
+
+function MiniStat({
+  label,
+  value,
+}: {
+  label: string;
+
+  value: string;
+}) {
+  return (
+    <span
+      style={{
+        padding:
+          "4px 7px",
+
+        borderRadius:
+          5,
+
+        background:
+          "#f1f1f1",
+
+        fontSize:
+          10,
+      }}
+    >
+      {
+        label
+      }
+      ：
+      {
+        value
+      }
+    </span>
+  );
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyList() {
+  return (
+    <div
+      style={{
+        padding:
+          50,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        追試はありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        作成した追試がここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+function EmptyDetail() {
+  return (
+    <div
+      style={{
+        minHeight:
+          550,
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <div>
+        <strong>
+          追試を選択してください
+        </strong>
+
+        <p
+          style={{
+            marginTop:
+              6,
+
+            fontSize:
+              12,
+          }}
+        >
+          左側から確認・採点する追試を選択してください。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Normalize Retest
    ========================================================= */
 
 function normalizeRetest(
@@ -1251,9 +2580,9 @@ function normalizeRetest(
         item
       ) =>
         item.id ===
-        originalTestId ||
+          originalTestId ||
         item.testId ===
-        originalTestId
+          originalTestId
     );
 
   const retestTest =
@@ -1262,9 +2591,9 @@ function normalizeRetest(
         item
       ) =>
         item.id ===
-        retestTestId ||
+          retestTestId ||
         item.testId ===
-        retestTestId
+          retestTestId
     );
 
   return {
@@ -1287,9 +2616,7 @@ function normalizeRetest(
     studentNumber:
       stringValue(
         data.studentNumber
-      ) ||
-      student?.studentNumber ||
-      "",
+      ),
 
     retestTestId,
 
@@ -1299,7 +2626,7 @@ function normalizeRetest(
       ),
 
     status:
-      normalizeStatus(
+      normalizeRetestStatus(
         data.status
       ),
 
@@ -1345,6 +2672,10 @@ function normalizeRetest(
       "追試テスト未設定",
   };
 }
+
+/* =========================================================
+   Normalize Student
+   ========================================================= */
 
 function normalizeStudent(
   id: string,
@@ -1397,6 +2728,10 @@ function normalizeStudent(
       data.updatedAt,
   };
 }
+
+/* =========================================================
+   Normalize Test
+   ========================================================= */
 
 function normalizeTest(
   id: string,
@@ -1483,7 +2818,7 @@ function normalizeTest(
    Status
    ========================================================= */
 
-function normalizeStatus(
+function normalizeRetestStatus(
   value: unknown
 ): RetestStatus {
   switch (
@@ -1501,216 +2836,51 @@ function normalizeStatus(
 }
 
 /* =========================================================
-   Status badge
+   Time
    ========================================================= */
 
-function StatusBadge({
-  status,
-}: {
-  status: RetestStatus;
-}) {
-  return (
-    <span
-      style={{
-        display:
-          "inline-block",
-
-        padding:
-          "4px 8px",
-
-        borderRadius:
-          999,
-
-        background:
-          status ===
-          "確定"
-            ? "#e8f5e9"
-            : status ===
-                "採点済み"
-              ? "#e8eef8"
-              : "#fff4d6",
-
-        fontSize:
-          11,
-      }}
-    >
-      {
-        status
+function getTime(
+  value: unknown
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
       }
-    </span>
-  );
-}
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
 
-/* =========================================================
-   Summary
-   ========================================================= */
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
 
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
 
-  value: number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            11,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            24,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Info
-   ========================================================= */
-
-function Info({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          10,
-
-        background:
-          "#f7f7f7",
-
-        borderRadius:
-          7,
-      }}
-    >
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <div
-        style={{
-          marginTop:
-            3,
-        }}
-      >
-        {
-          value
-        }
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState() {
-  return (
-    <div
-      style={{
-        padding:
-          50,
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
-      }}
-    >
-      <strong>
-        追試はありません。
-      </strong>
-
-      <p
-        style={{
-          fontSize:
-            12,
-        }}
-      >
-        登録された追試だけがここに表示されます。
-      </p>
-    </div>
-  );
-}
-
-function EmptyDetail() {
-  return (
-    <div
-      style={{
-        minHeight:
-          450,
-
-        display:
-          "flex",
-
-        alignItems:
-          "center",
-
-        justifyContent:
-          "center",
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
-      }}
-    >
-      <div>
-        <strong>
-          追試を選択してください
-        </strong>
-
-        <p
-          style={{
-            fontSize:
-              12,
-          }}
-        >
-          左側から採点する追試を選択してください。
-        </p>
-      </div>
-    </div>
-  );
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
 }
 
 /* =========================================================
