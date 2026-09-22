@@ -1,25 +1,15 @@
 "use client";
 
 import {
-  ChangeEvent,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
 import Link from "next/link";
 
 import {
-  collection,
-  getDocs,
-  query,
-  where,
-} from "firebase/firestore";
-
-import {
   auth,
-  db,
 } from "@/lib/firebase";
 
 import {
@@ -27,13 +17,13 @@ import {
 } from "@/lib/auth";
 
 import {
-  createAnswer,
   getAnswerWithUrl,
-  type CreateAnswerInput,
+  deleteAnswer,
 } from "@/lib/answers";
 
 import {
   getScopedDocs,
+  answersQueries,
   studentsQueries,
   testsQueries,
   type FirestoreUser,
@@ -41,7 +31,6 @@ import {
 
 import type {
   Answer,
-  AnswerStatus,
   Student,
   Test,
   UserRole,
@@ -51,20 +40,10 @@ import type {
    Types
    ========================================================= */
 
-type SubjectOption = {
-  id: string;
-
-  name: string;
-
-  maxScore: number;
-};
-
-type AnswerListItem =
+type AnswerRow =
   Answer & {
     studentName: string;
-
     testName: string;
-
     subjectName: string;
   };
 
@@ -74,124 +53,19 @@ type AnswerListItem =
 
 export default function AnswersPage() {
   const [
-    userRole,
-    setUserRole,
+    role,
+    setRole,
   ] =
     useState<UserRole | null>(
       null
     );
 
   const [
-    organizationId,
-    setOrganizationId,
-  ] =
-    useState<string | null>(
-      null
-    );
-
-  const [
-    schoolIds,
-    setSchoolIds,
-  ] =
-    useState<string[]>(
-      []
-    );
-
-  const [
     answers,
     setAnswers,
   ] =
-    useState<AnswerListItem[]>(
+    useState<AnswerRow[]>(
       []
-    );
-
-  const [
-    students,
-    setStudents,
-  ] =
-    useState<Student[]>(
-      []
-    );
-
-  const [
-    tests,
-    setTests,
-  ] =
-    useState<Test[]>(
-      []
-    );
-
-  const [
-    subjects,
-    setSubjects,
-  ] =
-    useState<
-      SubjectOption[]
-    >(
-      []
-    );
-
-  const [
-    selectedTestId,
-    setSelectedTestId,
-  ] =
-    useState("");
-
-  const [
-    selectedSubjectId,
-    setSelectedSubjectId,
-  ] =
-    useState("");
-
-  const [
-    selectedStudentId,
-    setSelectedStudentId,
-  ] =
-    useState("");
-
-  const [
-    search,
-    setSearch,
-  ] =
-    useState("");
-
-  const [
-    statusFilter,
-    setStatusFilter,
-  ] =
-    useState<
-      | "all"
-      | AnswerStatus
-    >(
-      "all"
-    );
-
-  const [
-    selectedAnswerId,
-    setSelectedAnswerId,
-  ] =
-    useState<
-      string | null
-    >(
-      null
-    );
-
-  const [
-    selectedImageUrl,
-    setSelectedImageUrl,
-  ] =
-    useState<
-      string | null
-    >(
-      null
-    );
-
-  const [
-    selectedFile,
-    setSelectedFile,
-  ] =
-    useState<File | null>(
-      null
     );
 
   const [
@@ -201,14 +75,14 @@ export default function AnswersPage() {
     useState(true);
 
   const [
-    uploading,
-    setUploading,
+    detailLoading,
+    setDetailLoading,
   ] =
     useState(false);
 
   const [
-    imageLoading,
-    setImageLoading,
+    deleting,
+    setDeleting,
   ] =
     useState(false);
 
@@ -224,20 +98,47 @@ export default function AnswersPage() {
   ] =
     useState("");
 
-  const fileInputRef =
-    useRef<HTMLInputElement | null>(
-      null
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] =
+    useState<
+      "all" | Answer["status"]
+    >(
+      "all"
     );
 
+  const [
+    selectedId,
+    setSelectedId,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    imageUrl,
+    setImageUrl,
+  ] =
+    useState<
+      string | null
+    >(null);
+
   /* =======================================================
-     Initial load
+     Load
      ======================================================= */
 
   useEffect(() => {
-    void loadData();
+    void loadAnswers();
   }, []);
 
-  async function loadData() {
+  async function loadAnswers() {
     try {
       setLoading(true);
 
@@ -273,16 +174,8 @@ export default function AnswersPage() {
         );
       }
 
-      setUserRole(
+      setRole(
         user.role
-      );
-
-      setOrganizationId(
-        user.organizationId
-      );
-
-      setSchoolIds(
-        user.schoolIds
       );
 
       const scopeUser:
@@ -304,19 +197,14 @@ export default function AnswersPage() {
             user.studentId,
         };
 
-      /*
-       * テストと生徒を取得。
-       *
-       * 答案はscopeに従って取得する。
-       */
       const [
-        testDocuments,
-        studentDocuments,
         answerDocuments,
+        studentDocuments,
+        testDocuments,
       ] =
         await Promise.all([
           getScopedDocs(
-            testsQueries(
+            answersQueries(
               scopeUser
             )
           ),
@@ -327,30 +215,14 @@ export default function AnswersPage() {
             )
           ),
 
-          getAnswerDocuments(
-            scopeUser
+          getScopedDocs(
+            testsQueries(
+              scopeUser
+            )
           ),
         ]);
 
-      const loadedTests =
-        testDocuments
-          .map(
-            (
-              item
-            ) =>
-              normalizeTest(
-                item.id,
-                item.data
-              )
-          )
-          .filter(
-            (
-              test
-            ) =>
-              !test.isRetest
-          );
-
-      const loadedStudents =
+      const students =
         studentDocuments.map(
           (
             item
@@ -361,55 +233,82 @@ export default function AnswersPage() {
             )
         );
 
-      const loadedAnswers =
-        answerDocuments.map(
+      const tests =
+        testDocuments.map(
           (
             item
           ) =>
-            normalizeAnswerListItem(
+            normalizeTest(
               item.id,
-              item.data,
-              loadedStudents,
-              loadedTests
+              item.data
             )
         );
 
-      setTests(
-        loadedTests
-      );
-
-      setStudents(
-        loadedStudents
-      );
+      const loaded =
+        answerDocuments
+          .map(
+            (
+              item
+            ) =>
+              normalizeAnswer(
+                item.id,
+                item.data,
+                students,
+                tests
+              )
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
+              )
+          );
 
       setAnswers(
-        loadedAnswers
+        loaded
       );
 
-      /*
-       * テストは自動選択しない。
-       *
-       * ユーザーが明示的に選択する。
-       * 初期状態で誤ったテストを
-       * 操作しないため。
-       */
-      setSelectedTestId("");
+      setSelectedId(
+        (
+          current
+        ) => {
+          if (
+            current &&
+            loaded.some(
+              (
+                answer
+              ) =>
+                answer.id ===
+                current
+            )
+          ) {
+            return current;
+          }
 
-      setSelectedSubjectId("");
-
-      setSelectedStudentId("");
+          return (
+            loaded[0]?.id ??
+            null
+          );
+        }
+      );
     } catch (
       error
     ) {
       console.error(
-        "Answers page load error:",
+        "Answers load error:",
         error
       );
 
       setError(
         error instanceof Error
           ? error.message
-          : "答案データを取得できませんでした。"
+          : "答案を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -417,332 +316,10 @@ export default function AnswersPage() {
   }
 
   /* =======================================================
-     Subject options
+     Filter
      ======================================================= */
 
-  useEffect(() => {
-    if (
-      !selectedTestId
-    ) {
-      setSubjects([]);
-      setSelectedSubjectId("");
-      return;
-    }
-
-    void loadSubjects(
-      selectedTestId
-    );
-  }, [
-    selectedTestId,
-  ]);
-
-  async function loadSubjects(
-    testId: string
-  ) {
-    try {
-      const snapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "testSubjects"
-            ),
-
-            where(
-              "testId",
-              "==",
-              testId
-            )
-          )
-        );
-
-      const loaded =
-        snapshot.docs
-          .map(
-            (
-              item
-            ) => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                name:
-                  stringValue(
-                    data.subjectName
-                  ) ||
-                  stringValue(
-                    data.name
-                  ),
-
-                maxScore:
-                  safeNumber(
-                    data.maxScore
-                  ),
-              };
-            }
-          )
-          .filter(
-            (
-              subject
-            ) =>
-              subject.name
-          );
-
-      setSubjects(
-        loaded
-      );
-
-      /*
-       * 教科は自動選択しない。
-       */
-      setSelectedSubjectId(
-        ""
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Subject load error:",
-        error
-      );
-
-      setSubjects([]);
-
-      setSelectedSubjectId("");
-
-      setError(
-        "教科情報を取得できませんでした。"
-      );
-    }
-  }
-
-  /* =======================================================
-     File selection
-     ======================================================= */
-
-  function handleFileChange(
-    event: ChangeEvent<HTMLInputElement>
-  ) {
-    const file =
-      event.target.files?.[0] ??
-      null;
-
-    setSelectedFile(
-      file
-    );
-
-    setMessage("");
-
-    setError("");
-  }
-
-  /* =======================================================
-     Upload
-     ======================================================= */
-
-  async function handleUpload() {
-    if (
-      uploading
-    ) {
-      return;
-    }
-
-    try {
-      setUploading(true);
-
-      setError("");
-
-      setMessage("");
-
-      const user =
-        await getAppUser();
-
-      if (
-        !user
-      ) {
-        throw new Error(
-          "ログインしてください。"
-        );
-      }
-
-      if (
-        user.role ===
-        "生徒"
-      ) {
-        throw new Error(
-          "答案をアップロードする権限がありません。"
-        );
-      }
-
-      if (
-        !organizationId
-      ) {
-        throw new Error(
-          "所属組織がありません。"
-        );
-      }
-
-      if (
-        !selectedTestId
-      ) {
-        throw new Error(
-          "テストを選択してください。"
-        );
-      }
-
-      if (
-        !selectedSubjectId
-      ) {
-        throw new Error(
-          "教科を選択してください。"
-        );
-      }
-
-      if (
-        !selectedFile
-      ) {
-        throw new Error(
-          "答案ファイルを選択してください。"
-        );
-      }
-
-      /*
-       * テストから校舎IDを取得。
-       */
-      const test =
-        tests.find(
-          (
-            item
-          ) =>
-            item.id ===
-            selectedTestId
-        );
-
-      if (
-        !test
-      ) {
-        throw new Error(
-          "選択したテストが見つかりません。"
-        );
-      }
-
-      if (
-        !test.schoolId
-      ) {
-        throw new Error(
-          "テストの校舎情報がありません。"
-        );
-      }
-
-      /*
-       * 校舎権限チェック。
-       */
-      if (
-        user.role !==
-        "本部管理者" &&
-        !user.schoolIds.includes(
-          test.schoolId
-        )
-      ) {
-        throw new Error(
-          "このテストの答案を登録する権限がありません。"
-        );
-      }
-
-      /*
-       * 生徒を指定する場合。
-       */
-      const selectedStudent =
-        selectedStudentId
-          ? students.find(
-              (
-                student
-              ) =>
-                student.id ===
-                selectedStudentId
-            )
-          : null;
-
-      const input:
-        CreateAnswerInput =
-        {
-          organizationId:
-            organizationId,
-
-          schoolId:
-            test.schoolId,
-
-          testId:
-            selectedTestId,
-
-          subjectId:
-            selectedSubjectId,
-
-          studentId:
-            selectedStudent?.id ??
-            null,
-
-          studentNumber:
-            selectedStudent
-              ?.studentNumber ??
-            null,
-
-          file:
-            selectedFile,
-        };
-
-      await createAnswer(
-        input
-      );
-
-      setMessage(
-        "答案を登録しました。"
-      );
-
-      /*
-       * ファイル選択をリセット。
-       */
-      setSelectedFile(
-        null
-      );
-
-      if (
-        fileInputRef.current
-      ) {
-        fileInputRef.current.value =
-          "";
-      }
-
-      /*
-       * 実データを再取得。
-       */
-      await loadData();
-    } catch (
-      error
-    ) {
-      console.error(
-        "Answer upload error:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "答案を登録できませんでした。"
-      );
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  /* =======================================================
-     Filtered answers
-     ======================================================= */
-
-  const filteredAnswers =
+  const filtered =
     useMemo(() => {
       const keyword =
         search
@@ -753,23 +330,13 @@ export default function AnswersPage() {
         (
           answer
         ) => {
-          const matchesTest =
-            !selectedTestId ||
-            answer.testId ===
-              selectedTestId;
-
-          const matchesSubject =
-            !selectedSubjectId ||
-            answer.subjectId ===
-              selectedSubjectId;
-
-          const matchesStatus =
+          const statusMatch =
             statusFilter ===
-            "all" ||
+              "all" ||
             answer.status ===
               statusFilter;
 
-          const matchesKeyword =
+          const searchMatch =
             !keyword ||
             answer.studentName
               .toLowerCase()
@@ -793,129 +360,81 @@ export default function AnswersPage() {
               .toLowerCase()
               .includes(
                 keyword
+              ) ||
+            answer.fileName
+              .toLowerCase()
+              .includes(
+                keyword
               );
 
           return (
-            matchesTest &&
-            matchesSubject &&
-            matchesStatus &&
-            matchesKeyword
+            statusMatch &&
+            searchMatch
           );
         }
       );
     }, [
       answers,
-      selectedTestId,
-      selectedSubjectId,
-      statusFilter,
       search,
+      statusFilter,
     ]);
 
-  /* =======================================================
-     Selected answer
-     ======================================================= */
-
-  const selectedAnswer =
+  const selected =
     answers.find(
       (
         answer
       ) =>
         answer.id ===
-        selectedAnswerId
+        selectedId
     ) ??
     null;
 
   /* =======================================================
-     Image preview
+     Load image
      ======================================================= */
 
   useEffect(() => {
     if (
-      !selectedAnswer
+      !selected
     ) {
-      setSelectedImageUrl(
+      setImageUrl(
         null
       );
 
       return;
     }
 
-    void loadAnswerImage(
-      selectedAnswer.id
+    void loadSelectedImage(
+      selected.id
     );
   }, [
-    selectedAnswerId,
+    selectedId,
   ]);
 
-  async function loadAnswerImage(
+  async function loadSelectedImage(
     answerId: string
   ) {
     try {
-      setImageLoading(
+      setDetailLoading(
         true
       );
 
-      setSelectedImageUrl(
+      setImageUrl(
         null
       );
 
-      const user =
-        await getAppUser();
-
-      if (
-        !user ||
-        !user.organizationId
-      ) {
-        return;
-      }
-
-      const scopeUser:
-        FirestoreUser =
-        {
-          uid:
-            user.uid,
-
-          organizationId:
-            user.organizationId,
-
-          role:
-            user.role,
-
-          schoolIds:
-            user.schoolIds,
-
-          studentId:
-            user.studentId,
-        };
-
-      const answer =
+      const result =
         await getAnswerWithUrl(
           answerId
         );
 
       if (
-        !answer
+        result
       ) {
-        return;
-      }
-
-      /*
-       * クライアント側でも追加チェック。
-       */
-      if (
-        !canViewAnswer(
-          answer,
-          scopeUser
-        )
-      ) {
-        throw new Error(
-          "この答案を閲覧する権限がありません。"
+        setImageUrl(
+          result.signedUrl
         );
       }
-
-      setSelectedImageUrl(
-        answer.signedUrl
-      );
     } catch (
       error
     ) {
@@ -924,31 +443,118 @@ export default function AnswersPage() {
         error
       );
 
-      setSelectedImageUrl(
-        null
-      );
-
       setError(
         error instanceof Error
           ? error.message
-          : "答案画像を表示できませんでした。"
+          : "答案画像を取得できませんでした。"
       );
     } finally {
-      setImageLoading(
+      setDetailLoading(
         false
       );
     }
   }
 
   /* =======================================================
-     Summary
+     Delete
      ======================================================= */
 
-  const total =
-    filteredAnswers.length;
+  async function handleDelete() {
+    if (
+      !selected
+    ) {
+      return;
+    }
 
-  const uploaded =
-    filteredAnswers.filter(
+    if (
+      role !==
+        "本部管理者" &&
+      role !==
+        "校舎管理者"
+    ) {
+      setError(
+        "答案を削除する権限がありません。"
+      );
+
+      return;
+    }
+
+    if (
+      selected.status ===
+        "confirmed" ||
+      selected.status ===
+        "published"
+    ) {
+      setError(
+        "確定済みの答案は削除できません。"
+      );
+
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        "この答案を削除しますか？\n答案画像もSupabase Storageから削除されます。"
+      );
+
+    if (
+      !confirmed
+    ) {
+      return;
+    }
+
+    try {
+      setDeleting(
+        true
+      );
+
+      setError("");
+
+      setMessage("");
+
+      await deleteAnswer(
+        selected.id
+      );
+
+      setMessage(
+        "答案を削除しました。"
+      );
+
+      setSelectedId(
+        null
+      );
+
+      setImageUrl(
+        null
+      );
+
+      await loadAnswers();
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answer delete error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "答案を削除できませんでした。"
+      );
+    } finally {
+      setDeleting(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Statistics
+     ======================================================= */
+
+  const uploadedCount =
+    answers.filter(
       (
         answer
       ) =>
@@ -956,8 +562,8 @@ export default function AnswersPage() {
         "uploaded"
     ).length;
 
-  const processing =
-    filteredAnswers.filter(
+  const processingCount =
+    answers.filter(
       (
         answer
       ) =>
@@ -965,19 +571,26 @@ export default function AnswersPage() {
         "processing"
     ).length;
 
-  const review =
-    filteredAnswers.filter(
+  const firstReviewCount =
+    answers.filter(
       (
         answer
       ) =>
         answer.status ===
-          "first_review" ||
-        answer.status ===
-          "second_review"
+        "first_review"
     ).length;
 
-  const confirmed =
-    filteredAnswers.filter(
+  const secondReviewCount =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "second_review"
+    ).length;
+
+  const confirmedCount =
+    answers.filter(
       (
         answer
       ) =>
@@ -985,6 +598,15 @@ export default function AnswersPage() {
           "confirmed" ||
         answer.status ===
           "published"
+    ).length;
+
+  const errorCount =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "error"
     ).length;
 
   /* =======================================================
@@ -1002,7 +624,7 @@ export default function AnswersPage() {
           </h1>
 
           <p>
-            答案データを読み込んでいます...
+            答案を読み込んでいます...
           </p>
         </section>
       </main>
@@ -1028,20 +650,37 @@ export default function AnswersPage() {
             </h1>
 
             <p className="muted">
-              答案ファイルを登録し、QR・OCR・採点処理へ進めます。
+              登録された答案と処理状況を確認します。
             </p>
           </div>
 
-          <Link
-            href="/grading"
-            className="button"
+          <div
+            style={{
+              display:
+                "flex",
+
+              gap:
+                8,
+            }}
           >
-            採点管理
-          </Link>
+            <Link
+              href="/grading"
+              className="button"
+            >
+              採点管理
+            </Link>
+
+            <Link
+              href="/grading/review"
+              className="button"
+            >
+              一次確認
+            </Link>
+          </div>
         </header>
 
         {/* ==================================================
-            Message
+            Messages
             ================================================== */}
 
         {error && (
@@ -1067,346 +706,7 @@ export default function AnswersPage() {
         )}
 
         {/* ==================================================
-            Upload
-            ================================================== */}
-
-        <section className="card">
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "space-between",
-
-              alignItems:
-                "center",
-
-              gap:
-                20,
-
-              marginBottom:
-                16,
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                答案登録
-              </h2>
-
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "5px 0 0",
-                }}
-              >
-                画像またはPDFを登録します。実ファイルはSupabase Storageに保存されます。
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display:
-                "grid",
-
-              gridTemplateColumns:
-                "repeat(3, minmax(0, 1fr))",
-
-              gap:
-                12,
-            }}
-          >
-            {/* Test */}
-
-            <label>
-              <span
-                style={{
-                  display:
-                    "block",
-
-                  marginBottom:
-                    6,
-
-                  fontWeight:
-                    600,
-                }}
-              >
-                テスト
-              </span>
-
-              <select
-                value={
-                  selectedTestId
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSelectedTestId(
-                    event.target
-                      .value
-                  )
-                }
-              >
-                <option value="">
-                  テストを選択
-                </option>
-
-                {tests.map(
-                  (
-                    test
-                  ) => (
-                    <option
-                      key={
-                        test.id
-                      }
-                      value={
-                        test.id
-                      }
-                    >
-                      {
-                        test.name
-                      }
-
-                      {test.subject &&
-                        ` / ${test.subject}`}
-
-                      {test.examDate &&
-                        ` / ${test.examDate}`}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            {/* Subject */}
-
-            <label>
-              <span
-                style={{
-                  display:
-                    "block",
-
-                  marginBottom:
-                    6,
-
-                  fontWeight:
-                    600,
-                }}
-              >
-                教科
-              </span>
-
-              <select
-                value={
-                  selectedSubjectId
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSelectedSubjectId(
-                    event.target
-                      .value
-                  )
-                }
-                disabled={
-                  !selectedTestId
-                }
-              >
-                <option value="">
-                  教科を選択
-                </option>
-
-                {subjects.map(
-                  (
-                    subject
-                  ) => (
-                    <option
-                      key={
-                        subject.id
-                      }
-                      value={
-                        subject.id
-                      }
-                    >
-                      {
-                        subject.name
-                      }
-
-                      {subject.maxScore >
-                        0 &&
-                        ` / ${subject.maxScore}点`}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            {/* Student */}
-
-            <label>
-              <span
-                style={{
-                  display:
-                    "block",
-
-                  marginBottom:
-                    6,
-
-                  fontWeight:
-                    600,
-                }}
-              >
-                生徒
-              </span>
-
-              <select
-                value={
-                  selectedStudentId
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSelectedStudentId(
-                    event.target
-                      .value
-                  )
-                }
-              >
-                <option value="">
-                  後から紐付け
-                </option>
-
-                {students.map(
-                  (
-                    student
-                  ) => (
-                    <option
-                      key={
-                        student.id
-                      }
-                      value={
-                        student.id
-                      }
-                    >
-                      {
-                        student.studentNumber
-                      }
-                      {" / "}
-                      {
-                        student.name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-          </div>
-
-          {/* File */}
-
-          <div
-            style={{
-              marginTop:
-                16,
-            }}
-          >
-            <label>
-              <span
-                style={{
-                  display:
-                    "block",
-
-                  marginBottom:
-                    6,
-
-                  fontWeight:
-                    600,
-                }}
-              >
-                答案ファイル
-              </span>
-
-              <input
-                ref={
-                  fileInputRef
-                }
-                type="file"
-                accept="image/jpeg,image/png,image/webp,application/pdf"
-                onChange={
-                  handleFileChange
-                }
-              />
-            </label>
-
-            {selectedFile && (
-              <div
-                style={{
-                  marginTop:
-                    8,
-
-                  fontSize:
-                    13,
-
-                  color:
-                    "#555",
-                }}
-              >
-                {
-                  selectedFile.name
-                }
-
-                {" / "}
-
-                {
-                  formatFileSize(
-                    selectedFile.size
-                  )
-                }
-              </div>
-            )}
-          </div>
-
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "flex-end",
-
-              marginTop:
-                18,
-            }}
-          >
-            <button
-              type="button"
-              className="button primary"
-              disabled={
-                uploading ||
-                !selectedTestId ||
-                !selectedSubjectId ||
-                !selectedFile
-              }
-              onClick={
-                handleUpload
-              }
-            >
-              {uploading
-                ? "登録中..."
-                : "答案を登録"}
-            </button>
-          </div>
-        </section>
-
-        {/* ==================================================
-            Summary
+            Statistics
             ================================================== */}
 
         <div
@@ -1415,50 +715,54 @@ export default function AnswersPage() {
               "grid",
 
             gridTemplateColumns:
-              "repeat(5, minmax(0, 1fr))",
+              "repeat(6, minmax(0, 1fr))",
 
             gap:
               10,
 
-            marginTop:
-              18,
-
             marginBottom:
-              18,
+              16,
           }}
         >
-          <Summary
-            label="表示答案"
-            value={
-              total
-            }
-          />
-
-          <Summary
+          <StatCard
             label="受付済み"
             value={
-              uploaded
+              uploadedCount
             }
           />
 
-          <Summary
+          <StatCard
             label="処理中"
             value={
-              processing
+              processingCount
             }
           />
 
-          <Summary
-            label="確認"
+          <StatCard
+            label="一次確認"
             value={
-              review
+              firstReviewCount
             }
           />
 
-          <Summary
+          <StatCard
+            label="二次確認"
+            value={
+              secondReviewCount
+            }
+          />
+
+          <StatCard
             label="確定"
             value={
-              confirmed
+              confirmedCount
+            }
+          />
+
+          <StatCard
+            label="エラー"
+            value={
+              errorCount
             }
           />
         </div>
@@ -1467,20 +771,14 @@ export default function AnswersPage() {
             Filters
             ================================================== */}
 
-        <section
-          className="card"
-          style={{
-            marginBottom:
-              16,
-          }}
-        >
+        <section className="card">
           <div
             style={{
               display:
                 "grid",
 
               gridTemplateColumns:
-                "1fr 220px 220px",
+                "1fr 220px",
 
               gap:
                 10,
@@ -1498,45 +796,8 @@ export default function AnswersPage() {
                     .value
                 )
               }
-              placeholder="生徒番号・氏名・テスト・教科"
+              placeholder="生徒番号・氏名・テスト名・ファイル名"
             />
-
-            <select
-              value={
-                selectedTestId
-              }
-              onChange={(
-                event
-              ) =>
-                setSelectedTestId(
-                  event.target
-                    .value
-                )
-              }
-            >
-              <option value="">
-                全テスト
-              </option>
-
-              {tests.map(
-                (
-                  test
-                ) => (
-                  <option
-                    key={
-                      test.id
-                    }
-                    value={
-                      test.id
-                    }
-                  >
-                    {
-                      test.name
-                    }
-                  </option>
-                )
-              )}
-            </select>
 
             <select
               value={
@@ -1546,16 +807,15 @@ export default function AnswersPage() {
                 event
               ) =>
                 setStatusFilter(
-                  event
-                    .target
+                  event.target
                     .value as
                     | "all"
-                    | AnswerStatus
+                    | Answer["status"]
                 )
               }
             >
               <option value="all">
-                全ステータス
+                すべて
               </option>
 
               <option value="uploaded">
@@ -1603,10 +863,13 @@ export default function AnswersPage() {
               "grid",
 
             gridTemplateColumns:
-              "minmax(0, 1.2fr) minmax(360px, 0.8fr)",
+              "minmax(0, 1.05fr) minmax(420px, .95fr)",
 
             gap:
               18,
+
+            marginTop:
+              16,
 
             alignItems:
               "start",
@@ -1642,21 +905,24 @@ export default function AnswersPage() {
                 答案一覧
               </h2>
 
-              <span className="muted">
+              <span
+                className="muted"
+                style={{
+                  fontSize:
+                    12,
+                }}
+              >
                 {
-                  filteredAnswers.length
+                  filtered.length
                 }
                 件
               </span>
             </div>
 
-            {filteredAnswers.length ===
-              0 && (
-              <EmptyState />
-            )}
-
-            {filteredAnswers.length >
-              0 && (
+            {filtered.length ===
+            0 ? (
+              <EmptyList />
+            ) : (
               <div
                 style={{
                   overflowX:
@@ -1675,10 +941,6 @@ export default function AnswersPage() {
                       </th>
 
                       <th>
-                        教科
-                      </th>
-
-                      <th>
                         状態
                       </th>
 
@@ -1689,7 +951,7 @@ export default function AnswersPage() {
                   </thead>
 
                   <tbody>
-                    {filteredAnswers.map(
+                    {filtered.map(
                       (
                         answer
                       ) => (
@@ -1698,7 +960,7 @@ export default function AnswersPage() {
                             answer.id
                           }
                           onClick={() =>
-                            setSelectedAnswerId(
+                            setSelectedId(
                               answer.id
                             )
                           }
@@ -1707,7 +969,7 @@ export default function AnswersPage() {
                               "pointer",
 
                             background:
-                              selectedAnswerId ===
+                              selectedId ===
                               answer.id
                                 ? "#f5f5f5"
                                 : undefined,
@@ -1730,7 +992,7 @@ export default function AnswersPage() {
                             >
                               {
                                 answer.studentNumber ||
-                                "生徒番号未設定"
+                                "生徒番号なし"
                               }
                             </div>
                           </td>
@@ -1739,13 +1001,19 @@ export default function AnswersPage() {
                             {
                               answer.testName
                             }
-                          </td>
 
-                          <td>
-                            {
-                              answer.subjectName ||
-                              "—"
-                            }
+                            <div
+                              className="muted"
+                              style={{
+                                fontSize:
+                                  11,
+                              }}
+                            >
+                              {
+                                answer.subjectName ||
+                                "—"
+                              }
+                            </div>
                           </td>
 
                           <td>
@@ -1757,13 +1025,10 @@ export default function AnswersPage() {
                           </td>
 
                           <td>
-                            {
-                              answer.totalScore
-                            }
-                            {" / "}
-                            {
-                              answer.totalMaxScore
-                            }
+                            {answer.totalMaxScore >
+                            0
+                              ? `${answer.totalScore} / ${answer.totalMaxScore}`
+                              : "—"}
                           </td>
                         </tr>
                       )
@@ -1775,15 +1040,35 @@ export default function AnswersPage() {
           </section>
 
           {/* ================================================
-              Preview
+              Detail
               ================================================ */}
 
           <section className="card">
-            {!selectedAnswer ? (
-              <EmptyPreview />
+            {!selected ? (
+              <EmptyDetail />
+            ) : detailLoading ? (
+              <div
+                style={{
+                  minHeight:
+                    500,
+
+                  display:
+                    "flex",
+
+                  alignItems:
+                    "center",
+
+                  justifyContent:
+                    "center",
+                }}
+              >
+                答案画像を読み込んでいます...
+              </div>
             ) : (
               <>
-                <div
+                {/* Header */}
+
+                <header
                   style={{
                     display:
                       "flex",
@@ -1795,10 +1080,13 @@ export default function AnswersPage() {
                       "flex-start",
 
                     gap:
-                      10,
+                      16,
 
-                    marginBottom:
-                      14,
+                    paddingBottom:
+                      16,
+
+                    borderBottom:
+                      "1px solid #eee",
                   }}
                 >
                   <div>
@@ -1808,163 +1096,163 @@ export default function AnswersPage() {
                           0,
                       }}
                     >
-                      答案
+                      {
+                        selected.studentName ||
+                        "生徒未紐付け"
+                      }
                     </h2>
 
-                    <p
+                    <div
                       className="muted"
                       style={{
-                        margin:
-                          "5px 0 0",
+                        marginTop:
+                          5,
+
+                        fontSize:
+                          12,
                       }}
                     >
                       {
-                        selectedAnswer.studentName ||
-                        "未紐付け"
+                        selected.studentNumber ||
+                        "生徒番号なし"
                       }
-                    </p>
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          3,
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      {
+                        selected.testName
+                      }
+
+                      {" / "}
+
+                      {
+                        selected.subjectName ||
+                        "—"
+                      }
+                    </div>
                   </div>
 
                   <StatusBadge
                     status={
-                      selectedAnswer.status
+                      selected.status
                     }
                   />
-                </div>
-
-                <div
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "1fr 1fr",
-
-                    gap:
-                      10,
-
-                    marginBottom:
-                      16,
-                  }}
-                >
-                  <Info
-                    label="生徒番号"
-                    value={
-                      selectedAnswer.studentNumber ||
-                      "未設定"
-                    }
-                  />
-
-                  <Info
-                    label="テスト"
-                    value={
-                      selectedAnswer.testName
-                    }
-                  />
-
-                  <Info
-                    label="教科"
-                    value={
-                      selectedAnswer.subjectName ||
-                      "—"
-                    }
-                  />
-
-                  <Info
-                    label="ファイル"
-                    value={
-                      selectedAnswer.fileName
-                    }
-                  />
-                </div>
+                </header>
 
                 {/* Image */}
 
-                <div
-                  style={{
-                    minHeight:
-                      300,
-
-                    display:
-                      "flex",
-
-                    alignItems:
-                      "center",
-
-                    justifyContent:
-                      "center",
-
-                    background:
-                      "#f5f5f5",
-
-                    borderRadius:
-                      8,
-
-                    overflow:
-                      "hidden",
-                  }}
-                >
-                  {imageLoading ? (
-                    <span>
-                      答案画像を読み込んでいます...
-                    </span>
-                  ) : selectedImageUrl ? (
-                    selectedAnswer.contentType ===
-                    "application/pdf" ? (
-                      <iframe
-                        src={
-                          selectedImageUrl
-                        }
-                        title="答案"
-                        style={{
-                          width:
-                            "100%",
-
-                          height:
-                            500,
-
-                          border:
-                            0,
-                        }}
-                      />
-                    ) : (
-                      <img
-                        src={
-                          selectedImageUrl
-                        }
-                        alt="答案"
-                        style={{
-                          display:
-                            "block",
-
-                          maxWidth:
-                            "100%",
-
-                          maxHeight:
-                            600,
-
-                          objectFit:
-                            "contain",
-                        }}
-                      />
-                    )
-                  ) : (
-                    <span className="muted">
-                      答案画像を表示できません。
-                    </span>
-                  )}
-                </div>
-
-                {/* Processing */}
-
-                <div
+                <section
                   style={{
                     marginTop:
-                      16,
+                      18,
                   }}
                 >
                   <h3>
-                    処理状態
+                    答案画像
+                  </h3>
+
+                  <div
+                    style={{
+                      minHeight:
+                        350,
+
+                      display:
+                        "flex",
+
+                      alignItems:
+                        "center",
+
+                      justifyContent:
+                        "center",
+
+                      background:
+                        "#f5f5f5",
+
+                      borderRadius:
+                        8,
+
+                      overflow:
+                        "hidden",
+                    }}
+                  >
+                    {imageUrl ? (
+                      selected.contentType ===
+                      "application/pdf" ? (
+                        <iframe
+                          src={
+                            imageUrl
+                          }
+                          title="答案"
+                          style={{
+                            width:
+                              "100%",
+
+                            height:
+                              600,
+
+                            border:
+                              0,
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={
+                            imageUrl
+                          }
+                          alt="答案画像"
+                          style={{
+                            display:
+                              "block",
+
+                            maxWidth:
+                              "100%",
+
+                            maxHeight:
+                              650,
+
+                            objectFit:
+                              "contain",
+                          }}
+                        />
+                      )
+                    ) : (
+                      <div
+                        style={{
+                          textAlign:
+                            "center",
+
+                          color:
+                            "#777",
+
+                          padding:
+                            30,
+                        }}
+                      >
+                        答案画像を表示できません。
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* Metadata */}
+
+                <section
+                  style={{
+                    marginTop:
+                      18,
+                  }}
+                >
+                  <h3>
+                    ファイル情報
                   </h3>
 
                   <div
@@ -1973,90 +1261,225 @@ export default function AnswersPage() {
                         "grid",
 
                       gridTemplateColumns:
-                        "repeat(4, 1fr)",
+                        "1fr 1fr",
 
                       gap:
-                        8,
+                        10,
                     }}
                   >
-                    <ProcessState
-                      label="QR"
-                      done={
-                        Boolean(
-                          selectedAnswer.qrText
+                    <Info
+                      label="ファイル名"
+                      value={
+                        selected.fileName
+                      }
+                    />
+
+                    <Info
+                      label="形式"
+                      value={
+                        selected.contentType
+                      }
+                    />
+
+                    <Info
+                      label="サイズ"
+                      value={
+                        formatFileSize(
+                          selected.size
                         )
                       }
                     />
 
-                    <ProcessState
-                      label="OCR"
-                      done={
-                        selectedAnswer.ocrConfidence >
-                        0
+                    <Info
+                      label="保存先"
+                      value={
+                        "Supabase Storage"
                       }
                     />
 
-                    <ProcessState
-                      label="採点"
-                      done={
-                        selectedAnswer.status ===
-                          "graded" ||
-                        selectedAnswer.status ===
-                          "first_review" ||
-                        selectedAnswer.status ===
-                          "second_review" ||
-                        selectedAnswer.status ===
-                          "confirmed" ||
-                        selectedAnswer.status ===
-                          "published"
+                    <Info
+                      label="QR"
+                      value={
+                        selected.qrText ||
+                        "未解析"
                       }
                     />
 
-                    <ProcessState
-                      label="確定"
-                      done={
-                        selectedAnswer.status ===
-                          "confirmed" ||
-                        selectedAnswer.status ===
-                          "published"
+                    <Info
+                      label="OCR確信度"
+                      value={
+                        formatConfidence(
+                          selected.ocrConfidence
+                        )
                       }
                     />
                   </div>
-                </div>
+                </section>
 
-                <div
+                {/* Score */}
+
+                <section
+                  style={{
+                    marginTop:
+                      18,
+                  }}
+                >
+                  <h3>
+                    採点情報
+                  </h3>
+
+                  <div
+                    style={{
+                      display:
+                        "grid",
+
+                      gridTemplateColumns:
+                        "1fr 1fr",
+
+                      gap:
+                        10,
+                    }}
+                  >
+                    <Info
+                      label="得点"
+                      value={
+                        selected.totalMaxScore >
+                        0
+                          ? `${selected.totalScore} / ${selected.totalMaxScore}`
+                          : "未採点"
+                      }
+                    />
+
+                    <Info
+                      label="状態"
+                      value={
+                        getStatusLabel(
+                          selected.status
+                        )
+                      }
+                    />
+                  </div>
+                </section>
+
+                {/* Error */}
+
+                {selected.processingError && (
+                  <div
+                    style={{
+                      marginTop:
+                        18,
+
+                      padding:
+                        12,
+
+                      borderRadius:
+                        8,
+
+                      background:
+                        "#fff1f1",
+
+                      color:
+                        "#8a2222",
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    <strong>
+                      処理エラー
+                    </strong>
+
+                    <div
+                      style={{
+                        marginTop:
+                          5,
+                      }}
+                    >
+                      {
+                        selected.processingError
+                      }
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+
+                <footer
                   style={{
                     display:
                       "flex",
 
                     justifyContent:
-                      "flex-end",
+                      "space-between",
+
+                    alignItems:
+                      "center",
 
                     gap:
-                      8,
+                      10,
 
                     marginTop:
+                      20,
+
+                    paddingTop:
                       18,
+
+                    borderTop:
+                      "1px solid #eee",
                   }}
                 >
-                  <Link
-                    href="/grading"
-                    className="button"
-                  >
-                    採点管理
-                  </Link>
+                  <div
+                    style={{
+                      display:
+                        "flex",
 
-                  {(selectedAnswer.status ===
-                    "first_review" ||
-                    selectedAnswer.reviewRequired) && (
+                      gap:
+                        8,
+                    }}
+                  >
                     <Link
-                      href="/grading/review"
-                      className="button primary"
+                      href={`/grading/review?answerId=${encodeURIComponent(
+                        selected.id
+                      )}`}
+                      className="button"
                     >
                       一次確認
                     </Link>
-                  )}
-                </div>
+
+                    <Link
+                      href={`/grading/second-review?answerId=${encodeURIComponent(
+                        selected.id
+                      )}`}
+                      className="button"
+                    >
+                      二次確認
+                    </Link>
+                  </div>
+
+                  {(role ===
+                    "本部管理者" ||
+                    role ===
+                      "校舎管理者") &&
+                    selected.status !==
+                      "confirmed" &&
+                    selected.status !==
+                      "published" && (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={
+                          deleting
+                        }
+                        onClick={
+                          handleDelete
+                        }
+                      >
+                        {deleting
+                          ? "削除中..."
+                          : "答案を削除"}
+                      </button>
+                    )}
+                </footer>
               </>
             )}
           </section>
@@ -2067,184 +1490,10 @@ export default function AnswersPage() {
 }
 
 /* =========================================================
-   Firestore answer query
+   Normalize
    ========================================================= */
 
-async function getAnswerDocuments(
-  user: FirestoreUser
-) {
-  /*
-   * answersQueries()をここで利用。
-   *
-   * これにより、
-   *
-   * 本部 → 組織全体
-   * 校舎 → 所属校舎
-   * 講師 → 所属校舎
-   * 生徒 → 自分
-   *
-   * の範囲になる。
-   */
-  const {
-    answersQueries,
-  } =
-    await import(
-      "@/lib/firestore-scope"
-    );
-
-  return getScopedDocs(
-    answersQueries(
-      user
-    )
-  );
-}
-
-/* =========================================================
-   Normalize Test
-   ========================================================= */
-
-function normalizeTest(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Test {
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    testId:
-      stringValue(
-        data.testId
-      ) ||
-      id,
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    subject:
-      stringValue(
-        data.subject
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    examDate:
-      stringValue(
-        data.examDate
-      ),
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    isRetest:
-      data.isRetest ===
-      true,
-
-    originalTestId:
-      nullableString(
-        data.originalTestId
-      ),
-
-    automaticGrading:
-      data.automaticGrading ===
-      true,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Normalize Student
-   ========================================================= */
-
-function normalizeStudent(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Student {
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Normalize Answer
-   ========================================================= */
-
-function normalizeAnswerListItem(
+function normalizeAnswer(
   id: string,
   data: Record<
     string,
@@ -2252,7 +1501,7 @@ function normalizeAnswerListItem(
   >,
   students: Student[],
   tests: Test[]
-): AnswerListItem {
+): AnswerRow {
   const studentId =
     nullableString(
       data.studentId
@@ -2397,57 +1646,144 @@ function normalizeAnswerListItem(
 }
 
 /* =========================================================
-   Access
+   Student
    ========================================================= */
 
-function canViewAnswer(
-  answer: Answer,
-  user: FirestoreUser
-) {
-  if (
-    !user.role
-  ) {
-    return false;
-  }
+function normalizeStudent(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Student {
+  return {
+    id,
 
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return (
-      answer.organizationId ===
-      user.organizationId
-    );
-  }
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
 
-  if (
-    user.role ===
-      "校舎管理者" ||
-    user.role ===
-      "講師"
-  ) {
-    return (
-      answer.organizationId ===
-        user.organizationId &&
-      user.schoolIds.includes(
-        answer.schoolId
-      )
-    );
-  }
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ),
 
-  if (
-    user.role ===
-    "生徒"
-  ) {
-    return (
-      answer.organizationId ===
-        user.organizationId &&
-      answer.studentId ===
-        user.studentId
-    );
-  }
+    name:
+      stringValue(
+        data.name
+      ),
 
-  return false;
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Test
+   ========================================================= */
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
 }
 
 /* =========================================================
@@ -2456,7 +1792,7 @@ function canViewAnswer(
 
 function normalizeStatus(
   value: unknown
-): AnswerStatus {
+): Answer["status"] {
   switch (
     value
   ) {
@@ -2476,46 +1812,11 @@ function normalizeStatus(
 }
 
 /* =========================================================
-   Status badge
+   Status label
    ========================================================= */
 
-function StatusBadge({
-  status,
-}: {
-  status: AnswerStatus;
-}) {
-  return (
-    <span
-      style={{
-        display:
-          "inline-block",
-
-        padding:
-          "3px 8px",
-
-        borderRadius:
-          999,
-
-        background:
-          getStatusBackground(
-            status
-          ),
-
-        fontSize:
-          11,
-      }}
-    >
-      {
-        getStatusLabel(
-          status
-        )
-      }
-    </span>
-  );
-}
-
 function getStatusLabel(
-  status: AnswerStatus
+  status: Answer["status"]
 ) {
   switch (
     status
@@ -2549,36 +1850,66 @@ function getStatusLabel(
   }
 }
 
-function getStatusBackground(
-  status: AnswerStatus
-) {
-  switch (
-    status
-  ) {
-    case "error":
-      return "#ffe5e5";
+/* =========================================================
+   Status badge
+   ========================================================= */
 
-    case "confirmed":
-    case "published":
-      return "#e8f5e9";
+function StatusBadge({
+  status,
+}: {
+  status: Answer["status"];
+}) {
+  const background =
+    status ===
+      "confirmed" ||
+    status ===
+      "published"
+      ? "#e8f5e9"
+      : status ===
+          "error"
+        ? "#fff1f1"
+        : status ===
+            "first_review" ||
+          status ===
+            "second_review"
+          ? "#fff4d6"
+          : "#f1f1f1";
 
-    case "first_review":
-    case "second_review":
-      return "#fff4d6";
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
 
-    case "processing":
-      return "#e8eef8";
+        padding:
+          "4px 8px",
 
-    default:
-      return "#f1f1f1";
-  }
+        borderRadius:
+          999,
+
+        background,
+
+        fontSize:
+          11,
+
+        whiteSpace:
+          "nowrap",
+      }}
+    >
+      {
+        getStatusLabel(
+          status
+        )
+      }
+    </span>
+  );
 }
 
 /* =========================================================
-   Summary
+   Stat
    ========================================================= */
 
-function Summary({
+function StatCard({
   label,
   value,
 }: {
@@ -2592,7 +1923,7 @@ function Summary({
         className="muted"
         style={{
           fontSize:
-            11,
+            10,
         }}
       >
         {
@@ -2609,7 +1940,7 @@ function Summary({
             4,
 
           fontSize:
-            23,
+            21,
         }}
       >
         {
@@ -2642,7 +1973,7 @@ function Info({
           "#f7f7f7",
 
         borderRadius:
-          6,
+          7,
       }}
     >
       <div
@@ -2660,10 +1991,13 @@ function Info({
       <div
         style={{
           marginTop:
-            3,
+            4,
 
           fontSize:
-            13,
+            12,
+
+          wordBreak:
+            "break-word",
         }}
       >
         {
@@ -2675,66 +2009,10 @@ function Info({
 }
 
 /* =========================================================
-   Process
-   ========================================================= */
-
-function ProcessState({
-  label,
-  done,
-}: {
-  label: string;
-
-  done: boolean;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          10,
-
-        border:
-          "1px solid #ddd",
-
-        borderRadius:
-          7,
-
-        textAlign:
-          "center",
-
-        background:
-          done
-            ? "#f1f8f2"
-            : "#fff",
-      }}
-    >
-      <div
-        style={{
-          fontSize:
-            11,
-
-          color:
-            "#777",
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong>
-        {done
-          ? "完了"
-          : "未処理"}
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
    Empty
    ========================================================= */
 
-function EmptyState() {
+function EmptyList() {
   return (
     <div
       style={{
@@ -2743,22 +2021,28 @@ function EmptyState() {
 
         textAlign:
           "center",
+
+        color:
+          "#777",
       }}
     >
       <strong>
-        答案がありません
+        答案はありません。
       </strong>
 
-      <p className="muted">
-        まだ答案が登録されていません。
-        <br />
-        答案を登録すると、ここに表示されます。
+      <p
+        style={{
+          fontSize:
+            12,
+        }}
+      >
+        登録された答案がここに表示されます。
       </p>
     </div>
   );
 }
 
-function EmptyPreview() {
+function EmptyDetail() {
   return (
     <div
       style={{
@@ -2776,6 +2060,9 @@ function EmptyPreview() {
 
         textAlign:
           "center",
+
+        color:
+          "#777",
       }}
     >
       <div>
@@ -2783,10 +2070,16 @@ function EmptyPreview() {
           答案を選択してください
         </strong>
 
-        <p className="muted">
-          左側の答案一覧から答案を選択すると、
-          <br />
-          答案画像と処理状況を確認できます。
+        <p
+          style={{
+            marginTop:
+              6,
+
+            fontSize:
+              12,
+          }}
+        >
+          左側から確認する答案を選択してください。
         </p>
       </div>
     </div>
@@ -2798,35 +2091,115 @@ function EmptyPreview() {
    ========================================================= */
 
 function formatFileSize(
-  size: number
+  bytes: number
 ) {
   if (
-    size <
-    1024
+    bytes <=
+    0
   ) {
-    return `${size} B`;
+    return "—";
   }
 
   if (
-    size <
+    bytes <
+    1024
+  ) {
+    return `${bytes} B`;
+  }
+
+  if (
+    bytes <
     1024 *
       1024
   ) {
     return `${(
-      size /
+      bytes /
       1024
-    ).toFixed(
-      1
-    )} KB`;
+    ).toFixed(1)} KB`;
   }
 
   return `${(
-    size /
-    (1024 *
-      1024)
-  ).toFixed(
+    bytes /
+    1024 /
+    1024
+  ).toFixed(1)} MB`;
+}
+
+/* =========================================================
+   Confidence
+   ========================================================= */
+
+function formatConfidence(
+  value: number
+) {
+  if (
+    !Number.isFinite(
+      value
+    ) ||
+    value <=
+      0
+  ) {
+    return "—";
+  }
+
+  const percentage =
+    value <=
     1
-  )} MB`;
+      ? value *
+        100
+      : value;
+
+  return `${percentage.toFixed(
+    0
+  )}%`;
+}
+
+/* =========================================================
+   Time
+   ========================================================= */
+
+function getTime(
+  value: unknown
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
+
+  const time =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
+
+  return Number.isFinite(
+    time
+  )
+    ? time
+    : 0;
 }
 
 /* =========================================================
@@ -2856,7 +2229,8 @@ function safeNumber(
 ) {
   const number =
     Number(
-      value ?? 0
+      value ??
+        0
     );
 
   return Number.isFinite(
