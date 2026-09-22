@@ -2,6 +2,7 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -25,8 +26,13 @@ import {
   functions,
 } from "@/lib/firebaseFunctions";
 
+import {
+  createAnswerSignedUrl,
+  deleteAnswerFile,
+} from "@/lib/supabase";
+
 /* =========================================================
-   Answer
+   Types
    ========================================================= */
 
 export type AnswerStatus =
@@ -42,11 +48,17 @@ export type AnswerStatus =
 export type Answer = {
   id: string;
 
+  organizationId?: string;
+
+  schoolId?: string;
+
   testId: string;
 
   subjectId: string;
 
-  studentNumber?: string;
+  studentId?: string | null;
+
+  studentNumber?: string | null;
 
   fileKey: string;
 
@@ -77,11 +89,16 @@ export type Answer = {
   updatedAt?: unknown;
 
   processedAt?: unknown;
+
+  confirmedAt?: unknown;
 };
 
-/* =========================================================
-   Grading Job
-   ========================================================= */
+export type AnswerWithUrl =
+  Answer & {
+    signedUrl:
+      | string
+      | null;
+  };
 
 export type GradingJobStatus =
   | "queued"
@@ -127,10 +144,6 @@ export type GradingJob = {
   completedAt?: unknown;
 };
 
-/* =========================================================
-   Upload response
-   ========================================================= */
-
 type CreateUploadUrlResponse = {
   success: boolean;
 
@@ -142,7 +155,7 @@ type CreateUploadUrlResponse = {
 };
 
 /* =========================================================
-   Get answer
+   Get one answer
    ========================================================= */
 
 export async function getAnswer(
@@ -175,6 +188,47 @@ export async function getAnswer(
     snapshot.id,
     snapshot.data()
   );
+}
+
+/* =========================================================
+   Get answer with signed URL
+   ========================================================= */
+
+export async function getAnswerWithUrl(
+  answerId: string
+): Promise<
+  AnswerWithUrl | null
+> {
+  const answer =
+    await getAnswer(
+      answerId
+    );
+
+  if (
+    !answer
+  ) {
+    return null;
+  }
+
+  let signedUrl:
+    | string
+    | null =
+    null;
+
+  if (
+    answer.fileKey
+  ) {
+    signedUrl =
+      await createAnswerSignedUrl(
+        answer.fileKey
+      );
+  }
+
+  return {
+    ...answer,
+
+    signedUrl,
+  };
 }
 
 /* =========================================================
@@ -258,7 +312,72 @@ export async function getAnswers(
 }
 
 /* =========================================================
-   Upload URL
+   Get all answers for test
+   ========================================================= */
+
+export async function getAllAnswers(
+  testId: string,
+  subjectId?: string
+): Promise<Answer[]> {
+  if (
+    !testId.trim()
+  ) {
+    throw new Error(
+      "testIdが指定されていません。"
+    );
+  }
+
+  const conditions = [
+    where(
+      "testId",
+      "==",
+      testId
+    ),
+  ];
+
+  if (
+    subjectId
+  ) {
+    conditions.push(
+      where(
+        "subjectId",
+        "==",
+        subjectId
+      )
+    );
+  }
+
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "answers"
+        ),
+        ...conditions,
+        orderBy(
+          "createdAt",
+          "asc"
+        ),
+        limit(
+          1000
+        )
+      )
+    );
+
+  return snapshot.docs.map(
+    (
+      item
+    ) =>
+      normalizeAnswer(
+        item.id,
+        item.data()
+      )
+  );
+}
+
+/* =========================================================
+   Request upload URL
    ========================================================= */
 
 async function requestUploadUrl(
@@ -306,7 +425,7 @@ async function requestUploadUrl(
 }
 
 /* =========================================================
-   Upload answer
+   Upload one answer
    ========================================================= */
 
 export async function uploadAnswer(
@@ -395,7 +514,7 @@ export async function uploadAnswer(
 }
 
 /* =========================================================
-   Upload answers
+   Upload multiple answers
    ========================================================= */
 
 export async function uploadAnswers(
@@ -413,7 +532,8 @@ export async function uploadAnswers(
     total: number
   ) => void
 ): Promise<Answer[]> {
-  const results: Answer[] = [];
+  const results: Answer[] =
+    [];
 
   for (
     let index = 0;
@@ -440,7 +560,7 @@ export async function uploadAnswers(
 }
 
 /* =========================================================
-   Status
+   Update answer status
    ========================================================= */
 
 export async function updateAnswerStatus(
@@ -504,7 +624,7 @@ export async function assignAnswerStudent(
 }
 
 /* =========================================================
-   Start auto grading
+   Start automatic grading
    ========================================================= */
 
 export async function startAutoGrading(
@@ -593,7 +713,9 @@ export async function startAutoGrading(
 
 export async function getGradingJob(
   jobId: string
-): Promise<GradingJob | null> {
+): Promise<
+  GradingJob | null
+> {
   if (
     !jobId.trim()
   ) {
@@ -700,7 +822,7 @@ export async function getGradingJob(
 }
 
 /* =========================================================
-   Wait
+   Wait for grading job
    ========================================================= */
 
 export async function waitForGradingJob(
@@ -721,9 +843,7 @@ export async function waitForGradingJob(
 
   const timeoutMs =
     options?.timeoutMs ??
-    10 *
-      60 *
-      1000;
+    10 * 60 * 1000;
 
   const started =
     Date.now();
@@ -780,7 +900,7 @@ export async function waitForGradingJob(
 }
 
 /* =========================================================
-   Retry
+   Retry answer processing
    ========================================================= */
 
 export async function retryAnswer(
@@ -896,7 +1016,65 @@ async function updateStatuses(
 }
 
 /* =========================================================
-   Normalize
+   Delete answer
+   ========================================================= */
+
+export async function deleteAnswer(
+  answerId: string
+) {
+  if (
+    !answerId.trim()
+  ) {
+    throw new Error(
+      "answerIdが指定されていません。"
+    );
+  }
+
+  const answer =
+    await getAnswer(
+      answerId
+    );
+
+  if (
+    !answer
+  ) {
+    throw new Error(
+      "削除する答案が見つかりません。"
+    );
+  }
+
+  /*
+   * 画像をSupabase Storageから削除。
+   */
+  if (
+    answer.fileKey
+  ) {
+    await deleteAnswerFile(
+      answer.fileKey
+    );
+  }
+
+  /*
+   * Firestoreのメタデータを削除。
+   */
+  await deleteDoc(
+    doc(
+      db,
+      "answers",
+      answerId
+    )
+  );
+
+  return {
+    success:
+      true,
+
+    answerId,
+  };
+}
+
+/* =========================================================
+   Normalize answer
    ========================================================= */
 
 function normalizeAnswer(
@@ -909,6 +1087,18 @@ function normalizeAnswer(
   return {
     id,
 
+    organizationId:
+      nullableString(
+        data.organizationId
+      ) ??
+      undefined,
+
+    schoolId:
+      nullableString(
+        data.schoolId
+      ) ??
+      undefined,
+
     testId:
       stringValue(
         data.testId
@@ -919,11 +1109,15 @@ function normalizeAnswer(
         data.subjectId
       ),
 
+    studentId:
+      nullableString(
+        data.studentId
+      ),
+
     studentNumber:
       nullableString(
         data.studentNumber
-      ) ??
-      undefined,
+      ),
 
     fileKey:
       stringValue(
@@ -1008,6 +1202,9 @@ function normalizeAnswer(
 
     processedAt:
       data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
   };
 }
 
@@ -1018,19 +1215,21 @@ function normalizeAnswer(
 function validateFile(
   file: File
 ) {
-  const allowedTypes = [
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-  ];
+  const allowedTypes =
+    new Set([
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ]);
 
   if (
-    !allowedTypes.includes(
+    !allowedTypes.has(
       file.type
     )
   ) {
     throw new Error(
-      "PDF・JPG・PNGのみアップロードできます。"
+      "PDF・JPG・PNG・WebPのみアップロードできます。"
     );
   }
 
@@ -1065,16 +1264,17 @@ function validateFile(
 function normalizeAnswerStatus(
   value: unknown
 ): AnswerStatus {
-  const statuses: AnswerStatus[] = [
-    "uploaded",
-    "processing",
-    "graded",
-    "first_review",
-    "second_review",
-    "confirmed",
-    "published",
-    "error",
-  ];
+  const statuses:
+    AnswerStatus[] = [
+      "uploaded",
+      "processing",
+      "graded",
+      "first_review",
+      "second_review",
+      "confirmed",
+      "published",
+      "error",
+    ];
 
   if (
     typeof value ===
@@ -1126,6 +1326,10 @@ function safeNumber(
     ? number
     : 0;
 }
+
+/* =========================================================
+   Sleep
+   ========================================================= */
 
 function sleep(
   milliseconds: number
