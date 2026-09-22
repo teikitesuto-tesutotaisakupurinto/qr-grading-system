@@ -6,24 +6,21 @@ import {
 } from "@supabase/supabase-js";
 
 /* =========================================================
-   Configuration
+   Environment
    ========================================================= */
 
 const supabaseUrl =
   process.env
-    .NEXT_PUBLIC_SUPABASE_URL ??
-  "";
+    .NEXT_PUBLIC_SUPABASE_URL;
 
 const supabaseAnonKey =
   process.env
-    .NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  "";
+    .NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-/*
- * 答案画像専用Bucket。
- *
- * Supabase側で、この名前のBucketを作成する。
- */
+/* =========================================================
+   Bucket
+   ========================================================= */
+
 export const ANSWER_BUCKET =
   "answers";
 
@@ -32,8 +29,8 @@ export const ANSWER_BUCKET =
    ========================================================= */
 
 let client:
-  SupabaseClient | null =
-  null;
+  | SupabaseClient
+  | null = null;
 
 export function getSupabaseClient() {
   if (
@@ -43,11 +40,18 @@ export function getSupabaseClient() {
   }
 
   if (
-    !supabaseUrl ||
+    !supabaseUrl
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL が設定されていません。"
+    );
+  }
+
+  if (
     !supabaseAnonKey
   ) {
     throw new Error(
-      "Supabaseの環境変数が設定されていません。"
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY が設定されていません。"
     );
   }
 
@@ -64,7 +68,7 @@ export function getSupabaseClient() {
             true,
 
           detectSessionInUrl:
-            false,
+            true,
         },
       }
     );
@@ -72,14 +76,8 @@ export function getSupabaseClient() {
   return client;
 }
 
-export const supabase =
-  typeof window !==
-  "undefined"
-    ? getSupabaseClient()
-    : null;
-
 /* =========================================================
-   Storage path
+   Answer path
    ========================================================= */
 
 export function createAnswerStoragePath(
@@ -90,22 +88,22 @@ export function createAnswerStoragePath(
   extension: string
 ) {
   const organization =
-    sanitizePathPart(
+    sanitizePathSegment(
       organizationId
     );
 
   const test =
-    sanitizePathPart(
+    sanitizePathSegment(
       testId
     );
 
   const subject =
-    sanitizePathPart(
+    sanitizePathSegment(
       subjectId
     );
 
   const answer =
-    sanitizePathPart(
+    sanitizePathSegment(
       answerId
     );
 
@@ -116,8 +114,11 @@ export function createAnswerStoragePath(
 
   return [
     organization,
+    "tests",
     test,
+    "subjects",
     subject,
+    "answers",
     `${answer}.${ext}`,
   ].join("/");
 }
@@ -130,6 +131,9 @@ export async function uploadAnswerImage(
   file: File,
   storagePath: string
 ) {
+  const supabase =
+    getSupabaseClient();
+
   if (
     !file
   ) {
@@ -142,17 +146,27 @@ export async function uploadAnswerImage(
     !storagePath
   ) {
     throw new Error(
-      "答案画像の保存先がありません。"
+      "Storageパスがありません。"
     );
   }
 
-  const client =
-    getSupabaseClient();
+  const validation =
+    validateAnswerFile(
+      file
+    );
+
+  if (
+    !validation.valid
+  ) {
+    throw new Error(
+      validation.message
+    );
+  }
 
   const {
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
@@ -163,12 +177,11 @@ export async function uploadAnswerImage(
           cacheControl:
             "3600",
 
-          contentType:
-            file.type ||
-            "application/octet-stream",
-
           upsert:
             false,
+
+          contentType:
+            file.type,
         }
       );
 
@@ -181,7 +194,7 @@ export async function uploadAnswerImage(
     );
 
     throw new Error(
-      `答案画像のアップロードに失敗しました: ${error.message}`
+      `答案画像のアップロードに失敗しました。${error.message}`
     );
   }
 
@@ -202,37 +215,33 @@ export async function createAnswerSignedUrl(
   storagePath: string,
   expiresIn = 3600
 ) {
+  const supabase =
+    getSupabaseClient();
+
   if (
     !storagePath
   ) {
-    return null;
+    throw new Error(
+      "Storageパスがありません。"
+    );
   }
 
-  const client =
-    getSupabaseClient();
-
-  const safeExpires =
-    Math.min(
-      Math.max(
-        Math.floor(
-          expiresIn
-        ),
-        60
-      ),
-      86400
+  const seconds =
+    normalizeExpiresIn(
+      expiresIn
     );
 
   const {
     data,
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
       .createSignedUrl(
         storagePath,
-        safeExpires
+        seconds
       );
 
   if (
@@ -244,14 +253,19 @@ export async function createAnswerSignedUrl(
     );
 
     throw new Error(
-      `答案画像URLの発行に失敗しました: ${error.message}`
+      `答案画像URLの取得に失敗しました。${error.message}`
     );
   }
 
-  return (
-    data?.signedUrl ??
-    null
-  );
+  if (
+    !data?.signedUrl
+  ) {
+    throw new Error(
+      "答案画像URLが取得できませんでした。"
+    );
+  }
+
+  return data.signedUrl;
 }
 
 /* =========================================================
@@ -261,19 +275,19 @@ export async function createAnswerSignedUrl(
 export async function deleteAnswerImage(
   storagePath: string
 ) {
+  const supabase =
+    getSupabaseClient();
+
   if (
     !storagePath
   ) {
     return;
   }
 
-  const client =
-    getSupabaseClient();
-
   const {
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
@@ -290,147 +304,9 @@ export async function deleteAnswerImage(
     );
 
     throw new Error(
-      `答案画像の削除に失敗しました: ${error.message}`
+      `答案画像の削除に失敗しました。${error.message}`
     );
   }
-}
-
-/* =========================================================
-   Exists
-   ========================================================= */
-
-export async function answerImageExists(
-  storagePath: string
-) {
-  if (
-    !storagePath
-  ) {
-    return false;
-  }
-
-  const client =
-    getSupabaseClient();
-
-  const parts =
-    storagePath.split(
-      "/"
-    );
-
-  const fileName =
-    parts.pop();
-
-  if (
-    !fileName
-  ) {
-    return false;
-  }
-
-  const directory =
-    parts.join(
-      "/"
-    );
-
-  const {
-    data,
-    error,
-  } =
-    await client.storage
-      .from(
-        ANSWER_BUCKET
-      )
-      .list(
-        directory,
-        {
-          search:
-            fileName,
-        }
-      );
-
-  if (
-    error
-  ) {
-    console.error(
-      "Supabase answer existence check error:",
-      error
-    );
-
-    return false;
-  }
-
-  return (
-    data?.some(
-      (
-        item
-      ) =>
-        item.name ===
-        fileName
-    ) ??
-    false
-  );
-}
-
-/* =========================================================
-   Replace
-   ========================================================= */
-
-export async function replaceAnswerImage(
-  file: File,
-  storagePath: string
-) {
-  if (
-    !file
-  ) {
-    throw new Error(
-      "答案ファイルがありません。"
-    );
-  }
-
-  const client =
-    getSupabaseClient();
-
-  const {
-    error,
-  } =
-    await client.storage
-      .from(
-        ANSWER_BUCKET
-      )
-      .upload(
-        storagePath,
-        file,
-        {
-          cacheControl:
-            "3600",
-
-          contentType:
-            file.type ||
-            "application/octet-stream",
-
-          upsert:
-            true,
-        }
-      );
-
-  if (
-    error
-  ) {
-    console.error(
-      "Supabase answer replace error:",
-      error
-    );
-
-    throw new Error(
-      `答案画像の更新に失敗しました: ${error.message}`
-    );
-  }
-
-  return {
-    bucket:
-      ANSWER_BUCKET,
-
-    path:
-      storagePath,
-  };
 }
 
 /* =========================================================
@@ -438,31 +314,38 @@ export async function replaceAnswerImage(
    ========================================================= */
 
 export async function moveAnswerImage(
-  fromPath: string,
-  toPath: string
+  oldPath: string,
+  newPath: string
 ) {
+  const supabase =
+    getSupabaseClient();
+
   if (
-    !fromPath ||
-    !toPath
+    !oldPath
   ) {
     throw new Error(
-      "答案画像の移動元または移動先がありません。"
+      "移動元のStorageパスがありません。"
     );
   }
 
-  const client =
-    getSupabaseClient();
+  if (
+    !newPath
+  ) {
+    throw new Error(
+      "移動先のStorageパスがありません。"
+    );
+  }
 
   const {
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
       .move(
-        fromPath,
-        toPath
+        oldPath,
+        newPath
       );
 
   if (
@@ -474,9 +357,17 @@ export async function moveAnswerImage(
     );
 
     throw new Error(
-      `答案画像の移動に失敗しました: ${error.message}`
+      `答案画像の移動に失敗しました。${error.message}`
     );
   }
+
+  return {
+    bucket:
+      ANSWER_BUCKET,
+
+    path:
+      newPath,
+  };
 }
 
 /* =========================================================
@@ -484,31 +375,31 @@ export async function moveAnswerImage(
    ========================================================= */
 
 export async function copyAnswerImage(
-  fromPath: string,
-  toPath: string
+  sourcePath: string,
+  destinationPath: string
 ) {
+  const supabase =
+    getSupabaseClient();
+
   if (
-    !fromPath ||
-    !toPath
+    !sourcePath ||
+    !destinationPath
   ) {
     throw new Error(
-      "答案画像のコピー元またはコピー先がありません。"
+      "コピー元またはコピー先のStorageパスがありません。"
     );
   }
-
-  const client =
-    getSupabaseClient();
 
   const {
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
       .copy(
-        fromPath,
-        toPath
+        sourcePath,
+        destinationPath
       );
 
   if (
@@ -520,46 +411,45 @@ export async function copyAnswerImage(
     );
 
     throw new Error(
-      `答案画像のコピーに失敗しました: ${error.message}`
+      `答案画像のコピーに失敗しました。${error.message}`
     );
   }
+
+  return {
+    bucket:
+      ANSWER_BUCKET,
+
+    path:
+      destinationPath,
+  };
 }
 
 /* =========================================================
-   List answer files
+   List
    ========================================================= */
 
-export async function listAnswerFiles(
-  directory = "",
-  limit = 100
+export async function listAnswerImages(
+  folderPath = ""
 ) {
-  const client =
+  const supabase =
     getSupabaseClient();
-
-  const safeLimit =
-    Math.min(
-      Math.max(
-        Math.floor(
-          limit
-        ),
-        1
-      ),
-      1000
-    );
 
   const {
     data,
     error,
   } =
-    await client.storage
+    await supabase.storage
       .from(
         ANSWER_BUCKET
       )
       .list(
-        directory,
+        folderPath,
         {
           limit:
-            safeLimit,
+            1000,
+
+          offset:
+            0,
 
           sortBy: {
             column:
@@ -580,71 +470,56 @@ export async function listAnswerFiles(
     );
 
     throw new Error(
-      `答案画像一覧の取得に失敗しました: ${error.message}`
+      `答案画像一覧の取得に失敗しました。${error.message}`
     );
   }
 
-  return data ?? [];
+  return (
+    data ??
+    []
+  );
 }
 
 /* =========================================================
-   Download
-   ========================================================= */
-
-export async function downloadAnswerImage(
-  storagePath: string
-) {
-  if (
-    !storagePath
-  ) {
-    throw new Error(
-      "答案画像のパスがありません。"
-    );
-  }
-
-  const client =
-    getSupabaseClient();
-
-  const {
-    data,
-    error,
-  } =
-    await client.storage
-      .from(
-        ANSWER_BUCKET
-      )
-      .download(
-        storagePath
-      );
-
-  if (
-    error
-  ) {
-    console.error(
-      "Supabase answer download error:",
-      error
-    );
-
-    throw new Error(
-      `答案画像の取得に失敗しました: ${error.message}`
-    );
-  }
-
-  return data;
-}
-
-/* =========================================================
-   Validate image
+   File validation
    ========================================================= */
 
 export function validateAnswerFile(
   file: File
-) {
+):
+  | {
+      valid: true;
+
+      message: string;
+    }
+  | {
+      valid: false;
+
+      message: string;
+    } {
+  if (
+    !file
+  ) {
+    return {
+      valid:
+        false,
+
+      message:
+        "ファイルがありません。",
+    };
+  }
+
+  /*
+   * 許可形式。
+   */
   const allowedTypes =
     new Set([
       "image/jpeg",
+
       "image/png",
+
       "image/webp",
+
       "application/pdf",
     ]);
 
@@ -658,10 +533,15 @@ export function validateAnswerFile(
         false,
 
       message:
-        "JPEG、PNG、WebP、PDFの答案のみ登録できます。",
+        "答案はJPG・PNG・WebP・PDFのみ登録できます。",
     };
   }
 
+  /*
+   * 画像・PDFのサイズ上限。
+   *
+   * 20MB。
+   */
   const maxSize =
     20 *
     1024 *
@@ -698,15 +578,116 @@ export function validateAnswerFile(
       true,
 
     message:
-      "",
+      "OK",
   };
 }
 
 /* =========================================================
-   Path sanitization
+   Extension
    ========================================================= */
 
-function sanitizePathPart(
+export function getStorageExtension(
+  file: File
+) {
+  const name =
+    file.name
+      .split(
+        "."
+      )
+      .pop()
+      ?.toLowerCase();
+
+  if (
+    name &&
+    isAllowedExtension(
+      name
+    )
+  ) {
+    return name;
+  }
+
+  switch (
+    file.type
+  ) {
+    case "image/jpeg":
+      return "jpg";
+
+    case "image/png":
+      return "png";
+
+    case "image/webp":
+      return "webp";
+
+    case "application/pdf":
+      return "pdf";
+
+    default:
+      return "bin";
+  }
+}
+
+/* =========================================================
+   MIME
+   ========================================================= */
+
+export function isImageContentType(
+  contentType: string
+) {
+  return (
+    contentType ===
+      "image/jpeg" ||
+    contentType ===
+      "image/png" ||
+    contentType ===
+      "image/webp"
+  );
+}
+
+export function isPdfContentType(
+  contentType: string
+) {
+  return (
+    contentType ===
+    "application/pdf"
+  );
+}
+
+/* =========================================================
+   Filename
+   ========================================================= */
+
+export function sanitizeFileName(
+  fileName: string
+) {
+  const name =
+    fileName
+      .trim()
+      .replace(
+        /[\\/:*?"<>|]/g,
+        "_"
+      )
+      .replace(
+        /\s+/g,
+        "_"
+      );
+
+  if (
+    !name
+  ) {
+    return "answer";
+  }
+
+  return name.slice(
+    0,
+    180
+  );
+}
+
+/* =========================================================
+   Path sanitizer
+   ========================================================= */
+
+function sanitizePathSegment(
   value: string
 ) {
   return value
@@ -714,26 +695,80 @@ function sanitizePathPart(
     .replace(
       /[^a-zA-Z0-9_-]/g,
       "_"
+    )
+    .replace(
+      /_+/g,
+      "_"
+    )
+    .slice(
+      0,
+      120
     );
 }
 
 function sanitizeExtension(
   value: string
 ) {
-  const cleaned =
+  const extension =
     value
+      .trim()
+      .toLowerCase()
       .replace(
-        /^\./,
+        /[^a-z0-9]/g,
         ""
-      )
-      .replace(
-        /[^a-zA-Z0-9]/g,
-        ""
-      )
-      .toLowerCase();
+      );
 
-  return (
-    cleaned ||
-    "bin"
+  if (
+    isAllowedExtension(
+      extension
+    )
+  ) {
+    return extension;
+  }
+
+  return "bin";
+}
+
+function isAllowedExtension(
+  extension: string
+) {
+  return [
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
+    "pdf",
+  ].includes(
+    extension
+  );
+}
+
+/* =========================================================
+   Expiration
+   ========================================================= */
+
+function normalizeExpiresIn(
+  value: number
+) {
+  if (
+    !Number.isFinite(
+      value
+    )
+  ) {
+    return 3600;
+  }
+
+  /*
+   * Supabaseの署名URLを
+   * 長時間固定で公開し続けない。
+   */
+  return Math.min(
+    Math.max(
+      Math.floor(
+        value
+      ),
+      60
+    ),
+    86400
   );
 }
