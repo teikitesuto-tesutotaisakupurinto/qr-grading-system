@@ -4,295 +4,142 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
   serverTimestamp,
-  setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 
 import {
-  auth,
+  httpsCallable,
+} from "firebase/functions";
+
+import {
   db,
 } from "@/lib/firebase";
 
 import {
-  getAppUser,
-} from "@/lib/auth";
-
-import {
-  ANSWER_BUCKET,
-  createAnswerSignedUrl,
-  createAnswerStoragePath,
-  deleteAnswerImage,
-  getSupabaseClient,
-  uploadAnswerImage,
-  validateAnswerFile,
-} from "@/lib/supabase";
-
-import type {
-  Answer,
-  AnswerStatus,
-  UserRole,
-} from "@/lib/types";
+  functions,
+} from "@/lib/firebaseFunctions";
 
 /* =========================================================
-   Types
+   Answer
    ========================================================= */
 
-export type CreateAnswerInput = {
-  organizationId: string;
+export type AnswerStatus =
+  | "uploaded"
+  | "processing"
+  | "graded"
+  | "first_review"
+  | "second_review"
+  | "confirmed"
+  | "published"
+  | "error";
 
-  schoolId: string;
+export type Answer = {
+  id: string;
 
   testId: string;
 
   subjectId: string;
 
-  studentId:
-    | string
-    | null;
+  studentNumber?: string;
 
-  studentNumber:
-    | string
-    | null;
+  fileKey: string;
 
-  file: File;
+  fileName: string;
+
+  contentType: string;
+
+  size: number;
+
+  status: AnswerStatus;
+
+  reviewRequired?: boolean;
+
+  processingError?: string;
+
+  totalScore?: number;
+
+  totalMaxScore?: number;
+
+  qrText?: string;
+
+  qrConfidence?: number;
+
+  ocrConfidence?: number;
+
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
+
+  processedAt?: unknown;
 };
 
-export type AnswerWithUrl =
-  Answer & {
-    signedUrl: string;
-  };
-
 /* =========================================================
-   Create answer
+   Grading Job
    ========================================================= */
 
-export async function createAnswer(
-  input: CreateAnswerInput
-) {
-  const user =
-    await getAppUser();
+export type GradingJobStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+  | string;
 
-  if (
-    !user
-  ) {
-    throw new Error(
-      "ログインしてください。"
-    );
-  }
+export type GradingJob = {
+  id: string;
 
-  assertAnswerManager(
-    user.role
-  );
+  testId?: string;
 
-  if (
-    !user.organizationId
-  ) {
-    throw new Error(
-      "所属組織が設定されていません。"
-    );
-  }
+  subjectId?: string;
 
-  /*
-   * クライアントから送られたorganizationIdを
-   * そのまま信用しない。
-   */
-  if (
-    input.organizationId !==
-    user.organizationId
-  ) {
-    throw new Error(
-      "所属組織が一致しません。"
-    );
-  }
+  requestedBy?: string;
 
-  /*
-   * 校舎権限。
-   */
-  if (
-    user.role !==
-    "本部管理者"
-  ) {
-    if (
-      !user.schoolIds.includes(
-        input.schoolId
-      )
-    ) {
-      throw new Error(
-        "この校舎の答案を登録する権限がありません。"
-      );
-    }
-  }
+  status: GradingJobStatus;
 
-  /*
-   * ファイル検証。
-   */
-  const validation =
-    validateAnswerFile(
-      input.file
-    );
+  total: number;
 
-  if (
-    !validation.valid
-  ) {
-    throw new Error(
-      validation.message
-    );
-  }
+  processed: number;
 
-  /*
-   * 答案IDを先に作成。
-   *
-   * Supabase Storageのパスにも
-   * このIDを利用する。
-   */
-  const answerRef =
-    doc(
-      collection(
-        db,
-        "answers"
-      )
-    );
+  succeeded: number;
 
-  const answerId =
-    answerRef.id;
+  reviewRequired: number;
 
-  const extension =
-    getFileExtension(
-      input.file
-    );
+  errors: number;
 
-  const storagePath =
-    createAnswerStoragePath(
-      input.organizationId,
-      input.testId,
-      input.subjectId,
-      answerId,
-      extension
-    );
+  currentChunk: number;
 
-  /*
-   * 先にStorageへ画像を保存。
-   */
-  await uploadAnswerImage(
-    input.file,
-    storagePath
-  );
+  totalChunks: number;
 
-  try {
-    /*
-     * Firestoreには画像本体を保存しない。
-     */
-    await setDoc(
-      answerRef,
-      {
-        organizationId:
-          input.organizationId,
+  errorMessage?: string;
 
-        schoolId:
-          input.schoolId,
+  createdAt?: unknown;
 
-        testId:
-          input.testId,
+  updatedAt?: unknown;
 
-        subjectId:
-          input.subjectId,
+  startedAt?: unknown;
 
-        studentId:
-          input.studentId,
+  completedAt?: unknown;
+};
 
-        studentNumber:
-          input.studentNumber,
+/* =========================================================
+   Upload response
+   ========================================================= */
 
-        /*
-         * Supabase Storageの
-         * bucket内パス。
-         */
-        fileKey:
-          storagePath,
+type CreateUploadUrlResponse = {
+  success: boolean;
 
-        fileName:
-          input.file.name,
+  answerId: string;
 
-        contentType:
-          input.file.type,
+  fileKey: string;
 
-        size:
-          input.file.size,
-
-        status:
-          "uploaded",
-
-        reviewRequired:
-          false,
-
-        totalScore:
-          0,
-
-        totalMaxScore:
-          0,
-
-        qrText:
-          "",
-
-        qrConfidence:
-          0,
-
-        ocrConfidence:
-          0,
-
-        processingError:
-          "",
-
-        uploadedBy:
-          user.uid,
-
-        createdAt:
-          serverTimestamp(),
-
-        updatedAt:
-          serverTimestamp(),
-
-        processedAt:
-          null,
-
-        confirmedAt:
-          null,
-      }
-    );
-  } catch (
-    error
-  ) {
-    /*
-     * Firestore登録に失敗したら
-     * Storage側に孤児ファイルを残さない。
-     */
-    try {
-      await deleteAnswerImage(
-        storagePath
-      );
-    } catch (
-      cleanupError
-    ) {
-      console.error(
-        "Answer storage cleanup error:",
-        cleanupError
-      );
-    }
-
-    throw error;
-  }
-
-  return {
-    id:
-      answerId,
-
-    storagePath,
-
-    bucket:
-      ANSWER_BUCKET,
-  };
-}
+  uploadUrl: string;
+};
 
 /* =========================================================
    Get answer
@@ -300,34 +147,22 @@ export async function createAnswer(
 
 export async function getAnswer(
   answerId: string
-) {
+): Promise<Answer | null> {
   if (
-    !answerId
-  ) {
-    return null;
-  }
-
-  const user =
-    await getAppUser();
-
-  if (
-    !user
+    !answerId.trim()
   ) {
     throw new Error(
-      "ログインしてください。"
+      "answerIdが指定されていません。"
     );
   }
-
-  const answerRef =
-    doc(
-      db,
-      "answers",
-      answerId
-    );
 
   const snapshot =
     await getDoc(
-      answerRef
+      doc(
+        db,
+        "answers",
+        answerId
+      )
     );
 
   if (
@@ -336,26 +171,223 @@ export async function getAnswer(
     return null;
   }
 
-  const data =
-    snapshot.data();
+  return normalizeAnswer(
+    snapshot.id,
+    snapshot.data()
+  );
+}
 
-  const answer =
-    normalizeAnswer(
-      snapshot.id,
-      data
-    );
+/* =========================================================
+   Get answers
+   ========================================================= */
 
-  /*
-   * アプリ側でも必ず権限確認。
-   */
+export async function getAnswers(
+  testId: string,
+  subjectId: string,
+  status?: AnswerStatus
+): Promise<Answer[]> {
   if (
-    !canViewAnswer(
-      answer,
-      user
-    )
+    !testId.trim()
   ) {
     throw new Error(
-      "この答案を閲覧する権限がありません。"
+      "testIdが指定されていません。"
+    );
+  }
+
+  if (
+    !subjectId.trim()
+  ) {
+    throw new Error(
+      "subjectIdが指定されていません。"
+    );
+  }
+
+  const conditions = [
+    where(
+      "testId",
+      "==",
+      testId
+    ),
+
+    where(
+      "subjectId",
+      "==",
+      subjectId
+    ),
+  ];
+
+  if (
+    status
+  ) {
+    conditions.push(
+      where(
+        "status",
+        "==",
+        status
+      )
+    );
+  }
+
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "answers"
+        ),
+        ...conditions,
+        orderBy(
+          "createdAt",
+          "asc"
+        ),
+        limit(
+          1000
+        )
+      )
+    );
+
+  return snapshot.docs.map(
+    (
+      item
+    ) =>
+      normalizeAnswer(
+        item.id,
+        item.data()
+      )
+  );
+}
+
+/* =========================================================
+   Upload URL
+   ========================================================= */
+
+async function requestUploadUrl(
+  input: {
+    testId: string;
+
+    subjectId: string;
+
+    fileName: string;
+
+    contentType: string;
+
+    size: number;
+
+    studentNumber?: string;
+  }
+): Promise<CreateUploadUrlResponse> {
+  const callable =
+    httpsCallable<
+      {
+        testId: string;
+
+        subjectId: string;
+
+        fileName: string;
+
+        contentType: string;
+
+        size: number;
+
+        studentNumber?: string;
+      },
+      CreateUploadUrlResponse
+    >(
+      functions,
+      "createAnswerUploadUrl"
+    );
+
+  const result =
+    await callable(
+      input
+    );
+
+  return result.data;
+}
+
+/* =========================================================
+   Upload answer
+   ========================================================= */
+
+export async function uploadAnswer(
+  input: {
+    testId: string;
+
+    subjectId: string;
+
+    studentNumber?: string;
+
+    file: File;
+  }
+): Promise<Answer> {
+  validateFile(
+    input.file
+  );
+
+  const upload =
+    await requestUploadUrl({
+      testId:
+        input.testId,
+
+      subjectId:
+        input.subjectId,
+
+      fileName:
+        input.file.name,
+
+      contentType:
+        input.file.type,
+
+      size:
+        input.file.size,
+
+      studentNumber:
+        input.studentNumber,
+    });
+
+  if (
+    !upload.success
+  ) {
+    throw new Error(
+      "答案アップロードURLを取得できませんでした。"
+    );
+  }
+
+  const response =
+    await fetch(
+      upload.uploadUrl,
+      {
+        method:
+          "PUT",
+
+        headers: {
+          "Content-Type":
+            input.file.type,
+        },
+
+        body:
+          input.file,
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `答案ファイルのアップロードに失敗しました。HTTP ${response.status}`
+    );
+  }
+
+  const answer =
+    await getAnswer(
+      upload.answerId
+    );
+
+  if (
+    !answer
+  ) {
+    throw new Error(
+      "アップロードした答案情報を取得できませんでした。"
     );
   }
 
@@ -363,93 +395,63 @@ export async function getAnswer(
 }
 
 /* =========================================================
-   Get answer with signed URL
+   Upload answers
    ========================================================= */
 
-export async function getAnswerWithUrl(
-  answerId: string
-): Promise<
-  AnswerWithUrl | null
-> {
-  const answer =
-    await getAnswer(
-      answerId
+export async function uploadAnswers(
+  inputs: Array<{
+    testId: string;
+
+    subjectId: string;
+
+    studentNumber?: string;
+
+    file: File;
+  }>,
+  onProgress?: (
+    completed: number,
+    total: number
+  ) => void
+): Promise<Answer[]> {
+  const results: Answer[] = [];
+
+  for (
+    let index = 0;
+    index <
+    inputs.length;
+    index++
+  ) {
+    const answer =
+      await uploadAnswer(
+        inputs[index]
+      );
+
+    results.push(
+      answer
     );
 
-  if (
-    !answer
-  ) {
-    return null;
+    onProgress?.(
+      index + 1,
+      inputs.length
+    );
   }
 
-  if (
-    !answer.fileKey
-  ) {
-    throw new Error(
-      "答案画像の保存先が設定されていません。"
-    );
-  }
-
-  const signedUrl =
-    await createAnswerSignedUrl(
-      answer.fileKey,
-      3600
-    );
-
-  if (
-    !signedUrl
-  ) {
-    throw new Error(
-      "答案画像URLを取得できませんでした。"
-    );
-  }
-
-  return {
-    ...answer,
-
-    signedUrl,
-  };
+  return results;
 }
 
 /* =========================================================
-   Update answer status
+   Status
    ========================================================= */
 
 export async function updateAnswerStatus(
   answerId: string,
-  status: AnswerStatus,
-  extra:
-    | Record<
-        string,
-        unknown
-      >
-    | undefined = undefined
-) {
-  const user =
-    await getAppUser();
-
+  status: AnswerStatus
+): Promise<void> {
   if (
-    !user
+    !answerId.trim()
   ) {
     throw new Error(
-      "ログインしてください。"
-    );
-  }
-
-  assertAnswerManager(
-    user.role
-  );
-
-  const answer =
-    await getAnswer(
-      answerId
-    );
-
-  if (
-    !answer
-  ) {
-    throw new Error(
-      "答案が見つかりません。"
+      "answerIdが指定されていません。"
     );
   }
 
@@ -462,9 +464,6 @@ export async function updateAnswerStatus(
     {
       status,
 
-      ...(extra ??
-        {}),
-
       updatedAt:
         serverTimestamp(),
     }
@@ -472,168 +471,20 @@ export async function updateAnswerStatus(
 }
 
 /* =========================================================
-   Processing state
+   Assign student
    ========================================================= */
 
-export async function markAnswerProcessing(
-  answerId: string
-) {
-  await updateAnswerStatus(
-    answerId,
-    "processing",
-    {
-      processingError:
-        "",
-    }
-  );
-}
-
-/* =========================================================
-   Mark grading completed
-   ========================================================= */
-
-export async function markAnswerGraded(
+export async function assignAnswerStudent(
   answerId: string,
-  totalScore: number,
-  totalMaxScore: number,
-  reviewRequired: boolean
-) {
-  await updateAnswerStatus(
-    answerId,
-    reviewRequired
-      ? "first_review"
-      : "graded",
-    {
-      totalScore:
-        safeNumber(
-          totalScore
-        ),
-
-      totalMaxScore:
-        safeNumber(
-          totalMaxScore
-        ),
-
-      reviewRequired:
-        reviewRequired,
-
-      processingError:
-        "",
-    }
-  );
-}
-
-/* =========================================================
-   Mark error
-   ========================================================= */
-
-export async function markAnswerError(
-  answerId: string,
-  message: string
-) {
-  await updateAnswerStatus(
-    answerId,
-    "error",
-    {
-      processingError:
-        message,
-
-      reviewRequired:
-        false,
-    }
-  );
-}
-
-/* =========================================================
-   Update QR
-   ========================================================= */
-
-export async function updateAnswerQR(
-  answerId: string,
-  qrText: string,
-  confidence: number
-) {
-  await updateAnswerStatus(
-    answerId,
-    "processing",
-    {
-      qrText:
-        qrText.trim(),
-
-      qrConfidence:
-        normalizeConfidence(
-          confidence
-        ),
-    }
-  );
-}
-
-/* =========================================================
-   Update OCR
-   ========================================================= */
-
-export async function updateAnswerOCR(
-  answerId: string,
-  confidence: number
-) {
-  await updateAnswerStatus(
-    answerId,
-    "processing",
-    {
-      ocrConfidence:
-        normalizeConfidence(
-          confidence
-        ),
-    }
-  );
-}
-
-/* =========================================================
-   Confirm answer
-   ========================================================= */
-
-export async function confirmAnswer(
-  answerId: string
-) {
-  const user =
-    await getAppUser();
-
+  studentNumber: string
+): Promise<void> {
   if (
-    !user
+    !/^\d{6}$/.test(
+      studentNumber
+    )
   ) {
     throw new Error(
-      "ログインしてください。"
-    );
-  }
-
-  if (
-    user.role ===
-    "生徒"
-  ) {
-    throw new Error(
-      "答案を確定する権限がありません。"
-    );
-  }
-
-  const answer =
-    await getAnswer(
-      answerId
-    );
-
-  if (
-    !answer
-  ) {
-    throw new Error(
-      "答案が見つかりません。"
-    );
-  }
-
-  if (
-    answer.status !==
-    "second_review"
-  ) {
-    throw new Error(
-      "二次確認済みの答案だけ確定できます。"
+      "生徒番号は6桁数字で指定してください。"
     );
   }
 
@@ -644,11 +495,7 @@ export async function confirmAnswer(
       answerId
     ),
     {
-      status:
-        "confirmed",
-
-      confirmedAt:
-        serverTimestamp(),
+      studentNumber,
 
       updatedAt:
         serverTimestamp(),
@@ -657,282 +504,288 @@ export async function confirmAnswer(
 }
 
 /* =========================================================
-   Publish answer
+   Start auto grading
    ========================================================= */
 
-export async function publishAnswer(
-  answerId: string
+export async function startAutoGrading(
+  testId: string,
+  subjectId: string,
+  answerIds: string[]
 ) {
-  const user =
-    await getAppUser();
-
   if (
-    !user
+    !testId.trim()
   ) {
     throw new Error(
-      "ログインしてください。"
+      "testIdが指定されていません。"
     );
   }
 
   if (
-    user.role ===
-    "生徒"
+    !subjectId.trim()
   ) {
     throw new Error(
-      "答案を公開する権限がありません。"
+      "subjectIdが指定されていません。"
     );
   }
 
-  const answer =
-    await getAnswer(
-      answerId
+  const uniqueIds =
+    Array.from(
+      new Set(
+        answerIds.filter(
+          (
+            id
+          ): id is string =>
+            typeof id ===
+              "string" &&
+            id.trim() !== ""
+        )
+      )
     );
 
   if (
-    !answer
+    uniqueIds.length ===
+    0
   ) {
     throw new Error(
-      "答案が見つかりません。"
+      "処理対象の答案がありません。"
     );
   }
 
-  if (
-    answer.status !==
-    "confirmed"
-  ) {
-    throw new Error(
-      "確定済みの答案だけ公開できます。"
+  const callable =
+    httpsCallable<
+      {
+        testId: string;
+
+        subjectId: string;
+
+        answerIds: string[];
+      },
+      {
+        success: boolean;
+
+        jobId: string;
+
+        total: number;
+
+        status: string;
+      }
+    >(
+      functions,
+      "startAnswerProcessing"
     );
-  }
 
-  await updateDoc(
-    doc(
-      db,
-      "answers",
-      answerId
-    ),
-    {
-      status:
-        "published",
+  const result =
+    await callable({
+      testId,
 
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
+      subjectId,
+
+      answerIds:
+        uniqueIds,
+    });
+
+  return result.data;
 }
 
 /* =========================================================
-   Replace image
+   Get grading job
    ========================================================= */
 
-export async function replaceAnswerFile(
-  answerId: string,
-  file: File
-) {
-  const user =
-    await getAppUser();
-
+export async function getGradingJob(
+  jobId: string
+): Promise<GradingJob | null> {
   if (
-    !user
+    !jobId.trim()
   ) {
     throw new Error(
-      "ログインしてください。"
+      "jobIdが指定されていません。"
     );
   }
 
-  assertAnswerManager(
-    user.role
-  );
-
-  const answer =
-    await getAnswer(
-      answerId
-    );
-
-  if (
-    !answer
-  ) {
-    throw new Error(
-      "答案が見つかりません。"
-    );
-  }
-
-  const validation =
-    validateAnswerFile(
-      file
-    );
-
-  if (
-    !validation.valid
-  ) {
-    throw new Error(
-      validation.message
-    );
-  }
-
-  const extension =
-    getFileExtension(
-      file
-    );
-
-  const newPath =
-    createAnswerStoragePath(
-      answer.organizationId,
-      answer.testId,
-      answer.subjectId,
-      answer.id,
-      extension
-    );
-
-  /*
-   * 新しいファイルを先にアップロード。
-   */
-  await uploadAnswerImage(
-    file,
-    newPath
-  );
-
-  try {
-    await updateDoc(
+  const snapshot =
+    await getDoc(
       doc(
         db,
-        "answers",
-        answerId
-      ),
-      {
-        fileKey:
-          newPath,
-
-        fileName:
-          file.name,
-
-        contentType:
-          file.type,
-
-        size:
-          file.size,
-
-        /*
-         * 画像が変わったので
-         * 再処理対象に戻す。
-         */
-        status:
-          "uploaded",
-
-        reviewRequired:
-          false,
-
-        totalScore:
-          0,
-
-        totalMaxScore:
-          0,
-
-        qrText:
-          "",
-
-        qrConfidence:
-          0,
-
-        ocrConfidence:
-          0,
-
-        processingError:
-          "",
-
-        processedAt:
-          null,
-
-        confirmedAt:
-          null,
-
-        updatedAt:
-          serverTimestamp(),
-      }
+        "gradingJobs",
+        jobId
+      )
     );
-  } catch (
-    error
-  ) {
-    try {
-      await deleteAnswerImage(
-        newPath
-      );
-    } catch (
-      cleanupError
-    ) {
-      console.error(
-        "Replacement cleanup error:",
-        cleanupError
-      );
-    }
 
-    throw error;
-  }
-
-  /*
-   * 古い画像はFirestore更新成功後に削除。
-   */
   if (
-    answer.fileKey &&
-    answer.fileKey !==
-      newPath
+    !snapshot.exists()
   ) {
-    try {
-      await deleteAnswerImage(
-        answer.fileKey
-      );
-    } catch (
-      cleanupError
-    ) {
-      /*
-       * 古いファイル削除失敗は
-       * 新しい答案自体を無効にはしない。
-       */
-      console.error(
-        "Old answer image cleanup error:",
-        cleanupError
-      );
-    }
+    return null;
   }
+
+  const data =
+    snapshot.data();
 
   return {
-    path:
-      newPath,
+    id:
+      snapshot.id,
+
+    testId:
+      stringValue(
+        data.testId
+      ),
+
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
+
+    requestedBy:
+      stringValue(
+        data.requestedBy
+      ),
+
+    status:
+      stringValue(
+        data.status
+      ) ||
+      "queued",
+
+    total:
+      safeNumber(
+        data.total
+      ),
+
+    processed:
+      safeNumber(
+        data.processed
+      ),
+
+    succeeded:
+      safeNumber(
+        data.succeeded
+      ),
+
+    reviewRequired:
+      safeNumber(
+        data.reviewRequired
+      ),
+
+    errors:
+      safeNumber(
+        data.errors
+      ),
+
+    currentChunk:
+      safeNumber(
+        data.currentChunk
+      ),
+
+    totalChunks:
+      safeNumber(
+        data.totalChunks
+      ),
+
+    errorMessage:
+      stringValue(
+        data.errorMessage
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    startedAt:
+      data.startedAt,
+
+    completedAt:
+      data.completedAt,
   };
 }
 
 /* =========================================================
-   Delete answer
+   Wait
    ========================================================= */
 
-export async function deleteAnswer(
+export async function waitForGradingJob(
+  jobId: string,
+  options?: {
+    intervalMs?: number;
+
+    timeoutMs?: number;
+
+    onUpdate?: (
+      job: GradingJob
+    ) => void;
+  }
+): Promise<GradingJob> {
+  const intervalMs =
+    options?.intervalMs ??
+    2000;
+
+  const timeoutMs =
+    options?.timeoutMs ??
+    10 *
+      60 *
+      1000;
+
+  const started =
+    Date.now();
+
+  while (
+    Date.now() -
+      started <
+    timeoutMs
+  ) {
+    const job =
+      await getGradingJob(
+        jobId
+      );
+
+    if (
+      !job
+    ) {
+      throw new Error(
+        "採点ジョブが見つかりません。"
+      );
+    }
+
+    options?.onUpdate?.(
+      job
+    );
+
+    if (
+      job.status ===
+        "completed" ||
+      job.status ===
+        "completed_with_errors"
+    ) {
+      return job;
+    }
+
+    if (
+      job.status ===
+      "failed"
+    ) {
+      throw new Error(
+        job.errorMessage ||
+          "答案処理ジョブが失敗しました。"
+      );
+    }
+
+    await sleep(
+      intervalMs
+    );
+  }
+
+  throw new Error(
+    "答案処理ジョブがタイムアウトしました。"
+  );
+}
+
+/* =========================================================
+   Retry
+   ========================================================= */
+
+export async function retryAnswer(
   answerId: string
 ) {
-  const user =
-    await getAppUser();
-
-  if (
-    !user
-  ) {
-    throw new Error(
-      "ログインしてください。"
-    );
-  }
-
-  /*
-   * 答案削除は管理者のみ。
-   */
-  if (
-    user.role !==
-      "本部管理者" &&
-    user.role !==
-      "校舎管理者"
-  ) {
-    throw new Error(
-      "答案を削除する権限がありません。"
-    );
-  }
-
   const answer =
     await getAnswer(
       answerId
@@ -942,145 +795,102 @@ export async function deleteAnswer(
     !answer
   ) {
     throw new Error(
-      "答案が見つかりません。"
+      "答案が存在しません。"
     );
   }
 
-  /*
-   * Firestoreを先に削除すると
-   * Storage削除失敗時に孤児ファイルが残るため、
-   * 先にStorageを削除する。
-   */
-  if (
-    answer.fileKey
-  ) {
-    await deleteAnswerImage(
-      answer.fileKey
-    );
-  }
+  await updateAnswerStatus(
+    answerId,
+    "uploaded"
+  );
 
-  /*
-   * Firestore側は直接deleteではなく、
-   * この関数から一元管理。
-   */
-  const answerRef =
-    doc(
-      db,
-      "answers",
-      answerId
-    );
-
-  const {
-    deleteDoc,
-  } =
-    await import(
-      "firebase/firestore"
-    );
-
-  await deleteDoc(
-    answerRef
+  return startAutoGrading(
+    answer.testId,
+    answer.subjectId,
+    [
+      answerId,
+    ]
   );
 }
 
 /* =========================================================
-   Access
+   Review transitions
    ========================================================= */
 
-function canViewAnswer(
-  answer: Answer,
-  user: Awaited<
-    ReturnType<
-      typeof getAppUser
-    >
-  >
+export async function moveToFirstReview(
+  answerIds: string[]
 ) {
-  if (
-    !user
-  ) {
-    return false;
-  }
+  await updateStatuses(
+    answerIds,
+    "first_review"
+  );
+}
 
-  if (
-    !user.organizationId ||
-    answer.organizationId !==
-      user.organizationId
-  ) {
-    return false;
-  }
+export async function moveToSecondReview(
+  answerIds: string[]
+) {
+  await updateStatuses(
+    answerIds,
+    "second_review"
+  );
+}
 
-  /*
-   * 本部管理者
-   */
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return true;
-  }
+export async function confirmAnswers(
+  answerIds: string[]
+) {
+  await updateStatuses(
+    answerIds,
+    "confirmed"
+  );
+}
 
-  /*
-   * 校舎管理者
-   */
-  if (
-    user.role ===
-    "校舎管理者"
-  ) {
-    return user.schoolIds.includes(
-      answer.schoolId
-    );
-  }
-
-  /*
-   * 講師
-   */
-  if (
-    user.role ===
-    "講師"
-  ) {
-    return user.schoolIds.includes(
-      answer.schoolId
-    );
-  }
-
-  /*
-   * 生徒
-   */
-  if (
-    user.role ===
-    "生徒"
-  ) {
-    return (
-      Boolean(
-        user.studentId
-      ) &&
-      answer.studentId ===
-        user.studentId
-    );
-  }
-
-  return false;
+export async function publishAnswers(
+  answerIds: string[]
+) {
+  await updateStatuses(
+    answerIds,
+    "published"
+  );
 }
 
 /* =========================================================
-   Permission
+   Bulk status
    ========================================================= */
 
-function assertAnswerManager(
-  role: UserRole
+async function updateStatuses(
+  answerIds: string[],
+  status: AnswerStatus
 ) {
-  const allowed =
-    role ===
-      "本部管理者" ||
-    role ===
-      "校舎管理者" ||
-    role ===
-      "講師";
+  const ids =
+    Array.from(
+      new Set(
+        answerIds.filter(
+          (
+            id
+          ): id is string =>
+            typeof id ===
+              "string" &&
+            id.trim() !== ""
+        )
+      )
+    );
 
   if (
-    !allowed
+    ids.length ===
+    0
   ) {
     throw new Error(
-      "答案を管理する権限がありません。"
+      "対象答案がありません。"
+    );
+  }
+
+  for (
+    const answerId of
+      ids
+  ) {
+    await updateAnswerStatus(
+      answerId,
+      status
     );
   }
 }
@@ -1099,16 +909,6 @@ function normalizeAnswer(
   return {
     id,
 
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
     testId:
       stringValue(
         data.testId
@@ -1119,15 +919,11 @@ function normalizeAnswer(
         data.subjectId
       ),
 
-    studentId:
-      nullableString(
-        data.studentId
-      ),
-
     studentNumber:
       nullableString(
         data.studentNumber
-      ),
+      ) ??
+      undefined,
 
     fileKey:
       stringValue(
@@ -1150,43 +946,59 @@ function normalizeAnswer(
       ),
 
     status:
-      normalizeStatus(
+      normalizeAnswerStatus(
         data.status
       ),
 
     reviewRequired:
-      data.reviewRequired ===
-      true,
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
-
-    qrText:
-      stringValue(
-        data.qrText
-      ),
-
-    qrConfidence:
-      safeNumber(
-        data.qrConfidence
-      ),
-
-    ocrConfidence:
-      safeNumber(
-        data.ocrConfidence
-      ),
+      typeof data.reviewRequired ===
+      "boolean"
+        ? data.reviewRequired
+        : undefined,
 
     processingError:
-      stringValue(
+      nullableString(
         data.processingError
-      ),
+      ) ??
+      undefined,
+
+    totalScore:
+      data.totalScore !==
+      undefined
+        ? safeNumber(
+            data.totalScore
+          )
+        : undefined,
+
+    totalMaxScore:
+      data.totalMaxScore !==
+      undefined
+        ? safeNumber(
+            data.totalMaxScore
+          )
+        : undefined,
+
+    qrText:
+      nullableString(
+        data.qrText
+      ) ??
+      undefined,
+
+    qrConfidence:
+      data.qrConfidence !==
+      undefined
+        ? safeNumber(
+            data.qrConfidence
+          )
+        : undefined,
+
+    ocrConfidence:
+      data.ocrConfidence !==
+      undefined
+        ? safeNumber(
+            data.ocrConfidence
+          )
+        : undefined,
 
     createdAt:
       data.createdAt,
@@ -1196,122 +1008,85 @@ function normalizeAnswer(
 
     processedAt:
       data.processedAt,
-
-    confirmedAt:
-      data.confirmedAt,
   };
+}
+
+/* =========================================================
+   File validation
+   ========================================================= */
+
+function validateFile(
+  file: File
+) {
+  const allowedTypes = [
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+  ];
+
+  if (
+    !allowedTypes.includes(
+      file.type
+    )
+  ) {
+    throw new Error(
+      "PDF・JPG・PNGのみアップロードできます。"
+    );
+  }
+
+  const maxSize =
+    20 *
+    1024 *
+    1024;
+
+  if (
+    file.size <=
+    0
+  ) {
+    throw new Error(
+      "空のファイルはアップロードできません。"
+    );
+  }
+
+  if (
+    file.size >
+    maxSize
+  ) {
+    throw new Error(
+      "答案ファイルは20MB以下にしてください。"
+    );
+  }
 }
 
 /* =========================================================
    Status
    ========================================================= */
 
-function normalizeStatus(
+function normalizeAnswerStatus(
   value: unknown
 ): AnswerStatus {
-  switch (
-    value
-  ) {
-    case "uploaded":
-    case "processing":
-    case "graded":
-    case "first_review":
-    case "second_review":
-    case "confirmed":
-    case "published":
-    case "error":
-      return value;
-
-    default:
-      return "uploaded";
-  }
-}
-
-/* =========================================================
-   File extension
-   ========================================================= */
-
-function getFileExtension(
-  file: File
-) {
-  const name =
-    file.name
-      .split(
-        "."
-      )
-      .pop()
-      ?.toLowerCase();
+  const statuses: AnswerStatus[] = [
+    "uploaded",
+    "processing",
+    "graded",
+    "first_review",
+    "second_review",
+    "confirmed",
+    "published",
+    "error",
+  ];
 
   if (
-    name
-  ) {
-    return name;
-  }
-
-  switch (
-    file.type
-  ) {
-    case "image/jpeg":
-      return "jpg";
-
-    case "image/png":
-      return "png";
-
-    case "image/webp":
-      return "webp";
-
-    case "application/pdf":
-      return "pdf";
-
-    default:
-      return "bin";
-  }
-}
-
-/* =========================================================
-   Confidence
-   ========================================================= */
-
-function normalizeConfidence(
-  value: number
-) {
-  const number =
-    Number(
-      value
-    );
-
-  if (
-    !Number.isFinite(
-      number
+    typeof value ===
+      "string" &&
+    statuses.includes(
+      value as AnswerStatus
     )
   ) {
-    return 0;
+    return value as AnswerStatus;
   }
 
-  /*
-   * 0〜1でも0〜100でも受ける。
-   * Firestoreには0〜1で統一。
-   */
-  if (
-    number > 1
-  ) {
-    return Math.min(
-      1,
-      Math.max(
-        0,
-        number /
-          100
-      )
-    );
-  }
-
-  return Math.min(
-    1,
-    Math.max(
-      0,
-      number
-    )
-  );
+  return "uploaded";
 }
 
 /* =========================================================
@@ -1350,4 +1125,19 @@ function safeNumber(
   )
     ? number
     : 0;
+}
+
+function sleep(
+  milliseconds: number
+): Promise<void> {
+  return new Promise(
+    (
+      resolve
+    ) => {
+      setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
+  );
 }
