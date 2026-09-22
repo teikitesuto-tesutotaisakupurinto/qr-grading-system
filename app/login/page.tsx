@@ -8,11 +8,9 @@ import {
 
 import {
   useRouter,
-  useSearchParams,
 } from "next/navigation";
 
 import {
-  onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
 } from "firebase/auth";
@@ -24,11 +22,9 @@ import {
 
 import {
   getAppUser,
+  getDashboardPath,
+  observeAuth,
 } from "@/lib/auth";
-
-import type {
-  UserRole,
-} from "@/lib/types";
 
 /* =========================================================
    Page
@@ -37,9 +33,6 @@ import type {
 export default function LoginPage() {
   const router =
     useRouter();
-
-  const searchParams =
-    useSearchParams();
 
   const [
     email,
@@ -60,8 +53,14 @@ export default function LoginPage() {
     useState(true);
 
   const [
-    signingIn,
-    setSigningIn,
+    submitting,
+    setSubmitting,
+  ] =
+    useState(false);
+
+  const [
+    googleLoading,
+    setGoogleLoading,
   ] =
     useState(false);
 
@@ -71,31 +70,6 @@ export default function LoginPage() {
   ] =
     useState("");
 
-  const [
-    showPassword,
-    setShowPassword,
-  ] =
-    useState(false);
-
-  /* =======================================================
-     Next path
-     ======================================================= */
-
-  const requestedPath =
-    searchParams.get(
-      "next"
-    );
-
-  /*
-   * 外部サイトへリダイレクトさせない。
-   *
-   * /から始まる内部パスだけ許可。
-   */
-  const safeNextPath =
-    getSafeNextPath(
-      requestedPath
-    );
-
   /* =======================================================
      Existing session
      ======================================================= */
@@ -104,16 +78,10 @@ export default function LoginPage() {
     let mounted =
       true;
 
-    /*
-     * Firebase Authの現在セッションを確認。
-     *
-     * ログイン状態はFirebase側に維持させる。
-     */
     const unsubscribe =
-      onAuthStateChanged(
-        auth,
+      observeAuth(
         async (
-          firebaseUser
+          user
         ) => {
           if (
             !mounted
@@ -121,24 +89,16 @@ export default function LoginPage() {
             return;
           }
 
+          /*
+           * 既にログイン済みなら
+           * ログイン画面を表示しない。
+           */
           if (
-            !firebaseUser
+            user
           ) {
-            setLoading(
-              false
-            );
-
-            return;
-          }
-
-          try {
-            /*
-             * Authenticationだけでなく
-             * Firestore側のAppUserも確認。
-             */
             const appUser =
               await getAppUser(
-                firebaseUser
+                auth.currentUser
               );
 
             if (
@@ -148,43 +108,45 @@ export default function LoginPage() {
             }
 
             if (
-              !appUser ||
-              appUser.active ===
+              appUser &&
+              appUser.active !==
                 false
             ) {
-              setLoading(
-                false
+              router.replace(
+                getDashboardPath(
+                  appUser.role
+                )
               );
 
               return;
             }
-
-            /*
-             * 既にログイン済みなら
-             * ログイン画面を出さない。
-             */
-            router.replace(
-              safeNextPath ??
-                getDashboardPath(
-                  appUser.role
-                )
-            );
-          } catch (
-            error
-          ) {
-            console.error(
-              "Existing session check error:",
-              error
-            );
-
-            if (
-              mounted
-            ) {
-              setLoading(
-                false
-              );
-            }
           }
+
+          setLoading(
+            false
+          );
+        },
+        (
+          observerError
+        ) => {
+          if (
+            !mounted
+          ) {
+            return;
+          }
+
+          console.error(
+            "Login auth observer error:",
+            observerError
+          );
+
+          /*
+           * 未ログイン状態なら
+           * ログインフォームを表示する。
+           */
+          setLoading(
+            false
+          );
         }
       );
 
@@ -196,35 +158,33 @@ export default function LoginPage() {
     };
   }, [
     router,
-    safeNextPath,
   ]);
 
   /* =======================================================
      Email login
      ======================================================= */
 
-  async function handleEmailLogin(
+  async function handleSubmit(
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
     if (
-      signingIn
+      submitting ||
+      googleLoading
     ) {
       return;
     }
 
     try {
-      setSigningIn(
+      setSubmitting(
         true
       );
 
       setError("");
 
       const normalizedEmail =
-        email
-          .trim()
-          .toLowerCase();
+        email.trim();
 
       if (
         !normalizedEmail
@@ -257,8 +217,10 @@ export default function LoginPage() {
       if (
         !appUser
       ) {
+        await auth.signOut();
+
         throw new Error(
-          "ユーザー情報が登録されていません。管理者に確認してください。"
+          "このアカウントはテストシステムに登録されていません。"
         );
       }
 
@@ -266,16 +228,17 @@ export default function LoginPage() {
         appUser.active ===
         false
       ) {
+        await auth.signOut();
+
         throw new Error(
-          "このアカウントは現在利用できません。"
+          "このアカウントは利用停止されています。"
         );
       }
 
       router.replace(
-        safeNextPath ??
-          getDashboardPath(
-            appUser.role
-          )
+        getDashboardPath(
+          appUser.role
+        )
       );
     } catch (
       error
@@ -290,8 +253,8 @@ export default function LoginPage() {
           error
         )
       );
-    } finally {
-      setSigningIn(
+
+      setSubmitting(
         false
       );
     }
@@ -303,13 +266,14 @@ export default function LoginPage() {
 
   async function handleGoogleLogin() {
     if (
-      signingIn
+      submitting ||
+      googleLoading
     ) {
       return;
     }
 
     try {
-      setSigningIn(
+      setGoogleLoading(
         true
       );
 
@@ -329,13 +293,10 @@ export default function LoginPage() {
       if (
         !appUser
       ) {
-        /*
-         * Firebase Authenticationには
-         * ログインできても、アプリ側ユーザーが
-         * 登録されていなければ利用させない。
-         */
+        await auth.signOut();
+
         throw new Error(
-          "アプリ側のユーザー登録がありません。管理者にアカウント登録を依頼してください。"
+          "このGoogleアカウントはテストシステムに登録されていません。"
         );
       }
 
@@ -343,16 +304,17 @@ export default function LoginPage() {
         appUser.active ===
         false
       ) {
+        await auth.signOut();
+
         throw new Error(
-          "このアカウントは現在利用できません。"
+          "このアカウントは利用停止されています。"
         );
       }
 
       router.replace(
-        safeNextPath ??
-          getDashboardPath(
-            appUser.role
-          )
+        getDashboardPath(
+          appUser.role
+        )
       );
     } catch (
       error
@@ -367,8 +329,8 @@ export default function LoginPage() {
           error
         )
       );
-    } finally {
-      setSigningIn(
+
+      setGoogleLoading(
         false
       );
     }
@@ -382,34 +344,7 @@ export default function LoginPage() {
     loading
   ) {
     return (
-      <LoginShell>
-        <div
-          style={{
-            textAlign:
-              "center",
-
-            padding:
-              40,
-          }}
-        >
-          <strong>
-            ログイン状態を確認しています
-          </strong>
-
-          <p
-            className="muted"
-            style={{
-              marginTop:
-                7,
-
-              fontSize:
-                12,
-            }}
-          >
-            しばらくお待ちください。
-          </p>
-        </div>
-      </LoginShell>
+      <LoginLoading />
     );
   }
 
@@ -418,10 +353,60 @@ export default function LoginPage() {
      ======================================================= */
 
   return (
-    <LoginShell>
-      <div>
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        background:
+          "#f7f7f7",
+
+        padding:
+          20,
+      }}
+    >
+      <section
+        style={{
+          width:
+            "100%",
+
+          maxWidth:
+            420,
+
+          background:
+            "#fff",
+
+          border:
+            "1px solid #e5e5e5",
+
+          borderRadius:
+            12,
+
+          padding:
+            30,
+
+          boxShadow:
+            "0 8px 30px rgba(0,0,0,.04)",
+        }}
+      >
+        {/* =================================================
+            Brand
+            ================================================= */}
+
         <header
           style={{
+            textAlign:
+              "center",
+
             marginBottom:
               26,
           }}
@@ -434,46 +419,72 @@ export default function LoginPage() {
               color:
                 "#777",
 
-              marginBottom:
-                6,
+              letterSpacing:
+                ".08em",
             }}
           >
-            テストシステム
+            TEST SYSTEM
           </div>
 
           <h1
             style={{
               margin:
-                0,
+                "6px 0 0",
 
               fontSize:
-                28,
+                27,
+
+              letterSpacing:
+                ".04em",
             }}
           >
-            ログイン
+            テストシステム
           </h1>
 
           <p
-            className="muted"
             style={{
               margin:
                 "8px 0 0",
 
+              color:
+                "#777",
+
               fontSize:
-                13,
+                12,
             }}
           >
-            アカウント情報を入力してください。
+            答案・採点・成績管理
           </p>
         </header>
 
+        {/* =================================================
+            Error
+            ================================================= */}
+
         {error && (
           <div
-            className="errorMessage"
             role="alert"
             style={{
               marginBottom:
                 16,
+
+              padding:
+                11,
+
+              borderRadius:
+                7,
+
+              background:
+                "#fff1f1",
+
+              color:
+                "#8a2222",
+
+              fontSize:
+                12,
+
+              lineHeight:
+                1.6,
             }}
           >
             {
@@ -482,114 +493,13 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* ==================================================
-            Google
-            ================================================== */}
-
-        <button
-          type="button"
-          onClick={
-            handleGoogleLogin
-          }
-          disabled={
-            signingIn
-          }
-          style={{
-            width:
-              "100%",
-
-            padding:
-              "12px 14px",
-
-            border:
-              "1px solid #ccc",
-
-            borderRadius:
-              7,
-
-            background:
-              "#fff",
-
-            cursor:
-              signingIn
-                ? "default"
-                : "pointer",
-
-            fontSize:
-              14,
-
-            fontWeight:
-              600,
-          }}
-        >
-          {signingIn
-            ? "ログイン中..."
-            : "Googleでログイン"}
-        </button>
-
-        {/* ==================================================
-            Divider
-            ================================================== */}
-
-        <div
-          style={{
-            display:
-              "flex",
-
-            alignItems:
-              "center",
-
-            gap:
-              10,
-
-            margin:
-              "22px 0",
-
-            color:
-              "#999",
-
-            fontSize:
-              11,
-          }}
-        >
-          <span
-            style={{
-              flex:
-                1,
-
-              height:
-                1,
-
-              background:
-                "#eee",
-            }}
-          />
-
-          <span>
-            または
-          </span>
-
-          <span
-            style={{
-              flex:
-                1,
-
-              height:
-                1,
-
-              background:
-                "#eee",
-            }}
-          />
-        </div>
-
-        {/* ==================================================
-            Email / Password
-            ================================================== */}
+        {/* =================================================
+            Email login
+            ================================================= */}
 
         <form
           onSubmit={
-            handleEmailLogin
+            handleSubmit
           }
         >
           <label
@@ -630,14 +540,12 @@ export default function LoginPage() {
                 )
               }
               autoComplete="email"
-              autoCapitalize="none"
-              spellCheck={
-                false
-              }
               placeholder="example@example.com"
               disabled={
-                signingIn
+                submitting ||
+                googleLoading
               }
+              required
               style={{
                 width:
                   "100%",
@@ -651,7 +559,7 @@ export default function LoginPage() {
                 "block",
 
               marginTop:
-                16,
+                14,
             }}
           >
             <span
@@ -672,154 +580,199 @@ export default function LoginPage() {
               パスワード
             </span>
 
-            <div
+            <input
+              type="password"
+              value={
+                password
+              }
+              onChange={(
+                event
+              ) =>
+                setPassword(
+                  event.target
+                    .value
+                )
+              }
+              autoComplete="current-password"
+              placeholder="パスワード"
+              disabled={
+                submitting ||
+                googleLoading
+              }
+              required
               style={{
-                position:
-                  "relative",
+                width:
+                  "100%",
               }}
-            >
-              <input
-                type={
-                  showPassword
-                    ? "text"
-                    : "password"
-                }
-                value={
-                  password
-                }
-                onChange={(
-                  event
-                ) =>
-                  setPassword(
-                    event.target
-                      .value
-                  )
-                }
-                autoComplete="current-password"
-                placeholder="パスワード"
-                disabled={
-                  signingIn
-                }
-                style={{
-                  width:
-                    "100%",
-
-                  paddingRight:
-                    80,
-                }}
-              />
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowPassword(
-                    (
-                      current
-                    ) =>
-                      !current
-                  )
-                }
-                disabled={
-                  signingIn
-                }
-                style={{
-                  position:
-                    "absolute",
-
-                  right:
-                    7,
-
-                  top:
-                    "50%",
-
-                  transform:
-                    "translateY(-50%)",
-
-                  border:
-                    0,
-
-                  background:
-                    "transparent",
-
-                  cursor:
-                    "pointer",
-
-                  fontSize:
-                    11,
-
-                  color:
-                    "#666",
-                }}
-              >
-                {showPassword
-                  ? "隠す"
-                  : "表示"}
-              </button>
-            </div>
+            />
           </label>
 
           <button
             type="submit"
-            disabled={
-              signingIn
-            }
             className="button primary"
+            disabled={
+              submitting ||
+              googleLoading
+            }
             style={{
               width:
                 "100%",
 
               marginTop:
-                22,
+                18,
 
-              padding:
-                "12px 14px",
+              minHeight:
+                44,
             }}
           >
-            {signingIn
+            {submitting
               ? "ログイン中..."
               : "ログイン"}
           </button>
         </form>
 
-        {/* ==================================================
-            Session notice
-            ================================================== */}
+        {/* =================================================
+            Divider
+            ================================================= */}
 
-        <p
-          className="muted"
+        <div
           style={{
-            marginTop:
-              18,
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            gap:
+              10,
+
+            margin:
+              "22px 0",
+
+            color:
+              "#999",
 
             fontSize:
               11,
+          }}
+        >
+          <div
+            style={{
+              flex:
+                1,
 
-            lineHeight:
-              1.7,
+              height:
+                1,
+
+              background:
+                "#e5e5e5",
+            }}
+          />
+
+          <span>
+            または
+          </span>
+
+          <div
+            style={{
+              flex:
+                1,
+
+              height:
+                1,
+
+              background:
+                "#e5e5e5",
+            }}
+          />
+        </div>
+
+        {/* =================================================
+            Google
+            ================================================= */}
+
+        <button
+          type="button"
+          onClick={
+            handleGoogleLogin
+          }
+          disabled={
+            submitting ||
+            googleLoading
+          }
+          style={{
+            width:
+              "100%",
+
+            minHeight:
+              44,
+
+            border:
+              "1px solid #d9d9d9",
+
+            borderRadius:
+              7,
+
+            background:
+              "#fff",
+
+            cursor:
+              "pointer",
+
+            fontSize:
+              13,
+
+            fontWeight:
+              600,
+          }}
+        >
+          {googleLoading
+            ? "Googleでログイン中..."
+            : "Googleでログイン"}
+        </button>
+
+        {/* =================================================
+            Footer
+            ================================================= */}
+
+        <footer
+          style={{
+            marginTop:
+              24,
+
+            paddingTop:
+              16,
+
+            borderTop:
+              "1px solid #eee",
 
             textAlign:
               "center",
+
+            color:
+              "#999",
+
+            fontSize:
+              10,
+
+            lineHeight:
+              1.6,
           }}
         >
           ログイン状態は保持されます。
           <br />
           次回アクセス時もログイン状態を確認します。
-        </p>
-      </div>
-    </LoginShell>
+        </footer>
+      </section>
+    </main>
   );
 }
 
 /* =========================================================
-   Shell
+   Loading
    ========================================================= */
 
-function LoginShell({
-  children,
-}: {
-  children:
-    React.ReactNode;
-}) {
+function LoginLoading() {
   return (
     <main
       style={{
@@ -835,177 +788,87 @@ function LoginShell({
         justifyContent:
           "center",
 
-        padding:
-          24,
-
         background:
           "#f7f7f7",
       }}
     >
-      <section
+      <div
         style={{
-          width:
-            "100%",
-
-          maxWidth:
-            430,
-
-          padding:
-            32,
-
-          background:
-            "#fff",
-
-          border:
-            "1px solid #e5e5e5",
-
-          borderRadius:
-            12,
-
-          boxShadow:
-            "0 8px 30px rgba(0,0,0,.04)",
+          textAlign:
+            "center",
         }}
       >
-        {children}
-      </section>
+        <strong>
+          テストシステム
+        </strong>
+
+        <p
+          style={{
+            margin:
+              "8px 0 0",
+
+            color:
+              "#777",
+
+            fontSize:
+              12,
+          }}
+        >
+          ログイン状態を確認しています...
+        </p>
+      </div>
     </main>
   );
 }
 
 /* =========================================================
-   Dashboard
-   ========================================================= */
-
-function getDashboardPath(
-  role: UserRole
-) {
-  switch (
-    role
-  ) {
-    case "本部管理者":
-      return "/dashboard/head-office";
-
-    case "校舎管理者":
-      return "/dashboard/school";
-
-    case "講師":
-      return "/dashboard/teacher";
-
-    case "生徒":
-      return "/dashboard/student";
-
-    default:
-      return "/dashboard";
-  }
-}
-
-/* =========================================================
-   Safe next
-   ========================================================= */
-
-function getSafeNextPath(
-  value:
-    | string
-    | null
-) {
-  if (
-    !value
-  ) {
-    return null;
-  }
-
-  /*
-   * 外部URL禁止。
-   */
-  if (
-    !value.startsWith(
-      "/"
-    )
-  ) {
-    return null;
-  }
-
-  /*
-   * //example.com のような
-   * protocol-relative URLも禁止。
-   */
-  if (
-    value.startsWith(
-      "//"
-    )
-  ) {
-    return null;
-  }
-
-  /*
-   * ログインページへのループ防止。
-   */
-  if (
-    value ===
-      "/login" ||
-    value.startsWith(
-      "/login?"
-    )
-  ) {
-    return null;
-  }
-
-  return value;
-}
-
-/* =========================================================
-   Error
+   Error message
    ========================================================= */
 
 function getLoginErrorMessage(
   error: unknown
 ) {
-  const code =
-    typeof error ===
-    "object" &&
-    error !== null &&
-    "code" in
-      error
-      ? String(
-          (
-            error as {
-              code?: unknown;
-            }
-          ).code ??
-            ""
-        )
-      : "";
-
-  switch (
-    code
+  if (
+    error instanceof Error
   ) {
-    case "auth/invalid-credential":
-    case "auth/wrong-password":
-    case "auth/user-not-found":
-      return "メールアドレスまたはパスワードが正しくありません。";
+    const code =
+      (
+        error as {
+          code?: string;
+        }
+      ).code;
 
-    case "auth/invalid-email":
-      return "メールアドレスの形式が正しくありません。";
+    switch (
+      code
+    ) {
+      case "auth/invalid-credential":
+        return "メールアドレスまたはパスワードが正しくありません。";
 
-    case "auth/user-disabled":
-      return "このアカウントは利用停止されています。";
+      case "auth/invalid-email":
+        return "メールアドレスの形式が正しくありません。";
 
-    case "auth/popup-closed-by-user":
-      return "Googleログインをキャンセルしました。";
+      case "auth/user-disabled":
+        return "このアカウントは利用停止されています。";
 
-    case "auth/popup-blocked":
-      return "ログイン画面がブロックされました。ブラウザのポップアップ設定を確認してください。";
+      case "auth/too-many-requests":
+        return "ログイン試行が多すぎます。しばらくしてから再度お試しください。";
 
-    case "auth/network-request-failed":
-      return "ネットワークエラーが発生しました。通信状態を確認してください。";
+      case "auth/popup-closed-by-user":
+        return "Googleログインがキャンセルされました。";
 
-    default:
-      if (
-        error instanceof Error
-      ) {
-        return error.message;
-      }
+      case "auth/popup-blocked":
+        return "ブラウザによってログイン画面がブロックされました。ポップアップを許可してください。";
 
-      return "ログインできませんでした。時間をおいてもう一度お試しください。";
+      case "auth/network-request-failed":
+        return "ネットワークエラーが発生しました。";
+
+      default:
+        return (
+          error.message ||
+          "ログインできませんでした。"
+        );
+    }
   }
+
+  return "ログインできませんでした。";
 }
