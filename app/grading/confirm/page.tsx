@@ -17,22 +17,19 @@ import {
 } from "@/lib/auth";
 
 import {
-  confirmGrading,
-  getFirstReview,
-  getSecondReview,
-} from "@/lib/grading";
-
-import {
-  answersQueries,
   getScopedDocs,
+  answersQueries,
   studentsQueries,
   testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
+import {
+  confirmGrading,
+} from "@/lib/grading";
+
 import type {
   Answer,
-  GradingResult,
   Student,
   Test,
   UserRole,
@@ -42,28 +39,12 @@ import type {
    Types
    ========================================================= */
 
-type AnswerListItem =
+type ConfirmRow =
   Answer & {
     studentName: string;
-
     testName: string;
-
     subjectName: string;
   };
-
-type ConfirmState = {
-  answerId: string;
-
-  ready: boolean;
-
-  reason: string;
-
-  firstScore: number;
-
-  secondScore: number;
-
-  totalMaxScore: number;
-};
 
 /* =========================================================
    Page
@@ -71,8 +52,8 @@ type ConfirmState = {
 
 export default function GradingConfirmPage() {
   const [
-    userRole,
-    setUserRole,
+    role,
+    setRole,
   ] =
     useState<UserRole | null>(
       null
@@ -82,21 +63,8 @@ export default function GradingConfirmPage() {
     answers,
     setAnswers,
   ] =
-    useState<AnswerListItem[]>(
+    useState<ConfirmRow[]>(
       []
-    );
-
-  const [
-    states,
-    setStates,
-  ] =
-    useState<
-      Map<
-        string,
-        ConfirmState
-      >
-    >(
-      new Map()
     );
 
   const [
@@ -104,28 +72,14 @@ export default function GradingConfirmPage() {
     setSelectedIds,
   ] =
     useState<
-      Set<string>
-    >(
-      new Set()
-    );
-
-  const [
-    search,
-    setSearch,
-  ] =
-    useState("");
+      string[]
+    >([]);
 
   const [
     loading,
     setLoading,
   ] =
     useState(true);
-
-  const [
-    checking,
-    setChecking,
-  ] =
-    useState(false);
 
   const [
     confirming,
@@ -145,8 +99,14 @@ export default function GradingConfirmPage() {
   ] =
     useState("");
 
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
   /* =======================================================
-     Initial load
+     Load
      ======================================================= */
 
   useEffect(() => {
@@ -177,7 +137,7 @@ export default function GradingConfirmPage() {
         "生徒"
       ) {
         throw new Error(
-          "採点確定は職員のみ利用できます。"
+          "採点確定を利用する権限がありません。"
         );
       }
 
@@ -189,7 +149,7 @@ export default function GradingConfirmPage() {
         );
       }
 
-      setUserRole(
+      setRole(
         user.role
       );
 
@@ -260,9 +220,8 @@ export default function GradingConfirmPage() {
         );
 
       /*
-       * 二次確認が完了した答案だけを対象にする。
-       *
-       * confirmed済みは除外。
+       * 最終確定できるのは
+       * second_reviewだけ。
        */
       const loaded =
         answerDocuments
@@ -283,6 +242,18 @@ export default function GradingConfirmPage() {
             ) =>
               answer.status ===
               "second_review"
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
+              )
           );
 
       setAnswers(
@@ -290,10 +261,24 @@ export default function GradingConfirmPage() {
       );
 
       /*
-       * 各答案の確定可能性を確認。
+       * 存在しなくなった選択状態を削除。
        */
-      await checkAnswers(
-        loaded
+      setSelectedIds(
+        (
+          current
+        ) =>
+          current.filter(
+            (
+              id
+            ) =>
+              loaded.some(
+                (
+                  answer
+                ) =>
+                  answer.id ===
+                  id
+              )
+          )
       );
     } catch (
       error
@@ -306,7 +291,7 @@ export default function GradingConfirmPage() {
       setError(
         error instanceof Error
           ? error.message
-          : "採点確定対象を取得できませんでした。"
+          : "確定対象を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -314,171 +299,7 @@ export default function GradingConfirmPage() {
   }
 
   /* =======================================================
-     Check answers
-     ======================================================= */
-
-  async function checkAnswers(
-    targetAnswers: AnswerListItem[]
-  ) {
-    setChecking(true);
-
-    try {
-      const next =
-        new Map<
-          string,
-          ConfirmState
-        >();
-
-      /*
-       * 各答案について一次・二次確認を確認。
-       */
-      await Promise.all(
-        targetAnswers.map(
-          async (
-            answer
-          ) => {
-            try {
-              const [
-                first,
-                second,
-              ] =
-                await Promise.all([
-                  getFirstReview(
-                    answer.id
-                  ),
-
-                  getSecondReview(
-                    answer.id
-                  ),
-                ]);
-
-              const firstReady =
-                Boolean(
-                  first &&
-                    first.status ===
-                      "completed"
-                );
-
-              const secondReady =
-                Boolean(
-                  second &&
-                    second.status ===
-                      "completed"
-                );
-
-              const disagreement =
-                second?.disagreement ===
-                true;
-
-              let ready =
-                firstReady &&
-                secondReady &&
-                !disagreement;
-
-              let reason =
-                "";
-
-              if (
-                !firstReady
-              ) {
-                ready =
-                  false;
-
-                reason =
-                  "一次確認が完了していません。";
-              } else if (
-                !secondReady
-              ) {
-                ready =
-                  false;
-
-                reason =
-                  "二次確認が完了していません。";
-              } else if (
-                disagreement
-              ) {
-                ready =
-                  false;
-
-                reason =
-                  "一次確認と二次確認に差異があります。";
-              }
-
-              const firstScore =
-                first?.totalScore ??
-                0;
-
-              const secondScore =
-                second?.totalScore ??
-                0;
-
-              const totalMaxScore =
-                second?.totalMaxScore ??
-                first?.totalMaxScore ??
-                answer.totalMaxScore;
-
-              next.set(
-                answer.id,
-                {
-                  answerId:
-                    answer.id,
-
-                  ready,
-
-                  reason,
-
-                  firstScore,
-
-                  secondScore,
-
-                  totalMaxScore,
-                }
-              );
-            } catch (
-              error
-            ) {
-              console.error(
-                "Answer confirmation check error:",
-                error
-              );
-
-              next.set(
-                answer.id,
-                {
-                  answerId:
-                    answer.id,
-
-                  ready:
-                    false,
-
-                  reason:
-                    "確認状態を取得できませんでした。",
-
-                  firstScore:
-                    0,
-
-                  secondScore:
-                    0,
-
-                  totalMaxScore:
-                    answer.totalMaxScore,
-                }
-              );
-            }
-          }
-        )
-      );
-
-      setStates(
-        next
-      );
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  /* =======================================================
-     Search
+     Filter
      ======================================================= */
 
   const filtered =
@@ -528,92 +349,91 @@ export default function GradingConfirmPage() {
     ]);
 
   /* =======================================================
-     Select
+     Selection
      ======================================================= */
 
-  function toggleSelection(
+  const allVisibleSelected =
+    filtered.length >
+      0 &&
+    filtered.every(
+      (
+        answer
+      ) =>
+        selectedIds.includes(
+          answer.id
+        )
+    );
+
+  function toggleAnswer(
     answerId: string
   ) {
-    const state =
-      states.get(
-        answerId
+    setSelectedIds(
+      (
+        current
+      ) =>
+        current.includes(
+          answerId
+        )
+          ? current.filter(
+              (
+                id
+              ) =>
+                id !==
+                answerId
+            )
+          : [
+              ...current,
+              answerId,
+            ]
+    );
+  }
+
+  function toggleAllVisible() {
+    if (
+      allVisibleSelected
+    ) {
+      const visibleIds =
+        new Set(
+          filtered.map(
+            (
+              answer
+            ) =>
+              answer.id
+          )
+        );
+
+      setSelectedIds(
+        (
+          current
+        ) =>
+          current.filter(
+            (
+              id
+            ) =>
+              !visibleIds.has(
+                id
+              )
+          )
       );
 
-    /*
-     * 確定できない答案は選択できない。
-     */
-    if (
-      !state?.ready
-    ) {
       return;
     }
 
     setSelectedIds(
       (
         current
-      ) => {
-        const next =
-          new Set(
-            current
-          );
-
-        if (
-          next.has(
-            answerId
-          )
-        ) {
-          next.delete(
-            answerId
-          );
-        } else {
-          next.add(
-            answerId
-          );
-        }
-
-        return next;
-      }
-    );
-  }
-
-  /* =======================================================
-     Select all ready
-     ======================================================= */
-
-  function selectAllReady() {
-    const next =
-      new Set<string>();
-
-    for (
-      const answer of
-        filtered
-    ) {
-      const state =
-        states.get(
-          answer.id
-        );
-
-      if (
-        state?.ready
-      ) {
-        next.add(
-          answer.id
-        );
-      }
-    }
-
-    setSelectedIds(
-      next
-    );
-  }
-
-  /* =======================================================
-     Clear selection
-     ======================================================= */
-
-  function clearSelection() {
-    setSelectedIds(
-      new Set()
+      ) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...filtered.map(
+              (
+                answer
+              ) =>
+                answer.id
+            ),
+          ])
+        )
     );
   }
 
@@ -629,7 +449,7 @@ export default function GradingConfirmPage() {
     }
 
     if (
-      selectedIds.size ===
+      selectedIds.length ===
       0
     ) {
       setError(
@@ -639,29 +459,14 @@ export default function GradingConfirmPage() {
       return;
     }
 
-    /*
-     * 最終的なreadyチェック。
-     */
-    const invalid =
-      Array.from(
-        selectedIds
-      ).filter(
-        (
-          answerId
-        ) =>
-          !states.get(
-            answerId
-          )?.ready
+    const confirmed =
+      window.confirm(
+        `${selectedIds.length}件の答案を最終確定します。\n確定後は通常の採点フローから戻せません。`
       );
 
     if (
-      invalid.length >
-      0
+      !confirmed
     ) {
-      setError(
-        "確定できない答案が選択されています。"
-      );
-
       return;
     }
 
@@ -694,19 +499,18 @@ export default function GradingConfirmPage() {
         );
       }
 
-      await confirmGrading(
-        Array.from(
-          selectedIds
-        ),
-        user.uid
-      );
+      const result =
+        await confirmGrading(
+          selectedIds,
+          user.uid
+        );
 
       setMessage(
-        `${selectedIds.size}件の採点を確定しました。`
+        `${result.confirmed.length}件の採点を確定しました。`
       );
 
       setSelectedIds(
-        new Set()
+        []
       );
 
       await loadPage();
@@ -731,24 +535,6 @@ export default function GradingConfirmPage() {
   }
 
   /* =======================================================
-     Summary
-     ======================================================= */
-
-  const readyCount =
-    filtered.filter(
-      (
-        answer
-      ) =>
-        states.get(
-          answer.id
-        )?.ready
-    ).length;
-
-  const blockedCount =
-    filtered.length -
-    readyCount;
-
-  /* =======================================================
      Loading
      ======================================================= */
 
@@ -763,7 +549,7 @@ export default function GradingConfirmPage() {
           </h1>
 
           <p>
-            確定対象を確認しています...
+            確定対象を読み込んでいます...
           </p>
         </section>
       </main>
@@ -789,7 +575,7 @@ export default function GradingConfirmPage() {
             </h1>
 
             <p className="muted">
-              一次確認・二次確認が完了した答案のみ確定できます。
+              二次確認が完了した答案だけを最終確定します。
             </p>
           </div>
 
@@ -803,17 +589,17 @@ export default function GradingConfirmPage() {
             }}
           >
             <Link
-              href="/grading/review"
-              className="button"
-            >
-              一次確認
-            </Link>
-
-            <Link
               href="/grading/second-review"
               className="button"
             >
               二次確認
+            </Link>
+
+            <Link
+              href="/results/management"
+              className="button"
+            >
+              成績
             </Link>
           </div>
         </header>
@@ -860,49 +646,49 @@ export default function GradingConfirmPage() {
               12,
 
             marginBottom:
-              18,
+              16,
           }}
         >
           <SummaryCard
-            label="確定可能"
+            label="確定待ち"
             value={
-              readyCount
+              answers.length
             }
           />
 
           <SummaryCard
-            label="確認が必要"
+            label="表示件数"
             value={
-              blockedCount
+              filtered.length
             }
           />
 
           <SummaryCard
             label="選択中"
             value={
-              selectedIds.size
+              selectedIds.length
             }
           />
         </div>
 
         {/* ==================================================
-            Filter
+            Filter / action
             ================================================== */}
 
         <section className="card">
           <div
             style={{
               display:
-                "flex",
+                "grid",
+
+              gridTemplateColumns:
+                "1fr auto auto",
 
               gap:
                 10,
 
               alignItems:
                 "center",
-
-              flexWrap:
-                "wrap",
             }}
           >
             <input
@@ -917,297 +703,83 @@ export default function GradingConfirmPage() {
                     .value
                 )
               }
-              placeholder="生徒番号・氏名・テスト名"
-              style={{
-                flex:
-                  "1 1 280px",
-              }}
+              placeholder="生徒番号・氏名・テスト名・教科"
             />
 
             <button
               type="button"
               className="button"
-              disabled={
-                checking ||
-                readyCount ===
-                  0
-              }
               onClick={
-                selectAllReady
+                toggleAllVisible
+              }
+              disabled={
+                filtered.length ===
+                0
               }
             >
-              確定可能なものを全選択
+              {allVisibleSelected
+                ? "表示分を解除"
+                : "表示分を全選択"}
             </button>
 
             <button
               type="button"
-              className="button"
-              disabled={
-                selectedIds.size ===
-                0
-              }
+              className="button primary"
               onClick={
-                clearSelection
+                handleConfirm
+              }
+              disabled={
+                confirming ||
+                selectedIds.length ===
+                  0
               }
             >
-              選択解除
+              {confirming
+                ? "確定中..."
+                : `${selectedIds.length}件を確定`}
             </button>
           </div>
         </section>
 
         {/* ==================================================
-            Table
+            Warning
             ================================================== */}
 
         <section
-          className="card"
           style={{
             marginTop:
-              16,
+              12,
+
+            padding:
+              13,
+
+            borderRadius:
+              8,
+
+            background:
+              "#fff4d6",
+
+            fontSize:
+              12,
           }}
         >
-          {checking ? (
-            <div
-              style={{
-                padding:
-                  50,
+          <strong>
+            確定前に確認してください
+          </strong>
 
-                textAlign:
-                  "center",
-              }}
-            >
-              一次確認・二次確認の状態を確認しています...
-            </div>
-          ) : filtered.length ===
-            0 ? (
-            <div
-              style={{
-                padding:
-                  50,
-
-                textAlign:
-                  "center",
-
-                color:
-                  "#777",
-              }}
-            >
-              <strong>
-                採点確定対象の答案はありません。
-              </strong>
-
-              <p
-                style={{
-                  fontSize:
-                    12,
-                }}
-              >
-                二次確認まで完了した答案がここに表示されます。
-              </p>
-            </div>
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table className="dataTable">
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        width:
-                          45,
-                      }}
-                    >
-                      選択
-                    </th>
-
-                    <th>
-                      生徒
-                    </th>
-
-                    <th>
-                      テスト
-                    </th>
-
-                    <th>
-                      教科
-                    </th>
-
-                    <th>
-                      一次確認
-                    </th>
-
-                    <th>
-                      二次確認
-                    </th>
-
-                    <th>
-                      状態
-                    </th>
-
-                    <th>
-                      理由
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filtered.map(
-                    (
-                      answer
-                    ) => {
-                      const state =
-                        states.get(
-                          answer.id
-                        );
-
-                      const selected =
-                        selectedIds.has(
-                          answer.id
-                        );
-
-                      return (
-                        <tr
-                          key={
-                            answer.id
-                          }
-                          style={{
-                            background:
-                              selected
-                                ? "#f5f9ff"
-                                : undefined,
-                          }}
-                        >
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={
-                                selected
-                              }
-                              disabled={
-                                !state?.ready
-                              }
-                              onChange={() =>
-                                toggleSelection(
-                                  answer.id
-                                )
-                              }
-                            />
-                          </td>
-
-                          <td>
-                            <strong>
-                              {
-                                answer.studentName ||
-                                "生徒未紐付け"
-                              }
-                            </strong>
-
-                            <div
-                              className="muted"
-                              style={{
-                                fontSize:
-                                  11,
-                              }}
-                            >
-                              {
-                                answer.studentNumber ||
-                                "未設定"
-                              }
-                            </div>
-                          </td>
-
-                          <td>
-                            {
-                              answer.testName
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              answer.subjectName ||
-                              "—"
-                            }
-                          </td>
-
-                          <td>
-                            {state ? (
-                              <>
-                                {
-                                  state.firstScore
-                                }
-                                {" / "}
-                                {
-                                  state.totalMaxScore
-                                }
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-
-                          <td>
-                            {state ? (
-                              <>
-                                {
-                                  state.secondScore
-                                }
-                                {" / "}
-                                {
-                                  state.totalMaxScore
-                                }
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-
-                          <td>
-                            <ConfirmStatus
-                              ready={
-                                Boolean(
-                                  state?.ready
-                                )
-                              }
-                            />
-                          </td>
-
-                          <td>
-                            {state?.reason ? (
-                              <span
-                                style={{
-                                  color:
-                                    "#9a6500",
-
-                                  fontSize:
-                                    12,
-                                }}
-                              >
-                                {
-                                  state.reason
-                                }
-                              </span>
-                            ) : (
-                              <span className="muted">
-                                確定可能
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    }
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <p
+            style={{
+              margin:
+                "5px 0 0",
+            }}
+          >
+            確定できるのは二次確認済みの答案だけです。
+            確定後、この答案は成績集計へ進められます。
+          </p>
         </section>
 
         {/* ==================================================
-            Confirm action
+            List
             ================================================== */}
 
         <section
@@ -1228,50 +800,192 @@ export default function GradingConfirmPage() {
               alignItems:
                 "center",
 
-              gap:
-                20,
+              marginBottom:
+                12,
             }}
           >
             <div>
-              <strong>
-                選択した答案：
-                {
-                  selectedIds.size
-                }
-                件
-              </strong>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                確定対象
+              </h2>
 
               <p
                 className="muted"
                 style={{
                   margin:
-                    "5px 0 0",
+                    "4px 0 0",
 
                   fontSize:
-                    12,
+                    11,
                 }}
               >
-                確定すると答案の状態が「確定」になり、成績集計の対象になります。
+                {
+                  filtered.length
+                }
+                件
               </p>
             </div>
-
-            <button
-              type="button"
-              className="button primary"
-              disabled={
-                confirming ||
-                selectedIds.size ===
-                  0
-              }
-              onClick={
-                handleConfirm
-              }
-            >
-              {confirming
-                ? "確定処理中..."
-                : "選択した答案を確定"}
-            </button>
           </div>
+
+          {filtered.length ===
+          0 ? (
+            <EmptyState />
+          ) : (
+            <div
+              style={{
+                overflowX:
+                  "auto",
+              }}
+            >
+              <table className="dataTable">
+                <thead>
+                  <tr>
+                    <th
+                      style={{
+                        width:
+                          50,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={
+                          allVisibleSelected
+                        }
+                        onChange={
+                          toggleAllVisible
+                        }
+                        aria-label="表示中の答案をすべて選択"
+                      />
+                    </th>
+
+                    <th>
+                      生徒
+                    </th>
+
+                    <th>
+                      テスト
+                    </th>
+
+                    <th>
+                      教科
+                    </th>
+
+                    <th>
+                      得点
+                    </th>
+
+                    <th>
+                      状態
+                    </th>
+
+                    <th>
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map(
+                    (
+                      answer
+                    ) => {
+                      const checked =
+                        selectedIds.includes(
+                          answer.id
+                        );
+
+                      return (
+                        <tr
+                          key={
+                            answer.id
+                          }
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={
+                                checked
+                              }
+                              onChange={() =>
+                                toggleAnswer(
+                                  answer.id
+                                )
+                              }
+                              aria-label={`${answer.studentName}を選択`}
+                            />
+                          </td>
+
+                          <td>
+                            <strong>
+                              {
+                                answer.studentName ||
+                                "未紐付け"
+                              }
+                            </strong>
+
+                            <div
+                              className="muted"
+                              style={{
+                                fontSize:
+                                  11,
+                              }}
+                            >
+                              {
+                                answer.studentNumber ||
+                                "生徒番号なし"
+                              }
+                            </div>
+                          </td>
+
+                          <td>
+                            {
+                              answer.testName
+                            }
+                          </td>
+
+                          <td>
+                            {
+                              answer.subjectName ||
+                              "—"
+                            }
+                          </td>
+
+                          <td>
+                            {
+                              answer.totalMaxScore >
+                              0
+                                ? `${answer.totalScore} / ${answer.totalMaxScore}`
+                                : "—"
+                            }
+                          </td>
+
+                          <td>
+                            <StatusBadge />
+                          </td>
+
+                          <td>
+                            <Link
+                              href={`/grading/second-review?answerId=${encodeURIComponent(
+                                answer.id
+                              )}`}
+                              className="button"
+                            >
+                              確認
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </section>
     </main>
@@ -1279,163 +993,119 @@ export default function GradingConfirmPage() {
 }
 
 /* =========================================================
-   Normalize answer
+   Summary
    ========================================================= */
 
-function normalizeAnswer(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >,
-  students: Student[],
-  tests: Test[]
-): AnswerListItem {
-  const studentId =
-    nullableString(
-      data.studentId
-    );
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
 
-  const testId =
-    stringValue(
-      data.testId
-    );
+  value: number;
+}) {
+  return (
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
 
-  const student =
-    students.find(
-      (
-        item
-      ) =>
-        item.id ===
-        studentId
-    );
+      <strong
+        style={{
+          display:
+            "block",
 
-  const test =
-    tests.find(
-      (
-        item
-      ) =>
-        item.id ===
-          testId ||
-        item.testId ===
-          testId
-    );
+          marginTop:
+            4,
 
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    testId,
-
-    subjectId:
-      stringValue(
-        data.subjectId
-      ),
-
-    studentId,
-
-    studentNumber:
-      nullableString(
-        data.studentNumber
-      ),
-
-    fileKey:
-      stringValue(
-        data.fileKey
-      ),
-
-    fileName:
-      stringValue(
-        data.fileName
-      ),
-
-    contentType:
-      stringValue(
-        data.contentType
-      ),
-
-    size:
-      safeNumber(
-        data.size
-      ),
-
-    status:
-      normalizeStatus(
-        data.status
-      ),
-
-    reviewRequired:
-      data.reviewRequired ===
-      true,
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
-
-    qrText:
-      stringValue(
-        data.qrText
-      ),
-
-    qrConfidence:
-      safeNumber(
-        data.qrConfidence
-      ),
-
-    ocrConfidence:
-      safeNumber(
-        data.ocrConfidence
-      ),
-
-    processingError:
-      stringValue(
-        data.processingError
-      ),
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-
-    processedAt:
-      data.processedAt,
-
-    confirmedAt:
-      data.confirmedAt,
-
-    studentName:
-      student?.name ??
-      "",
-
-    testName:
-      test?.name ??
-      "テスト未設定",
-
-    subjectName:
-      stringValue(
-        data.subjectName
-      ),
-  };
+          fontSize:
+            24,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
+  );
 }
 
 /* =========================================================
-   Student
+   Status
+   ========================================================= */
+
+function StatusBadge() {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
+        background:
+          "#fff4d6",
+
+        fontSize:
+          10,
+      }}
+    >
+      二次確認済み
+    </span>
+  );
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          55,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        確定待ちの答案はありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        二次確認が完了した答案がここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   Normalize student
    ========================================================= */
 
 function normalizeStudent(
@@ -1491,7 +1161,7 @@ function normalizeStudent(
 }
 
 /* =========================================================
-   Test
+   Normalize test
    ========================================================= */
 
 function normalizeTest(
@@ -1576,114 +1246,204 @@ function normalizeTest(
 }
 
 /* =========================================================
-   Status
+   Normalize answer
    ========================================================= */
 
-function normalizeStatus(
+function normalizeAnswer(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): ConfirmRow {
+  const studentId =
+    nullableString(
+      data.studentId
+    );
+
+  const testId =
+    stringValue(
+      data.testId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const test =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+          testId ||
+        item.testId ===
+          testId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId,
+
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
+
+    studentId,
+
+    studentNumber:
+      nullableString(
+        data.studentNumber
+      ),
+
+    fileKey:
+      stringValue(
+        data.fileKey
+      ),
+
+    fileName:
+      stringValue(
+        data.fileName
+      ),
+
+    contentType:
+      stringValue(
+        data.contentType
+      ),
+
+    size:
+      safeNumber(
+        data.size
+      ),
+
+    status:
+      "second_review",
+
+    reviewRequired:
+      false,
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    totalMaxScore:
+      safeNumber(
+        data.totalMaxScore
+      ),
+
+    qrText:
+      stringValue(
+        data.qrText
+      ),
+
+    qrConfidence:
+      safeNumber(
+        data.qrConfidence
+      ),
+
+    ocrConfidence:
+      safeNumber(
+        data.ocrConfidence
+      ),
+
+    processingError:
+      stringValue(
+        data.processingError
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    processedAt:
+      data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
+
+    studentName:
+      student?.name ??
+      "",
+
+    testName:
+      test?.name ??
+      "テスト未設定",
+
+    subjectName:
+      stringValue(
+        data.subjectName
+      ),
+  };
+}
+
+/* =========================================================
+   Time
+   ========================================================= */
+
+function getTime(
   value: unknown
-): Answer["status"] {
-  switch (
-    value
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
   ) {
-    case "uploaded":
-    case "processing":
-    case "graded":
-    case "first_review":
-    case "second_review":
-    case "confirmed":
-    case "published":
-    case "error":
-      return value;
-
-    default:
-      return "uploaded";
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
   }
-}
 
-/* =========================================================
-   Confirm badge
-   ========================================================= */
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
 
-function ConfirmStatus({
-  ready,
-}: {
-  ready: boolean;
-}) {
-  return (
-    <span
-      style={{
-        display:
-          "inline-block",
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
 
-        padding:
-          "4px 9px",
-
-        borderRadius:
-          999,
-
-        background:
-          ready
-            ? "#e8f5e9"
-            : "#fff4d6",
-
-        fontSize:
-          11,
-
-        whiteSpace:
-          "nowrap",
-      }}
-    >
-      {ready
-        ? "確定可能"
-        : "確認必要"}
-    </span>
-  );
-}
-
-/* =========================================================
-   Summary
-   ========================================================= */
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            11,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            25,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
 }
 
 /* =========================================================
@@ -1713,7 +1473,8 @@ function safeNumber(
 ) {
   const number =
     Number(
-      value ?? 0
+      value ??
+        0
     );
 
   return Number.isFinite(
