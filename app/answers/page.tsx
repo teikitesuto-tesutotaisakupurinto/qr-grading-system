@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -18,20 +19,19 @@ import {
 
 import {
   getAnswerWithUrl,
+  getAnswers,
+  uploadAnswers,
   deleteAnswer,
+  type Answer,
 } from "@/lib/answers";
 
 import {
   getScopedDocs,
-  answersQueries,
-  studentsQueries,
   testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
-  Answer,
-  Student,
   Test,
   UserRole,
 } from "@/lib/types";
@@ -40,12 +40,35 @@ import type {
    Types
    ========================================================= */
 
+type TestRow =
+  Test & {
+    displayName: string;
+  };
+
 type AnswerRow =
   Answer & {
     studentName: string;
     testName: string;
     subjectName: string;
   };
+
+type UploadItem = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status:
+    | "waiting"
+    | "uploading"
+    | "completed"
+    | "error";
+  error: string;
+};
+
+type UploadState =
+  | "idle"
+  | "uploading"
+  | "completed"
+  | "error";
 
 /* =========================================================
    Page
@@ -59,6 +82,20 @@ export default function AnswersPage() {
     useState<UserRole | null>(
       null
     );
+
+  const [
+    tests,
+    setTests,
+  ] =
+    useState<TestRow[]>(
+      []
+    );
+
+  const [
+    selectedTestId,
+    setSelectedTestId,
+  ] =
+    useState("");
 
   const [
     answers,
@@ -75,14 +112,14 @@ export default function AnswersPage() {
     useState(true);
 
   const [
-    detailLoading,
-    setDetailLoading,
+    testsLoading,
+    setTestsLoading,
   ] =
-    useState(false);
+    useState(true);
 
   const [
-    deleting,
-    setDeleting,
+    detailLoading,
+    setDetailLoading,
   ] =
     useState(false);
 
@@ -115,8 +152,8 @@ export default function AnswersPage() {
     );
 
   const [
-    selectedId,
-    setSelectedId,
+    selectedAnswerId,
+    setSelectedAnswerId,
   ] =
     useState<
       string | null
@@ -130,18 +167,44 @@ export default function AnswersPage() {
       string | null
     >(null);
 
+  const [
+    uploadItems,
+    setUploadItems,
+  ] =
+    useState<UploadItem[]>(
+      []
+    );
+
+  const [
+    uploadState,
+    setUploadState,
+  ] =
+    useState<UploadState>(
+      "idle"
+    );
+
+  const [
+    uploadProgress,
+    setUploadProgress,
+  ] =
+    useState(0);
+
+  const fileInputRef =
+    useRef<HTMLInputElement | null>(
+      null
+    );
+
   /* =======================================================
-     Load
+     Current user / initial load
      ======================================================= */
 
   useEffect(() => {
-    void loadAnswers();
+    void initialize();
   }, []);
 
-  async function loadAnswers() {
+  async function initialize() {
     try {
       setLoading(true);
-
       setError("");
 
       const user =
@@ -197,63 +260,145 @@ export default function AnswersPage() {
             user.studentId,
         };
 
-      const [
-        answerDocuments,
-        studentDocuments,
-        testDocuments,
-      ] =
-        await Promise.all([
-          getScopedDocs(
-            answersQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            studentsQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            testsQueries(
-              scopeUser
-            )
-          ),
-        ]);
-
-      const students =
-        studentDocuments.map(
-          (
-            item
-          ) =>
-            normalizeStudent(
-              item.id,
-              item.data
-            )
+      /*
+       * テストは組織内の共通テストとして扱う。
+       *
+       * 校舎選択は行わない。
+       */
+      const testDocuments =
+        await getScopedDocs(
+          testsQueries(
+            scopeUser
+          )
         );
 
-      const tests =
-        testDocuments.map(
-          (
-            item
-          ) =>
-            normalizeTest(
-              item.id,
-              item.data
-            )
-        );
-
-      const loaded =
-        answerDocuments
+      const loadedTests =
+        testDocuments
           .map(
             (
               item
             ) =>
-              normalizeAnswer(
+              normalizeTest(
                 item.id,
-                item.data,
-                students,
+                item.data
+              )
+          )
+          .filter(
+            (
+              test
+            ) =>
+              !test.isRetest
+          )
+          .map(
+            (
+              test
+            ) => ({
+              ...test,
+
+              displayName:
+                buildTestDisplayName(
+                  test
+                ),
+            })
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              a.name.localeCompare(
+                b.name,
+                "ja"
+              )
+          );
+
+      setTests(
+        loadedTests
+      );
+
+      /*
+       * 最初から1件目を選択。
+       */
+      if (
+        loadedTests.length >
+        0
+      ) {
+        setSelectedTestId(
+          loadedTests[0].id
+        );
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answers initialize error:",
+        error
+      );
+
+      setError(
+        toUserMessage(
+          error,
+          "答案画面を読み込めませんでした。"
+        )
+      );
+    } finally {
+      setTestsLoading(
+        false
+      );
+
+      setLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Load answers for selected test
+     ======================================================= */
+
+  useEffect(() => {
+    if (
+      !selectedTestId
+    ) {
+      setAnswers([]);
+
+      setSelectedAnswerId(
+        null
+      );
+
+      return;
+    }
+
+    void loadAnswersForTest(
+      selectedTestId
+    );
+  }, [
+    selectedTestId,
+  ]);
+
+  async function loadAnswersForTest(
+    testId: string
+  ) {
+    try {
+      setDetailLoading(
+        true
+      );
+
+      setError("");
+
+      const loaded =
+        await getAnswers(
+          testId
+        );
+
+      const normalized =
+        loaded
+          .map(
+            (
+              answer
+            ) =>
+              normalizeAnswerRow(
+                answer,
                 tests
               )
           )
@@ -271,16 +416,16 @@ export default function AnswersPage() {
           );
 
       setAnswers(
-        loaded
+        normalized
       );
 
-      setSelectedId(
+      setSelectedAnswerId(
         (
-          current
+          current: string | null
         ) => {
           if (
             current &&
-            loaded.some(
+            normalized.some(
               (
                 answer
               ) =>
@@ -292,7 +437,7 @@ export default function AnswersPage() {
           }
 
           return (
-            loaded[0]?.id ??
+            normalized[0]?.id ??
             null
           );
         }
@@ -305,13 +450,588 @@ export default function AnswersPage() {
         error
       );
 
+      setAnswers([]);
+
+      setSelectedAnswerId(
+        null
+      );
+
       setError(
-        error instanceof Error
-          ? error.message
-          : "答案を取得できませんでした。"
+        toUserMessage(
+          error,
+          "答案を取得できませんでした。"
+        )
       );
     } finally {
-      setLoading(false);
+      setDetailLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Selected test
+     ======================================================= */
+
+  const selectedTest =
+    tests.find(
+      (
+        test
+      ) =>
+        test.id ===
+        selectedTestId
+    ) ??
+    null;
+
+  /* =======================================================
+     File selection
+     ======================================================= */
+
+  function handleFileChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const files =
+      Array.from(
+        event.target.files ??
+          []
+      );
+
+    /*
+     * 同じファイルをもう一度選択できるようにする。
+     */
+    event.target.value =
+      "";
+
+    if (
+      files.length ===
+      0
+    ) {
+      return;
+    }
+
+    setError("");
+    setMessage("");
+
+    const newItems =
+      files
+        .map(
+          (
+            file
+          ) =>
+            createUploadItem(
+              file
+            )
+        );
+
+    setUploadItems(
+      (
+        current: UploadItem[]
+      ) =>
+        [
+          ...current,
+          ...newItems,
+        ]
+    );
+
+    setUploadState(
+      "idle"
+    );
+  }
+
+  function createUploadItem(
+    file: File
+  ): UploadItem {
+    return {
+      id:
+        createClientId(),
+
+      file,
+
+      previewUrl:
+        file.type.startsWith(
+          "image/"
+        )
+          ? URL.createObjectURL(
+              file
+            )
+          : "",
+
+      status:
+        "waiting",
+
+      error:
+        "",
+    };
+  }
+
+  /* =======================================================
+     Remove upload item
+     ======================================================= */
+
+  function removeUploadItem(
+    id: string
+  ) {
+    setUploadItems(
+      (
+        current: UploadItem[]
+      ) => {
+        const item =
+          current.find(
+            (
+              currentItem
+            ) =>
+              currentItem.id ===
+              id
+          );
+
+        if (
+          item?.previewUrl
+        ) {
+          URL.revokeObjectURL(
+            item.previewUrl
+          );
+        }
+
+        return current.filter(
+          (
+            currentItem
+          ) =>
+            currentItem.id !==
+            id
+        );
+      }
+    );
+  }
+
+  function clearUploadItems() {
+    uploadItems.forEach(
+      (
+        item
+      ) => {
+        if (
+          item.previewUrl
+        ) {
+          URL.revokeObjectURL(
+            item.previewUrl
+          );
+        }
+      }
+    );
+
+    setUploadItems(
+      []
+    );
+
+    setUploadState(
+      "idle"
+    );
+
+    setUploadProgress(
+      0
+    );
+  }
+
+  /* =======================================================
+     Upload
+     ======================================================= */
+
+  async function handleUpload() {
+    if (
+      uploadState ===
+      "uploading"
+    ) {
+      return;
+    }
+
+    if (
+      !selectedTest
+    ) {
+      setError(
+        "先にテストを選択してください。"
+      );
+
+      return;
+    }
+
+    if (
+      uploadItems.length ===
+      0
+    ) {
+      setError(
+        "アップロードする答案を選択してください。"
+      );
+
+      return;
+    }
+
+    const invalid =
+      uploadItems.filter(
+        (
+          item
+        ) =>
+          !isSupportedFile(
+            item.file
+          )
+      );
+
+    if (
+      invalid.length >
+      0
+    ) {
+      setError(
+        "対応していないファイルがあります。PDF・JPG・JPEG・PNGを使用してください。"
+      );
+
+      return;
+    }
+
+    try {
+      setUploadState(
+        "uploading"
+      );
+
+      setUploadProgress(
+        0
+      );
+
+      setError("");
+      setMessage("");
+
+      setUploadItems(
+        (
+          current: UploadItem[]
+        ) =>
+          current.map(
+            (
+              item
+            ) => ({
+              ...item,
+
+              status:
+                "waiting",
+
+              error:
+                "",
+            })
+          )
+      );
+
+      /*
+       * subjectIdは答案登録APIの既存仕様上必要。
+       *
+       * テストのsubject文字列を使用する。
+       * 校舎や生徒は指定しない。
+       */
+      const inputs =
+        uploadItems.map(
+          (
+            item
+          ) => ({
+            testId:
+              selectedTest.testId ||
+              selectedTest.id,
+
+            subjectId:
+              selectedTest.subject ||
+              selectedTest.id,
+
+            file:
+              item.file,
+          })
+        );
+
+      /*
+       * 既存uploadAnswersを使用。
+       *
+       * 生徒番号は渡さない。
+       * 答案上の生徒QRから後段で特定する。
+       */
+      const uploaded =
+        await uploadAnswers(
+          inputs,
+          (
+            completed,
+            total
+          ) => {
+            setUploadProgress(
+              Math.round(
+                completed /
+                  total *
+                  100
+              )
+            );
+
+            setUploadItems(
+              (
+                current: UploadItem[]
+              ) =>
+                current.map(
+                  (
+                    item,
+                    index
+                  ) =>
+                    index <
+                    completed
+                      ? {
+                          ...item,
+
+                          status:
+                            "completed",
+                        }
+                      : item
+                )
+            );
+          }
+        );
+
+      /*
+       * アップロードされた答案を
+       * 完了状態へ。
+       */
+      setUploadItems(
+        (
+          current: UploadItem[]
+        ) =>
+          current.map(
+            (
+              item
+            ) => ({
+              ...item,
+
+              status:
+                "completed",
+
+              error:
+                "",
+            })
+          )
+      );
+
+      setUploadProgress(
+        100
+      );
+
+      setUploadState(
+        "completed"
+      );
+
+      setMessage(
+        `${uploaded.length}件の答案を受け付けました。QR読み取り・答案処理後、採点対象になります。`
+      );
+
+      await loadAnswersForTest(
+        selectedTest.id
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answer upload error:",
+        error
+      );
+
+      setUploadState(
+        "error"
+      );
+
+      setUploadItems(
+        (
+          current: UploadItem[]
+        ) =>
+          current.map(
+            (
+              item
+            ) => ({
+              ...item,
+
+              status:
+                "error",
+
+              error:
+                toUserMessage(
+                  error,
+                  "アップロードに失敗しました。"
+                ),
+            })
+          )
+      );
+
+      setError(
+        toUserMessage(
+          error,
+          "答案をアップロードできませんでした。"
+        )
+      );
+    }
+  }
+
+  /* =======================================================
+     Selected answer
+     ======================================================= */
+
+  const selectedAnswer =
+    answers.find(
+      (
+        answer
+      ) =>
+        answer.id ===
+        selectedAnswerId
+    ) ??
+    null;
+
+  /* =======================================================
+     Load selected image
+     ======================================================= */
+
+  useEffect(() => {
+    if (
+      !selectedAnswer
+    ) {
+      setImageUrl(
+        null
+      );
+
+      return;
+    }
+
+    void loadSelectedImage(
+      selectedAnswer.id
+    );
+  }, [
+    selectedAnswerId,
+  ]);
+
+  async function loadSelectedImage(
+    answerId: string
+  ) {
+    try {
+      setDetailLoading(
+        true
+      );
+
+      setImageUrl(
+        null
+      );
+
+      const result =
+        await getAnswerWithUrl(
+          answerId
+        );
+
+      if (
+        result
+      ) {
+        setImageUrl(
+          result.signedUrl
+        );
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answer image load error:",
+        error
+      );
+
+      setError(
+        toUserMessage(
+          error,
+          "答案画像を取得できませんでした。"
+        )
+      );
+    } finally {
+      setDetailLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Delete
+     ======================================================= */
+
+  async function handleDelete() {
+    if (
+      !selectedAnswer
+    ) {
+      return;
+    }
+
+    if (
+      role !==
+        "本部管理者" &&
+      role !==
+        "校舎管理者"
+    ) {
+      setError(
+        "答案を削除する権限がありません。"
+      );
+
+      return;
+    }
+
+    if (
+      selectedAnswer.status ===
+        "confirmed" ||
+      selectedAnswer.status ===
+        "published"
+    ) {
+      setError(
+        "確定済みの答案は削除できません。"
+      );
+
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "この答案を削除しますか？\n答案画像も削除されます。"
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      await deleteAnswer(
+        selectedAnswer.id
+      );
+
+      setMessage(
+        "答案を削除しました。"
+      );
+
+      setSelectedAnswerId(
+        null
+      );
+
+      setImageUrl(
+        null
+      );
+
+      if (
+        selectedTestId
+      ) {
+        await loadAnswersForTest(
+          selectedTestId
+        );
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answer delete error:",
+        error
+      );
+
+      setError(
+        toUserMessage(
+          error,
+          "答案を削除できませんでした。"
+        )
+      );
     }
   }
 
@@ -379,176 +1099,6 @@ export default function AnswersPage() {
       statusFilter,
     ]);
 
-  const selected =
-    answers.find(
-      (
-        answer
-      ) =>
-        answer.id ===
-        selectedId
-    ) ??
-    null;
-
-  /* =======================================================
-     Load image
-     ======================================================= */
-
-  useEffect(() => {
-    if (
-      !selected
-    ) {
-      setImageUrl(
-        null
-      );
-
-      return;
-    }
-
-    void loadSelectedImage(
-      selected.id
-    );
-  }, [
-    selectedId,
-  ]);
-
-  async function loadSelectedImage(
-    answerId: string
-  ) {
-    try {
-      setDetailLoading(
-        true
-      );
-
-      setImageUrl(
-        null
-      );
-
-      const result =
-        await getAnswerWithUrl(
-          answerId
-        );
-
-      if (
-        result
-      ) {
-        setImageUrl(
-          result.signedUrl
-        );
-      }
-    } catch (
-      error
-    ) {
-      console.error(
-        "Answer image load error:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "答案画像を取得できませんでした。"
-      );
-    } finally {
-      setDetailLoading(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Delete
-     ======================================================= */
-
-  async function handleDelete() {
-    if (
-      !selected
-    ) {
-      return;
-    }
-
-    if (
-      role !==
-        "本部管理者" &&
-      role !==
-        "校舎管理者"
-    ) {
-      setError(
-        "答案を削除する権限がありません。"
-      );
-
-      return;
-    }
-
-    if (
-      selected.status ===
-        "confirmed" ||
-      selected.status ===
-        "published"
-    ) {
-      setError(
-        "確定済みの答案は削除できません。"
-      );
-
-      return;
-    }
-
-    const confirmed =
-      window.confirm(
-        "この答案を削除しますか？\n答案画像もSupabase Storageから削除されます。"
-      );
-
-    if (
-      !confirmed
-    ) {
-      return;
-    }
-
-    try {
-      setDeleting(
-        true
-      );
-
-      setError("");
-
-      setMessage("");
-
-      await deleteAnswer(
-        selected.id
-      );
-
-      setMessage(
-        "答案を削除しました。"
-      );
-
-      setSelectedId(
-        null
-      );
-
-      setImageUrl(
-        null
-      );
-
-      await loadAnswers();
-    } catch (
-      error
-    ) {
-      console.error(
-        "Answer delete error:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "答案を削除できませんでした。"
-      );
-    } finally {
-      setDeleting(
-        false
-      );
-    }
-  }
-
   /* =======================================================
      Statistics
      ======================================================= */
@@ -569,6 +1119,15 @@ export default function AnswersPage() {
       ) =>
         answer.status ===
         "processing"
+    ).length;
+
+  const gradedCount =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "graded"
     ).length;
 
   const firstReviewCount =
@@ -620,11 +1179,11 @@ export default function AnswersPage() {
       <main className="page">
         <section className="content">
           <h1>
-            答案管理
+            答案
           </h1>
 
           <p>
-            答案を読み込んでいます...
+            答案管理を読み込んでいます...
           </p>
         </section>
       </main>
@@ -646,37 +1205,20 @@ export default function AnswersPage() {
         <header className="pageHeader">
           <div>
             <h1>
-              答案管理
+              答案
             </h1>
 
             <p className="muted">
-              登録された答案と処理状況を確認します。
+              テストを選択してから答案をアップロードします。
             </p>
           </div>
 
-          <div
-            style={{
-              display:
-                "flex",
-
-              gap:
-                8,
-            }}
+          <Link
+            href="/grading"
+            className="button"
           >
-            <Link
-              href="/grading"
-              className="button"
-            >
-              採点管理
-            </Link>
-
-            <Link
-              href="/grading/review"
-              className="button"
-            >
-              一次確認
-            </Link>
-          </div>
+            採点へ
+          </Link>
         </header>
 
         {/* ==================================================
@@ -706,21 +1248,617 @@ export default function AnswersPage() {
         )}
 
         {/* ==================================================
+            Test selection
+            ================================================== */}
+
+        <section className="card">
+          <h2>
+            1. テストを選択
+          </h2>
+
+          <p
+            className="muted"
+            style={{
+              margin:
+                "5px 0 12px",
+
+              fontSize:
+                12,
+            }}
+          >
+            校舎や生徒を指定する必要はありません。テストを選択した後、答案をアップロードします。
+          </p>
+
+          {testsLoading ? (
+            <p>
+              テストを読み込んでいます...
+            </p>
+          ) : tests.length ===
+            0 ? (
+            <div
+              style={{
+                padding:
+                  24,
+
+                border:
+                  "1px solid #eee",
+
+                borderRadius:
+                  8,
+
+                color:
+                  "#777",
+              }}
+            >
+              <strong>
+                利用できるテストがありません。
+              </strong>
+
+              <p
+                style={{
+                  margin:
+                    "6px 0 0",
+
+                  fontSize:
+                    12,
+                }}
+              >
+                管理者が作成したテストが登録されると、ここから選択できます。
+              </p>
+            </div>
+          ) : (
+            <select
+              value={
+                selectedTestId
+              }
+              onChange={(
+                event
+              ) => {
+                setSelectedTestId(
+                  event.target
+                    .value
+                );
+
+                /*
+                 * テスト変更時に
+                 * アップロード候補をクリア。
+                 */
+                clearUploadItems();
+
+                setError("");
+                setMessage("");
+              }}
+              style={{
+                width:
+                  "100%",
+
+                maxWidth:
+                  700,
+              }}
+            >
+              <option value="">
+                テストを選択してください
+              </option>
+
+              {tests.map(
+                (
+                  test
+                ) => (
+                  <option
+                    key={
+                      test.id
+                    }
+                    value={
+                      test.id
+                    }
+                  >
+                    {
+                      test.displayName
+                    }
+                  </option>
+                )
+              )}
+            </select>
+          )}
+
+          {selectedTest && (
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  "repeat(3, minmax(0, 1fr))",
+
+                gap:
+                  10,
+
+                marginTop:
+                  14,
+              }}
+            >
+              <Info
+                label="テストID"
+                value={
+                  selectedTest.testId ||
+                  selectedTest.id
+                }
+              />
+
+              <Info
+                label="教科"
+                value={
+                  selectedTest.subject ||
+                  "—"
+                }
+              />
+
+              <Info
+                label="実施日"
+                value={
+                  selectedTest.examDate ||
+                  "—"
+                }
+              />
+            </div>
+          )}
+        </section>
+
+        {/* ==================================================
+            Upload
+            ================================================== */}
+
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
+          <h2>
+            2. 答案をアップロード
+          </h2>
+
+          <p
+            className="muted"
+            style={{
+              margin:
+                "5px 0 12px",
+
+              fontSize:
+                12,
+            }}
+          >
+            テストを選択してから答案画像を選択してください。生徒番号・校舎の入力は不要です。
+          </p>
+
+          <input
+            ref={
+              fileInputRef
+            }
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
+            multiple
+            onChange={
+              handleFileChange
+            }
+            disabled={
+              !selectedTest ||
+              uploadState ===
+                "uploading"
+            }
+            style={{
+              display:
+                "none",
+            }}
+          />
+
+          <button
+            type="button"
+            className="button"
+            disabled={
+              !selectedTest ||
+              uploadState ===
+                "uploading"
+            }
+            onClick={() =>
+              fileInputRef.current?.click()
+            }
+          >
+            答案ファイルを選択
+          </button>
+
+          {selectedTest && (
+            <span
+              className="muted"
+              style={{
+                marginLeft:
+                  10,
+
+                fontSize:
+                  11,
+              }}
+            >
+              PDF / JPG / JPEG / PNG
+            </span>
+          )}
+
+          {/* Upload preview */}
+
+          {uploadItems.length >
+            0 && (
+            <div
+              style={{
+                marginTop:
+                  16,
+              }}
+            >
+              <div
+                style={{
+                  display:
+                    "flex",
+
+                  justifyContent:
+                    "space-between",
+
+                  alignItems:
+                    "center",
+
+                  marginBottom:
+                    10,
+                }}
+              >
+                <strong>
+                  選択した答案
+                </strong>
+
+                <button
+                  type="button"
+                  className="button"
+                  disabled={
+                    uploadState ===
+                    "uploading"
+                  }
+                  onClick={
+                    clearUploadItems
+                  }
+                >
+                  すべて解除
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display:
+                    "grid",
+
+                  gridTemplateColumns:
+                    "repeat(auto-fill, minmax(180px, 1fr))",
+
+                  gap:
+                    10,
+                }}
+              >
+                {uploadItems.map(
+                  (
+                    item
+                  ) => (
+                    <div
+                      key={
+                        item.id
+                      }
+                      style={{
+                        padding:
+                          10,
+
+                        border:
+                          "1px solid #ddd",
+
+                        borderRadius:
+                          8,
+
+                        background:
+                          "#fff",
+                      }}
+                    >
+                      {item.previewUrl ? (
+                        <img
+                          src={
+                            item.previewUrl
+                          }
+                          alt={
+                            item.file.name
+                          }
+                          style={{
+                            display:
+                              "block",
+
+                            width:
+                              "100%",
+
+                            height:
+                              140,
+
+                            objectFit:
+                              "contain",
+
+                            background:
+                              "#f7f7f7",
+
+                            borderRadius:
+                              5,
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            height:
+                              140,
+
+                            display:
+                              "flex",
+
+                            alignItems:
+                              "center",
+
+                            justifyContent:
+                              "center",
+
+                            background:
+                              "#f7f7f7",
+
+                            borderRadius:
+                              5,
+
+                            color:
+                              "#777",
+
+                            fontSize:
+                              12,
+                          }}
+                        >
+                          PDF
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          marginTop:
+                            8,
+
+                          fontSize:
+                            11,
+
+                          overflow:
+                            "hidden",
+
+                          textOverflow:
+                            "ellipsis",
+
+                          whiteSpace:
+                            "nowrap",
+                        }}
+                        title={
+                          item.file.name
+                        }
+                      >
+                        {
+                          item.file.name
+                        }
+                      </div>
+
+                      <div
+                        className="muted"
+                        style={{
+                          marginTop:
+                            3,
+
+                          fontSize:
+                            10,
+                        }}
+                      >
+                        {
+                          formatFileSize(
+                            item.file.size
+                          )
+                        }
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop:
+                            8,
+
+                          fontSize:
+                            10,
+                        }}
+                      >
+                        {item.status ===
+                          "completed" &&
+                          "アップロード済み"}
+
+                        {item.status ===
+                          "uploading" &&
+                          "アップロード中..."}
+
+                        {item.status ===
+                          "waiting" &&
+                          "待機中"}
+
+                        {item.status ===
+                          "error" &&
+                          "エラー"}
+                      </div>
+
+                      {item.error && (
+                        <div
+                          style={{
+                            marginTop:
+                              5,
+
+                            color:
+                              "#a00000",
+
+                            fontSize:
+                              10,
+                          }}
+                        >
+                          {
+                            item.error
+                          }
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={
+                          uploadState ===
+                          "uploading"
+                        }
+                        onClick={() =>
+                          removeUploadItem(
+                            item.id
+                          )
+                        }
+                        style={{
+                          marginTop:
+                            8,
+
+                          width:
+                            "100%",
+                        }}
+                      >
+                        解除
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Progress */}
+
+              {uploadState ===
+                "uploading" && (
+                <div
+                  style={{
+                    marginTop:
+                      16,
+                  }}
+                >
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      fontSize:
+                        11,
+
+                      marginBottom:
+                        5,
+                    }}
+                  >
+                    <span>
+                      アップロード中
+                    </span>
+
+                    <span>
+                      {
+                        uploadProgress
+                      }
+                      %
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      height:
+                        8,
+
+                      background:
+                        "#eee",
+
+                      borderRadius:
+                        999,
+
+                      overflow:
+                        "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width:
+                          `${uploadProgress}%`,
+
+                        height:
+                          "100%",
+
+                        background:
+                          "#222",
+
+                        transition:
+                          "width .2s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div
+                style={{
+                  display:
+                    "flex",
+
+                  justifyContent:
+                    "flex-end",
+
+                  marginTop:
+                    16,
+                }}
+              >
+                <button
+                  type="button"
+                  className="button primary"
+                  disabled={
+                    !selectedTest ||
+                    uploadItems.length ===
+                      0 ||
+                    uploadState ===
+                      "uploading"
+                  }
+                  onClick={
+                    handleUpload
+                  }
+                >
+                  {uploadState ===
+                  "uploading"
+                    ? "アップロード中..."
+                    : `${uploadItems.length}件をアップロード`}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* ==================================================
             Statistics
             ================================================== */}
 
-        <div
+        <section
           style={{
             display:
               "grid",
 
             gridTemplateColumns:
-              "repeat(6, minmax(0, 1fr))",
+              "repeat(7, minmax(0, 1fr))",
 
             gap:
-              10,
+              8,
 
-            marginBottom:
+            marginTop:
               16,
           }}
         >
@@ -735,6 +1873,13 @@ export default function AnswersPage() {
             label="処理中"
             value={
               processingCount
+            }
+          />
+
+          <StatCard
+            label="採点済み"
+            value={
+              gradedCount
             }
           />
 
@@ -765,23 +1910,32 @@ export default function AnswersPage() {
               errorCount
             }
           />
-        </div>
+        </section>
 
         {/* ==================================================
-            Filters
+            Answer list
             ================================================== */}
 
-        <section className="card">
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
           <div
             style={{
               display:
                 "grid",
 
               gridTemplateColumns:
-                "1fr 220px",
+                "1fr 180px",
 
               gap:
                 10,
+
+              marginBottom:
+                12,
             }}
           >
             <input
@@ -796,7 +1950,7 @@ export default function AnswersPage() {
                     .value
                 )
               }
-              placeholder="生徒番号・氏名・テスト名・ファイル名"
+              placeholder="生徒番号・氏名・ファイル名を検索"
             />
 
             <select
@@ -815,7 +1969,7 @@ export default function AnswersPage() {
               }
             >
               <option value="all">
-                すべて
+                すべての状態
               </option>
 
               <option value="uploaded">
@@ -851,319 +2005,218 @@ export default function AnswersPage() {
               </option>
             </select>
           </div>
+
+          {detailLoading ? (
+            <div
+              style={{
+                padding:
+                  40,
+
+                textAlign:
+                  "center",
+
+                color:
+                  "#777",
+              }}
+            >
+              答案を読み込んでいます...
+            </div>
+          ) : filtered.length ===
+            0 ? (
+            <EmptyList
+              hasSelectedTest={
+                Boolean(
+                  selectedTest
+                )
+              }
+            />
+          ) : (
+            <div
+              style={{
+                overflowX:
+                  "auto",
+              }}
+            >
+              <table className="dataTable">
+                <thead>
+                  <tr>
+                    <th>
+                      生徒番号
+                    </th>
+
+                    <th>
+                      氏名
+                    </th>
+
+                    <th>
+                      ファイル
+                    </th>
+
+                    <th>
+                      状態
+                    </th>
+
+                    <th>
+                      得点
+                    </th>
+
+                    <th>
+                      QR
+                    </th>
+
+                    <th>
+                      OCR
+                    </th>
+
+                    <th>
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map(
+                    (
+                      answer
+                    ) => (
+                      <tr
+                        key={
+                          answer.id
+                        }
+                        style={{
+                          cursor:
+                            "pointer",
+
+                          background:
+                            answer.id ===
+                            selectedAnswerId
+                              ? "#f7f7f7"
+                              : undefined,
+                        }}
+                        onClick={() =>
+                          setSelectedAnswerId(
+                            answer.id
+                          )
+                        }
+                      >
+                        <td>
+                          {
+                            answer.studentNumber ??
+                            "未特定"
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            answer.studentName ||
+                            "未特定"
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            answer.fileName
+                          }
+                        </td>
+
+                        <td>
+                          <StatusBadge
+                            status={
+                              answer.status
+                            }
+                          />
+                        </td>
+
+                        <td>
+                          {
+                            answer.totalScore
+                          }
+                          {" / "}
+                          {
+                            answer.totalMaxScore
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            formatConfidence(
+                              answer.qrConfidence
+                            )
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            formatConfidence(
+                              answer.ocrConfidence
+                            )
+                          }
+                        </td>
+
+                        <td>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={(
+                              event
+                            ) => {
+                              event.stopPropagation();
+
+                              setSelectedAnswerId(
+                                answer.id
+                              );
+                            }}
+                          >
+                            開く
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         {/* ==================================================
-            Main
+            Detail
             ================================================== */}
 
-        <div
+        <section
+          className="card"
           style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "minmax(0, 1.05fr) minmax(420px, .95fr)",
-
-            gap:
-              18,
-
             marginTop:
               16,
-
-            alignItems:
-              "start",
           }}
         >
-
-          {/* ================================================
-              List
-              ================================================ */}
-
-          <section className="card">
+          {!selectedAnswer ? (
+            <EmptyDetail />
+          ) : (
             <div
               style={{
                 display:
-                  "flex",
+                  "grid",
 
-                justifyContent:
-                  "space-between",
+                gridTemplateColumns:
+                  "minmax(0, 1fr) 360px",
 
-                alignItems:
-                  "center",
-
-                marginBottom:
-                  12,
+                gap:
+                  20,
               }}
             >
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                答案一覧
-              </h2>
+              {/* Image */}
 
-              <span
-                className="muted"
-                style={{
-                  fontSize:
-                    12,
-                }}
-              >
-                {
-                  filtered.length
-                }
-                件
-              </span>
-            </div>
+              <div>
+                <h2>
+                  答案画像
+                </h2>
 
-            {filtered.length ===
-            0 ? (
-              <EmptyList />
-            ) : (
-              <div
-                style={{
-                  overflowX:
-                    "auto",
-                }}
-              >
-                <table className="dataTable">
-                  <thead>
-                    <tr>
-                      <th>
-                        生徒
-                      </th>
-
-                      <th>
-                        テスト
-                      </th>
-
-                      <th>
-                        状態
-                      </th>
-
-                      <th>
-                        得点
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filtered.map(
-                      (
-                        answer
-                      ) => (
-                        <tr
-                          key={
-                            answer.id
-                          }
-                          onClick={() =>
-                            setSelectedId(
-                              answer.id
-                            )
-                          }
-                          style={{
-                            cursor:
-                              "pointer",
-
-                            background:
-                              selectedId ===
-                              answer.id
-                                ? "#f5f5f5"
-                                : undefined,
-                          }}
-                        >
-                          <td>
-                            <strong>
-                              {
-                                answer.studentName ||
-                                "未紐付け"
-                              }
-                            </strong>
-
-                            <div
-                              className="muted"
-                              style={{
-                                fontSize:
-                                  11,
-                              }}
-                            >
-                              {
-                                answer.studentNumber ||
-                                "生徒番号なし"
-                              }
-                            </div>
-                          </td>
-
-                          <td>
-                            {
-                              answer.testName
-                            }
-
-                            <div
-                              className="muted"
-                              style={{
-                                fontSize:
-                                  11,
-                              }}
-                            >
-                              {
-                                answer.subjectName ||
-                                "—"
-                              }
-                            </div>
-                          </td>
-
-                          <td>
-                            <StatusBadge
-                              status={
-                                answer.status
-                              }
-                            />
-                          </td>
-
-                          <td>
-                            {answer.totalMaxScore >
-                            0
-                              ? `${answer.totalScore} / ${answer.totalMaxScore}`
-                              : "—"}
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          {/* ================================================
-              Detail
-              ================================================ */}
-
-          <section className="card">
-            {!selected ? (
-              <EmptyDetail />
-            ) : detailLoading ? (
-              <div
-                style={{
-                  minHeight:
-                    500,
-
-                  display:
-                    "flex",
-
-                  alignItems:
-                    "center",
-
-                  justifyContent:
-                    "center",
-                }}
-              >
-                答案画像を読み込んでいます...
-              </div>
-            ) : (
-              <>
-                {/* Header */}
-
-                <header
-                  style={{
-                    display:
-                      "flex",
-
-                    justifyContent:
-                      "space-between",
-
-                    alignItems:
-                      "flex-start",
-
-                    gap:
-                      16,
-
-                    paddingBottom:
-                      16,
-
-                    borderBottom:
-                      "1px solid #eee",
-                  }}
-                >
-                  <div>
-                    <h2
-                      style={{
-                        margin:
-                          0,
-                      }}
-                    >
-                      {
-                        selected.studentName ||
-                        "生徒未紐付け"
-                      }
-                    </h2>
-
-                    <div
-                      className="muted"
-                      style={{
-                        marginTop:
-                          5,
-
-                        fontSize:
-                          12,
-                      }}
-                    >
-                      {
-                        selected.studentNumber ||
-                        "生徒番号なし"
-                      }
-                    </div>
-
-                    <div
-                      className="muted"
-                      style={{
-                        marginTop:
-                          3,
-
-                        fontSize:
-                          12,
-                      }}
-                    >
-                      {
-                        selected.testName
-                      }
-
-                      {" / "}
-
-                      {
-                        selected.subjectName ||
-                        "—"
-                      }
-                    </div>
-                  </div>
-
-                  <StatusBadge
-                    status={
-                      selected.status
-                    }
-                  />
-                </header>
-
-                {/* Image */}
-
-                <section
-                  style={{
-                    marginTop:
-                      18,
-                  }}
-                >
-                  <h3>
-                    答案画像
-                  </h3>
-
+                {detailLoading ? (
                   <div
                     style={{
                       minHeight:
-                        350,
+                        500,
 
                       display:
                         "flex",
@@ -1174,464 +2227,267 @@ export default function AnswersPage() {
                       justifyContent:
                         "center",
 
+                      color:
+                        "#777",
+                    }}
+                  >
+                    画像を読み込んでいます...
+                  </div>
+                ) : imageUrl ? (
+                  <div
+                    style={{
+                      padding:
+                        10,
+
                       background:
-                        "#f5f5f5",
+                        "#f7f7f7",
 
                       borderRadius:
                         8,
 
                       overflow:
-                        "hidden",
+                        "auto",
                     }}
                   >
-                    {imageUrl ? (
-                      selected.contentType ===
-                      "application/pdf" ? (
-                        <iframe
-                          src={
-                            imageUrl
-                          }
-                          title="答案"
-                          style={{
-                            width:
-                              "100%",
+                    <img
+                      src={
+                        imageUrl
+                      }
+                      alt="答案画像"
+                      style={{
+                        display:
+                          "block",
 
-                            height:
-                              600,
+                        maxWidth:
+                          "100%",
 
-                            border:
-                              0,
-                          }}
-                        />
-                      ) : (
-                        <img
-                          src={
-                            imageUrl
-                          }
-                          alt="答案画像"
-                          style={{
-                            display:
-                              "block",
+                        height:
+                          "auto",
 
-                            maxWidth:
-                              "100%",
-
-                            maxHeight:
-                              650,
-
-                            objectFit:
-                              "contain",
-                          }}
-                        />
-                      )
-                    ) : (
-                      <div
-                        style={{
-                          textAlign:
-                            "center",
-
-                          color:
-                            "#777",
-
-                          padding:
-                            30,
-                        }}
-                      >
-                        答案画像を表示できません。
-                      </div>
-                    )}
+                        margin:
+                          "0 auto",
+                      }}
+                    />
                   </div>
-                </section>
-
-                {/* Metadata */}
-
-                <section
-                  style={{
-                    marginTop:
-                      18,
-                  }}
-                >
-                  <h3>
-                    ファイル情報
-                  </h3>
-
+                ) : (
                   <div
                     style={{
+                      minHeight:
+                        500,
+
                       display:
-                        "grid",
+                        "flex",
 
-                      gridTemplateColumns:
-                        "1fr 1fr",
+                      alignItems:
+                        "center",
 
-                      gap:
-                        10,
-                    }}
-                  >
-                    <Info
-                      label="ファイル名"
-                      value={
-                        selected.fileName
-                      }
-                    />
+                      justifyContent:
+                        "center",
 
-                    <Info
-                      label="形式"
-                      value={
-                        selected.contentType
-                      }
-                    />
-
-                    <Info
-                      label="サイズ"
-                      value={
-                        formatFileSize(
-                          selected.size
-                        )
-                      }
-                    />
-
-                    <Info
-                      label="保存先"
-                      value={
-                        "Supabase Storage"
-                      }
-                    />
-
-                    <Info
-                      label="QR"
-                      value={
-                        selected.qrText ||
-                        "未解析"
-                      }
-                    />
-
-                    <Info
-                      label="OCR確信度"
-                      value={
-                        formatConfidence(
-                          selected.ocrConfidence
-                        )
-                      }
-                    />
-                  </div>
-                </section>
-
-                {/* Score */}
-
-                <section
-                  style={{
-                    marginTop:
-                      18,
-                  }}
-                >
-                  <h3>
-                    採点情報
-                  </h3>
-
-                  <div
-                    style={{
-                      display:
-                        "grid",
-
-                      gridTemplateColumns:
-                        "1fr 1fr",
-
-                      gap:
-                        10,
-                    }}
-                  >
-                    <Info
-                      label="得点"
-                      value={
-                        selected.totalMaxScore >
-                        0
-                          ? `${selected.totalScore} / ${selected.totalMaxScore}`
-                          : "未採点"
-                      }
-                    />
-
-                    <Info
-                      label="状態"
-                      value={
-                        getStatusLabel(
-                          selected.status
-                        )
-                      }
-                    />
-                  </div>
-                </section>
-
-                {/* Error */}
-
-                {selected.processingError && (
-                  <div
-                    style={{
-                      marginTop:
-                        18,
-
-                      padding:
-                        12,
+                      border:
+                        "1px solid #eee",
 
                       borderRadius:
                         8,
 
-                      background:
-                        "#fff1f1",
-
                       color:
-                        "#8a2222",
-
-                      fontSize:
-                        12,
+                        "#777",
                     }}
                   >
-                    <strong>
-                      処理エラー
-                    </strong>
-
-                    <div
-                      style={{
-                        marginTop:
-                          5,
-                      }}
-                    >
-                      {
-                        selected.processingError
-                      }
-                    </div>
+                    答案画像を表示できません。
                   </div>
                 )}
+              </div>
 
-                {/* Actions */}
+              {/* Information */}
 
-                <footer
+              <div>
+                <h2>
+                  答案情報
+                </h2>
+
+                <div
+                  style={{
+                    display:
+                      "grid",
+
+                    gap:
+                      8,
+                  }}
+                >
+                  <Info
+                    label="テスト"
+                    value={
+                      selectedAnswer.testName
+                    }
+                  />
+
+                  <Info
+                    label="生徒番号"
+                    value={
+                      selectedAnswer.studentNumber ??
+                      "未特定"
+                    }
+                  />
+
+                  <Info
+                    label="氏名"
+                    value={
+                      selectedAnswer.studentName ||
+                      "未特定"
+                    }
+                  />
+
+                  <Info
+                    label="教科"
+                    value={
+                      selectedAnswer.subjectName ||
+                      "—"
+                    }
+                  />
+
+                  <Info
+                    label="状態"
+                    value={
+                      getStatusLabel(
+                        selectedAnswer.status
+                      )
+                    }
+                  />
+
+                  <Info
+                    label="得点"
+                    value={`${selectedAnswer.totalScore} / ${selectedAnswer.totalMaxScore}`}
+                  />
+
+                  <Info
+                    label="QR認識"
+                    value={
+                      formatConfidence(
+                        selectedAnswer.qrConfidence
+                      )
+                    }
+                  />
+
+                  <Info
+                    label="OCR認識"
+                    value={
+                      formatConfidence(
+                        selectedAnswer.ocrConfidence
+                      )
+                    }
+                  />
+
+                  <Info
+                    label="ファイル"
+                    value={
+                      selectedAnswer.fileName
+                    }
+                  />
+                </div>
+
+                <div
                   style={{
                     display:
                       "flex",
 
-                    justifyContent:
-                      "space-between",
-
-                    alignItems:
-                      "center",
+                    flexWrap:
+                      "wrap",
 
                     gap:
-                      10,
+                      8,
 
                     marginTop:
-                      20,
-
-                    paddingTop:
-                      18,
-
-                    borderTop:
-                      "1px solid #eee",
+                      16,
                   }}
                 >
-                  <div
-                    style={{
-                      display:
-                        "flex",
-
-                      gap:
-                        8,
-                    }}
+                  <Link
+                    href={`/grading?answerId=${encodeURIComponent(
+                      selectedAnswer.id
+                    )}`}
+                    className="button primary"
                   >
-                    <Link
-                      href={`/grading/review?answerId=${encodeURIComponent(
-                        selected.id
-                      )}`}
-                      className="button"
-                    >
-                      一次確認
-                    </Link>
-
-                    <Link
-                      href={`/grading/second-review?answerId=${encodeURIComponent(
-                        selected.id
-                      )}`}
-                      className="button"
-                    >
-                      二次確認
-                    </Link>
-                  </div>
+                    この答案を採点
+                  </Link>
 
                   {(role ===
                     "本部管理者" ||
                     role ===
                       "校舎管理者") &&
-                    selected.status !==
+                    selectedAnswer.status !==
                       "confirmed" &&
-                    selected.status !==
+                    selectedAnswer.status !==
                       "published" && (
                       <button
                         type="button"
                         className="button"
-                        disabled={
-                          deleting
-                        }
                         onClick={
                           handleDelete
                         }
                       >
-                        {deleting
-                          ? "削除中..."
-                          : "答案を削除"}
+                        答案を削除
                       </button>
                     )}
-                </footer>
-              </>
-            )}
-          </section>
-        </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
       </section>
     </main>
   );
 }
 
 /* =========================================================
-   Normalize
+   Test display
    ========================================================= */
 
-function normalizeAnswer(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >,
-  students: Student[],
-  tests: Test[]
-): AnswerRow {
-  const studentId =
-    nullableString(
-      data.studentId
-    );
-
-  const testId =
-    stringValue(
-      data.testId
-    );
-
-  const student =
-    students.find(
+function buildTestDisplayName(
+  test: Test
+) {
+  const parts =
+    [
+      test.name,
+      test.subject,
+      test.grade,
+      test.className,
+    ].filter(
       (
-        item
+        value
       ) =>
-        item.id ===
-        studentId
+        Boolean(
+          value
+        )
     );
 
+  return parts.join(
+    " / "
+  );
+}
+
+/* =========================================================
+   Normalize answer
+   ========================================================= */
+
+function normalizeAnswerRow(
+  answer: Answer,
+  tests: TestRow[]
+): AnswerRow {
   const test =
     tests.find(
       (
         item
       ) =>
         item.id ===
-          testId ||
+          answer.testId ||
         item.testId ===
-          testId
+          answer.testId
     );
 
   return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    testId,
-
-    subjectId:
-      stringValue(
-        data.subjectId
-      ),
-
-    studentId,
-
-    studentNumber:
-      nullableString(
-        data.studentNumber
-      ),
-
-    fileKey:
-      stringValue(
-        data.fileKey
-      ),
-
-    fileName:
-      stringValue(
-        data.fileName
-      ),
-
-    contentType:
-      stringValue(
-        data.contentType
-      ),
-
-    size:
-      safeNumber(
-        data.size
-      ),
-
-    status:
-      normalizeStatus(
-        data.status
-      ),
-
-    reviewRequired:
-      data.reviewRequired ===
-      true,
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
-
-    qrText:
-      stringValue(
-        data.qrText
-      ),
-
-    qrConfidence:
-      safeNumber(
-        data.qrConfidence
-      ),
-
-    ocrConfidence:
-      safeNumber(
-        data.ocrConfidence
-      ),
-
-    processingError:
-      stringValue(
-        data.processingError
-      ),
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-
-    processedAt:
-      data.processedAt,
-
-    confirmedAt:
-      data.confirmedAt,
+    ...answer,
 
     studentName:
-      student?.name ??
       "",
 
     testName:
@@ -1639,70 +2495,13 @@ function normalizeAnswer(
       "テスト未設定",
 
     subjectName:
-      stringValue(
-        data.subjectName
-      ),
+      test?.subject ??
+      "",
   };
 }
 
 /* =========================================================
-   Student
-   ========================================================= */
-
-function normalizeStudent(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Student {
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Test
+   Normalize test
    ========================================================= */
 
 function normalizeTest(
@@ -1790,31 +2589,6 @@ function normalizeTest(
    Status
    ========================================================= */
 
-function normalizeStatus(
-  value: unknown
-): Answer["status"] {
-  switch (
-    value
-  ) {
-    case "uploaded":
-    case "processing":
-    case "graded":
-    case "first_review":
-    case "second_review":
-    case "confirmed":
-    case "published":
-    case "error":
-      return value;
-
-    default:
-      return "uploaded";
-  }
-}
-
-/* =========================================================
-   Status label
-   ========================================================= */
-
 function getStatusLabel(
   status: Answer["status"]
 ) {
@@ -1890,7 +2664,7 @@ function StatusBadge({
         background,
 
         fontSize:
-          11,
+          10,
 
         whiteSpace:
           "nowrap",
@@ -1906,7 +2680,7 @@ function StatusBadge({
 }
 
 /* =========================================================
-   Stat
+   Stat card
    ========================================================= */
 
 function StatCard({
@@ -1940,7 +2714,7 @@ function StatCard({
             4,
 
           fontSize:
-            21,
+            19,
         }}
       >
         {
@@ -2012,7 +2786,11 @@ function Info({
    Empty
    ========================================================= */
 
-function EmptyList() {
+function EmptyList({
+  hasSelectedTest,
+}: {
+  hasSelectedTest: boolean;
+}) {
   return (
     <div
       style={{
@@ -2027,17 +2805,21 @@ function EmptyList() {
       }}
     >
       <strong>
-        答案はありません。
+        {hasSelectedTest
+          ? "このテストの答案はありません。"
+          : "テストを選択してください。"}
       </strong>
 
-      <p
-        style={{
-          fontSize:
-            12,
-        }}
-      >
-        登録された答案がここに表示されます。
-      </p>
+      {hasSelectedTest && (
+        <p
+          style={{
+            fontSize:
+              12,
+          }}
+        >
+          上の「答案ファイルを選択」から答案をアップロードしてください。
+        </p>
+      )}
     </div>
   );
 }
@@ -2047,7 +2829,7 @@ function EmptyDetail() {
     <div
       style={{
         minHeight:
-          500,
+          300,
 
         display:
           "flex",
@@ -2065,24 +2847,40 @@ function EmptyDetail() {
           "#777",
       }}
     >
-      <div>
-        <strong>
-          答案を選択してください
-        </strong>
-
-        <p
-          style={{
-            marginTop:
-              6,
-
-            fontSize:
-              12,
-          }}
-        >
-          左側から確認する答案を選択してください。
-        </p>
-      </div>
+      答案を選択すると詳細を表示します。
     </div>
+  );
+}
+
+/* =========================================================
+   File validation
+   ========================================================= */
+
+function isSupportedFile(
+  file: File
+) {
+  const name =
+    file.name.toLowerCase();
+
+  return (
+    file.type ===
+      "application/pdf" ||
+    file.type ===
+      "image/jpeg" ||
+    file.type ===
+      "image/png" ||
+    name.endsWith(
+      ".pdf"
+    ) ||
+    name.endsWith(
+      ".jpg"
+    ) ||
+    name.endsWith(
+      ".jpeg"
+    ) ||
+    name.endsWith(
+      ".png"
+    )
   );
 }
 
@@ -2152,6 +2950,64 @@ function formatConfidence(
   return `${percentage.toFixed(
     0
   )}%`;
+}
+
+/* =========================================================
+   User-friendly error
+   ========================================================= */
+
+function toUserMessage(
+  error: unknown,
+  fallback: string
+) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(
+          error ??
+            ""
+        );
+
+  if (
+    message.includes(
+      "Missing or insufficient permissions"
+    ) ||
+    message.includes(
+      "permission-denied"
+    ) ||
+    message.includes(
+      "PERMISSION_DENIED"
+    )
+  ) {
+    return "この操作を実行する権限がありません。ログイン状態と所属情報を確認してください。";
+  }
+
+  if (
+    message.includes(
+      "unauthenticated"
+    ) ||
+    message.includes(
+      "UNAUTHENTICATED"
+    )
+  ) {
+    return "ログインが必要です。";
+  }
+
+  if (
+    message.includes(
+      "not-found"
+    ) ||
+    message.includes(
+      "NOT_FOUND"
+    )
+  ) {
+    return "対象のデータが見つかりません。";
+  }
+
+  return (
+    message ||
+    fallback
+  );
 }
 
 /* =========================================================
@@ -2238,4 +3094,23 @@ function safeNumber(
   )
     ? number
     : 0;
+}
+
+/* =========================================================
+   Client ID
+   ========================================================= */
+
+function createClientId() {
+  if (
+    typeof crypto !==
+      "undefined" &&
+    "randomUUID" in
+      crypto
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
 }
