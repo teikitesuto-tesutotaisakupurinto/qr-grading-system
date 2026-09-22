@@ -6,15 +6,11 @@ import {
   useState,
 } from "react";
 
-import {
-  onAuthStateChanged,
-} from "firebase/auth";
+import Link from "next/link";
 
 import {
-  addDoc,
   collection,
   doc,
-  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -28,14 +24,22 @@ import {
 } from "@/lib/firebase";
 
 import {
-  answersQuery,
-  retestsQuery,
-  studentsQuery,
-  testsQuery,
+  getAppUser,
+} from "@/lib/auth";
+
+import {
+  getScopedDocs,
+  retestsQueries,
+  studentsQueries,
+  testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
+  Retest,
+  RetestStatus,
+  Student,
+  Test,
   UserRole,
 } from "@/lib/types";
 
@@ -43,134 +47,12 @@ import type {
    Types
    ========================================================= */
 
-type RetestStatus =
-  | "未受験"
-  | "採点待ち"
-  | "採点済み"
-  | "確定";
-
-type Test = {
-  id: string;
-
-  organizationId: string;
-
-  testId: string;
-
-  name: string;
-
-  subject: string;
-
-  grade: string;
-
-  className: string;
-
-  schoolId: string;
-
-  examDate: string;
-
-  totalScore: number;
-
-  active: boolean;
-
-  isRetest: boolean;
-};
-
-type Student = {
-  id: string;
-
-  organizationId: string;
-
-  studentNumber: string;
-
-  name: string;
-
-  grade: string;
-
-  className: string;
-
-  schoolId: string;
-
-  active: boolean;
-};
-
-type Answer = {
-  id: string;
-
-  organizationId: string;
-
-  testId: string;
-
-  studentId: string | null;
-
-  studentNumber: string | null;
-
-  schoolId: string;
-
-  totalScore: number;
-
-  maxScore: number;
-
-  finalized: boolean;
-};
-
-type Retest = {
-  id: string;
-
-  organizationId: string;
-
-  schoolId: string;
-
-  originalTestId: string;
-
-  originalTestCode: string;
-
-  studentId: string;
-
-  studentNumber: string;
-
-  originalScore: number;
-
-  retestTestId: string;
-
-  retestTestCode: string;
-
-  scheduledDate: string;
-
-  status: RetestStatus;
-
-  manualScore: number | null;
-
-  manualMaxScore: number;
-
-  manualPercentage: number | null;
-
-  appliedToResult: boolean;
-
-  finalized: boolean;
-
-  createdAt: unknown;
-};
-
-type Candidate = {
-  student: Student;
-
-  answer: Answer;
-};
-
-/* =========================================================
-   Current User
-   ========================================================= */
-
-type CurrentUser = FirestoreUser & {
-  name: string;
-};
-
-/* =========================================================
-   Constants
-   ========================================================= */
-
-const DEFAULT_THRESHOLD =
-  60;
+type RetestRow =
+  Retest & {
+    studentName: string;
+    originalTestName: string;
+    retestTestName: string;
+  };
 
 /* =========================================================
    Page
@@ -178,1593 +60,424 @@ const DEFAULT_THRESHOLD =
 
 export default function RetestsPage() {
   const [
-    currentUser,
-    setCurrentUser,
-  ] = useState<CurrentUser | null>(
-    null
-  );
-
-  const [
-    tests,
-    setTests,
-  ] = useState<Test[]>([]);
-
-  const [
-    students,
-    setStudents,
-  ] = useState<Student[]>([]);
-
-  const [
-    answers,
-    setAnswers,
-  ] = useState<Answer[]>([]);
+    role,
+    setRole,
+  ] =
+    useState<UserRole | null>(
+      null
+    );
 
   const [
     retests,
     setRetests,
-  ] = useState<Retest[]>([]);
+  ] =
+    useState<RetestRow[]>(
+      []
+    );
 
   const [
-    selectedTestId,
-    setSelectedTestId,
-  ] = useState("");
+    students,
+    setStudents,
+  ] =
+    useState<Student[]>(
+      []
+    );
 
   const [
-    threshold,
-    setThreshold,
-  ] = useState(
-    String(
-      DEFAULT_THRESHOLD
-    )
-  );
-
-  const [
-    scheduledDate,
-    setScheduledDate,
-  ] = useState("");
-
-  const [
-    selectedCandidateIds,
-    setSelectedCandidateIds,
-  ] = useState<string[]>(
-    []
-  );
-
-  const [
-    manualScores,
-    setManualScores,
-  ] = useState<
-    Record<string, string>
-  >({});
-
-  const [
-    search,
-    setSearch,
-  ] = useState("");
+    tests,
+    setTests,
+  ] =
+    useState<Test[]>(
+      []
+    );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
-
-  const [
-    saving,
-    setSaving,
-  ] = useState(false);
+  ] =
+    useState(true);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     message,
     setMessage,
-  ] = useState("");
+  ] =
+    useState("");
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] =
+    useState<
+      "all" | RetestStatus
+    >(
+      "all"
+    );
+
+  const [
+    selectedId,
+    setSelectedId,
+  ] =
+    useState<
+      string | null
+    >(
+      null
+    );
+
+  const [
+    score,
+    setScore,
+  ] =
+    useState("");
 
   /* =======================================================
-     Authentication
+     Load
      ======================================================= */
 
   useEffect(() => {
-    const unsubscribe =
-      onAuthStateChanged(
-        auth,
-        async (
-          firebaseUser
-        ) => {
-          if (
-            !firebaseUser
-          ) {
-            setCurrentUser(
-              null
-            );
-
-            setLoading(
-              false
-            );
-
-            setError(
-              "ログイン状態を確認できません。"
-            );
-
-            return;
-          }
-
-          try {
-            /*
-             * users/{uid} を直接取得。
-             */
-            const snapshot =
-              await getDoc(
-                doc(
-                  db,
-                  "users",
-                  firebaseUser.uid
-                )
-              );
-
-            if (
-              !snapshot.exists()
-            ) {
-              setCurrentUser(
-                null
-              );
-
-              setError(
-                "システムのユーザー情報が登録されていません。"
-              );
-
-              setLoading(
-                false
-              );
-
-              return;
-            }
-
-            const data =
-              snapshot.data();
-
-            const role =
-              isUserRole(
-                data.role
-              )
-                ? data.role
-                : null;
-
-            const organizationId =
-              typeof data.organizationId ===
-              "string"
-                ? data.organizationId
-                : null;
-
-            const schoolIds =
-              Array.isArray(
-                data.schoolIds
-              )
-                ? data.schoolIds.filter(
-                    (
-                      value
-                    ): value is string =>
-                      typeof value ===
-                      "string"
-                  )
-                : [];
-
-            setCurrentUser({
-              uid:
-                firebaseUser.uid,
-
-              organizationId,
-
-              role,
-
-              schoolIds,
-
-              studentId:
-                typeof data.studentId ===
-                "string"
-                  ? data.studentId
-                  : null,
-
-              name:
-                typeof data.name ===
-                "string"
-                  ? data.name
-                  : firebaseUser.displayName ??
-                    "",
-            });
-          } catch (
-            err
-          ) {
-            console.error(
-              "User loading error:",
-              err
-            );
-
-            setError(
-              getSafeErrorMessage(
-                err
-              )
-            );
-          } finally {
-            setLoading(
-              false
-            );
-          }
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
+    void loadPage();
   }, []);
 
-  /* =======================================================
-     Permission
-     ======================================================= */
-
-  const canUsePage =
-    currentUser?.role ===
-      "本部管理者" ||
-    currentUser?.role ===
-      "校舎管理者" ||
-    currentUser?.role ===
-      "講師";
-
-  /* =======================================================
-     Data loading
-     ======================================================= */
-
-  useEffect(() => {
-    if (
-      !currentUser ||
-      !currentUser.organizationId ||
-      !canUsePage
-    ) {
-      return;
-    }
-
-    void loadData(
-      currentUser
-    );
-  }, [
-    currentUser,
-    canUsePage,
-  ]);
-
-  async function loadData(
-    user: CurrentUser
-  ) {
-    if (
-      !user.organizationId
-    ) {
-      return;
-    }
-
+  async function loadPage() {
     try {
-      setLoading(
-        true
-      );
-
+      setLoading(true);
       setError("");
 
-      /*
-       * 権限に応じたQueryを使用。
-       */
-      const testsQ =
-        testsQuery(
-          user
+      const user =
+        await getAppUser(
+          auth.currentUser
         );
 
-      const studentsQ =
-        studentsQuery(
-          user
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
         );
-
-      const answersQ =
-        answersQuery(
-          user
-        );
-
-      const retestsQ =
-        retestsQuery(
-          user
-        );
-
-      if (
-        !testsQ ||
-        !studentsQ ||
-        !answersQ ||
-        !retestsQ
-      ) {
-        setTests(
-          []
-        );
-
-        setStudents(
-          []
-        );
-
-        setAnswers(
-          []
-        );
-
-        setRetests(
-          []
-        );
-
-        return;
       }
 
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "追試管理は職員のみ利用できます。"
+        );
+      }
+
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織が設定されていません。"
+        );
+      }
+
+      setRole(
+        user.role
+      );
+
+      const scopeUser:
+        FirestoreUser =
+        {
+          uid:
+            user.uid,
+
+          organizationId:
+            user.organizationId,
+
+          role:
+            user.role,
+
+          schoolIds:
+            user.schoolIds,
+
+          studentId:
+            user.studentId,
+        };
+
       const [
-        testSnapshot,
-        studentSnapshot,
-        answerSnapshot,
-        retestSnapshot,
+        retestDocuments,
+        studentDocuments,
+        testDocuments,
       ] =
         await Promise.all([
-          getDocs(
-            testsQ
+          getScopedDocs(
+            retestsQueries(
+              scopeUser
+            )
           ),
 
-          getDocs(
-            studentsQ
+          getScopedDocs(
+            studentsQueries(
+              scopeUser
+            )
           ),
 
-          getDocs(
-            answersQ
-          ),
-
-          getDocs(
-            retestsQ
+          getScopedDocs(
+            testsQueries(
+              scopeUser
+            )
           ),
         ]);
 
-      /*
-       * Tests
-       */
+      const loadedStudents =
+        studentDocuments.map(
+          (
+            item
+          ) =>
+            normalizeStudent(
+              item.id,
+              item.data
+            )
+        );
 
       const loadedTests =
-        testSnapshot.docs
-          .map(
-            (
-              item
-            ): Test => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                organizationId:
-                  stringValue(
-                    data.organizationId
-                  ),
-
-                testId:
-                  stringValue(
-                    data.testId
-                  ),
-
-                name:
-                  stringValue(
-                    data.name
-                  ),
-
-                subject:
-                  stringValue(
-                    data.subject
-                  ),
-
-                grade:
-                  stringValue(
-                    data.grade
-                  ),
-
-                className:
-                  stringValue(
-                    data.className
-                  ),
-
-                schoolId:
-                  stringValue(
-                    data.schoolId
-                  ),
-
-                examDate:
-                  stringValue(
-                    data.examDate
-                  ),
-
-                totalScore:
-                  numberValue(
-                    data.totalScore
-                  ),
-
-                active:
-                  data.active !==
-                  false,
-
-                isRetest:
-                  data.isRetest ===
-                  true,
-              };
-            }
-          )
-          /*
-           * 追試テスト自体は
-           * この画面の元テスト選択には出さない。
-           */
-          .filter(
-            (
-              test
-            ) =>
-              test.active &&
-              !test.isRetest
-          );
-
-      /*
-       * Students
-       */
-
-      const loadedStudents =
-        studentSnapshot.docs
-          .map(
-            (
-              item
-            ): Student => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                organizationId:
-                  stringValue(
-                    data.organizationId
-                  ),
-
-                studentNumber:
-                  stringValue(
-                    data.studentNumber
-                  ),
-
-                name:
-                  stringValue(
-                    data.name
-                  ),
-
-                grade:
-                  stringValue(
-                    data.grade
-                  ),
-
-                className:
-                  stringValue(
-                    data.className
-                  ),
-
-                schoolId:
-                  stringValue(
-                    data.schoolId
-                  ),
-
-                active:
-                  data.active !==
-                  false,
-              };
-            }
-          )
-          .filter(
-            (
-              student
-            ) =>
-              student.active
-          );
-
-      /*
-       * Answers
-       */
-
-      const loadedAnswers =
-        answerSnapshot.docs
-          .map(
-            (
-              item
-            ): Answer => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                organizationId:
-                  stringValue(
-                    data.organizationId
-                  ),
-
-                testId:
-                  stringValue(
-                    data.testId
-                  ),
-
-                studentId:
-                  nullableString(
-                    data.studentId
-                  ),
-
-                studentNumber:
-                  nullableString(
-                    data.studentNumber
-                  ),
-
-                schoolId:
-                  stringValue(
-                    data.schoolId
-                  ),
-
-                totalScore:
-                  numberValue(
-                    data.totalScore
-                  ),
-
-                maxScore:
-                  numberValue(
-                    data.maxScore
-                  ),
-
-                finalized:
-                  data.finalized ===
-                  true,
-              };
-            }
-          )
-          .filter(
-            (
-              answer
-            ) =>
-              answer.finalized
-          );
-
-      /*
-       * Retests
-       */
+        testDocuments.map(
+          (
+            item
+          ) =>
+            normalizeTest(
+              item.id,
+              item.data
+            )
+        );
 
       const loadedRetests =
-        retestSnapshot.docs
-          .map(
-            (
-              item
-            ): Retest => {
-              const data =
-                item.data();
-
-              return {
-                id:
-                  item.id,
-
-                organizationId:
-                  stringValue(
-                    data.organizationId
-                  ),
-
-                schoolId:
-                  stringValue(
-                    data.schoolId
-                  ),
-
-                originalTestId:
-                  stringValue(
-                    data.originalTestId
-                  ),
-
-                originalTestCode:
-                  stringValue(
-                    data.originalTestCode
-                  ),
-
-                studentId:
-                  stringValue(
-                    data.studentId
-                  ),
-
-                studentNumber:
-                  stringValue(
-                    data.studentNumber
-                  ),
-
-                originalScore:
-                  numberValue(
-                    data.originalScore
-                  ),
-
-                retestTestId:
-                  stringValue(
-                    data.retestTestId
-                  ),
-
-                retestTestCode:
-                  stringValue(
-                    data.retestTestCode
-                  ),
-
-                scheduledDate:
-                  stringValue(
-                    data.scheduledDate
-                  ),
-
-                status:
-                  isRetestStatus(
-                    data.status
-                  )
-                    ? data.status
-                    : "未受験",
-
-                manualScore:
-                  nullableNumber(
-                    data.manualScore
-                  ),
-
-                manualMaxScore:
-                  numberValue(
-                    data.manualMaxScore
-                  ),
-
-                manualPercentage:
-                  nullableNumber(
-                    data.manualPercentage
-                  ),
-
-                appliedToResult:
-                  data.appliedToResult ===
-                  true,
-
-                finalized:
-                  data.finalized ===
-                  true,
-
-                createdAt:
-                  data.createdAt,
-              };
-            }
-          );
-
-      setTests(
-        loadedTests
-      );
+        retestDocuments.map(
+          (
+            item
+          ) =>
+            normalizeRetest(
+              item.id,
+              item.data,
+              loadedStudents,
+              loadedTests
+            )
+        );
 
       setStudents(
         loadedStudents
       );
 
-      setAnswers(
-        loadedAnswers
+      setTests(
+        loadedTests
       );
 
       setRetests(
         loadedRetests
       );
 
-      /*
-       * 入力値を復元。
-       */
-      const scores:
-        Record<
-          string,
-          string
-        > = {};
+      setSelectedId(
+        (
+          current
+        ) => {
+          if (
+            current &&
+            loadedRetests.some(
+              (
+                retest
+              ) =>
+                retest.id ===
+                current
+            )
+          ) {
+            return current;
+          }
 
-      for (
-        const retest of
-          loadedRetests
-      ) {
-        if (
-          retest.manualScore !==
-          null
-        ) {
-          scores[
-            retest.id
-          ] =
-            String(
-              retest.manualScore
-            );
+          return (
+            loadedRetests[0]?.id ??
+            null
+          );
         }
-      }
-
-      setManualScores(
-        scores
       );
-
-      /*
-       * 初期テスト。
-       */
-      if (
-        !selectedTestId &&
-        loadedTests.length >
-          0
-      ) {
-        setSelectedTestId(
-          loadedTests[0].id
-        );
-      }
     } catch (
-      err
+      error
     ) {
       console.error(
-        "Retest data loading error:",
-        err
+        "Retest page error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
+        error instanceof Error
+          ? error.message
+          : "追試データを取得できませんでした。"
       );
     } finally {
-      setLoading(
-        false
-      );
+      setLoading(false);
     }
   }
 
   /* =======================================================
-     Available tests
+     Filter
      ======================================================= */
 
-  const availableTests =
+  const filtered =
     useMemo(() => {
-      if (
-        !currentUser
-      ) {
-        return [];
-      }
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
 
-      if (
-        currentUser.role ===
-        "本部管理者"
-      ) {
-        return tests;
-      }
-
-      return tests.filter(
+      return retests.filter(
         (
-          test
-        ) =>
-          currentUser.schoolIds.includes(
-            test.schoolId
-          )
+          retest
+        ) => {
+          const statusMatch =
+            statusFilter ===
+              "all" ||
+            retest.status ===
+              statusFilter;
+
+          const searchMatch =
+            !keyword ||
+            retest.studentName
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            retest.studentNumber
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            retest.originalTestName
+              .toLowerCase()
+              .includes(
+                keyword
+              ) ||
+            retest.retestTestName
+              .toLowerCase()
+              .includes(
+                keyword
+              );
+
+          return (
+            statusMatch &&
+            searchMatch
+          );
+        }
       );
     }, [
-      tests,
-      currentUser,
+      retests,
+      search,
+      statusFilter,
     ]);
 
-  /* =======================================================
-     Selected test
-     ======================================================= */
-
-  const selectedTest =
-    tests.find(
+  const selected =
+    retests.find(
       (
-        test
+        retest
       ) =>
-        test.id ===
-        selectedTestId
-    );
+        retest.id ===
+        selectedId
+    ) ??
+    null;
 
   /* =======================================================
-     Candidates
+     Select
      ======================================================= */
 
-  const candidates =
-    useMemo(() => {
-      if (
-        !selectedTest
-      ) {
-        return [];
+  useEffect(() => {
+    if (
+      selected
+    ) {
+      setScore(
+        selected.manualScore ===
+          null
+          ? ""
+          : String(
+              selected.manualScore
+            )
+      );
+    } else {
+      setScore("");
+    }
+  }, [
+    selectedId,
+  ]);
+
+  /* =======================================================
+     Manual score
+     ======================================================= */
+
+  async function saveScore() {
+    if (
+      !selected
+    ) {
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      const user =
+        await getAppUser();
+
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
+        );
       }
 
-      const thresholdValue =
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "追試を採点する権限がありません。"
+        );
+      }
+
+      const numericScore =
         Number(
-          threshold
+          score
         );
 
       if (
         !Number.isFinite(
-          thresholdValue
+          numericScore
         )
       ) {
-        return [];
-      }
-
-      /*
-       * すでに追試登録済みの生徒を除外。
-       */
-      const registered =
-        new Set(
-          retests
-            .filter(
-              (
-                retest
-              ) =>
-                retest.originalTestId ===
-                selectedTest.id
-            )
-            .map(
-              (
-                retest
-              ) =>
-                retest.studentId
-            )
+        throw new Error(
+          "点数を入力してください。"
         );
-
-      const result:
-        Candidate[] =
-        [];
-
-      for (
-        const answer of
-          answers
-      ) {
-        if (
-          answer.testId !==
-          selectedTest.id
-        ) {
-          continue;
-        }
-
-        if (
-          !answer.studentId
-        ) {
-          continue;
-        }
-
-        if (
-          registered.has(
-            answer.studentId
-          )
-        ) {
-          continue;
-        }
-
-        if (
-          answer.totalScore >=
-          thresholdValue
-        ) {
-          continue;
-        }
-
-        const student =
-          students.find(
-            (
-              item
-            ) =>
-              item.id ===
-              answer.studentId
-          );
-
-        if (
-          !student
-        ) {
-          continue;
-        }
-
-        /*
-         * 念のためクライアント側でも
-         * 校舎範囲を再確認。
-         */
-        if (
-          currentUser?.role !==
-          "本部管理者"
-        ) {
-          if (
-            !currentUser?.schoolIds.includes(
-              student.schoolId
-            )
-          ) {
-            continue;
-          }
-        }
-
-        result.push({
-          student,
-
-          answer,
-        });
       }
-
-      return result;
-    }, [
-      selectedTest,
-      threshold,
-      retests,
-      answers,
-      students,
-      currentUser,
-    ]);
-
-  /* =======================================================
-     Search
-     ======================================================= */
-
-  const filteredCandidates =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
 
       if (
-        !keyword
+        numericScore <
+          0 ||
+        numericScore >
+          selected.manualMaxScore
       ) {
-        return candidates;
-      }
-
-      return candidates.filter(
-        (
-          candidate
-        ) =>
-          candidate.student.name
-            .toLowerCase()
-            .includes(
-              keyword
-            ) ||
-          candidate.student.studentNumber.includes(
-            keyword
-          ) ||
-          candidate.student.className
-            .toLowerCase()
-            .includes(
-              keyword
-            )
-      );
-    }, [
-      candidates,
-      search,
-    ]);
-
-  /* =======================================================
-     Displayed retests
-     ======================================================= */
-
-  const displayedRetests =
-    useMemo(() => {
-      let result =
-        retests;
-
-      if (
-        selectedTestId
-      ) {
-        result =
-          result.filter(
-            (
-              retest
-            ) =>
-              retest.originalTestId ===
-              selectedTestId
-          );
-      }
-
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
-
-      if (
-        keyword
-      ) {
-        result =
-          result.filter(
-            (
-              retest
-            ) => {
-              const student =
-                students.find(
-                  (
-                    item
-                  ) =>
-                    item.id ===
-                    retest.studentId
-                );
-
-              return (
-                retest.studentNumber.includes(
-                  keyword
-                ) ||
-                (
-                  student?.name ??
-                  ""
-                )
-                  .toLowerCase()
-                  .includes(
-                    keyword
-                  )
-              );
-            }
-          );
-      }
-
-      return result;
-    }, [
-      retests,
-      selectedTestId,
-      search,
-      students,
-    ]);
-
-  /* =======================================================
-     Candidate selection
-     ======================================================= */
-
-  function toggleCandidate(
-    studentId: string
-  ) {
-    setSelectedCandidateIds(
-      (
-        current
-      ) =>
-        current.includes(
-          studentId
-        )
-          ? current.filter(
-              (
-                id
-              ) =>
-                id !==
-                studentId
-            )
-          : [
-              ...current,
-              studentId,
-            ]
-    );
-  }
-
-  function selectAllCandidates() {
-    setSelectedCandidateIds(
-      filteredCandidates.map(
-        (
-          candidate
-        ) =>
-          candidate.student.id
-      )
-    );
-  }
-
-  function clearSelection() {
-    setSelectedCandidateIds(
-      []
-    );
-  }
-
-  /* =======================================================
-     Generate retest code
-     ======================================================= */
-
-  function generateRetestCode(
-    test: Test
-  ) {
-    const date =
-      new Date()
-        .toISOString()
-        .slice(
-          0,
-          10
-        )
-        .replace(
-          /-/g,
-          ""
-        );
-
-    return `${test.testId}-R${date}`;
-  }
-
-  /* =======================================================
-     Register retests
-     ======================================================= */
-
-  async function registerRetests() {
-    if (
-      saving
-    ) {
-      return;
-    }
-
-    if (
-      !currentUser?.organizationId
-    ) {
-      setError(
-        "組織情報を確認できません。"
-      );
-
-      return;
-    }
-
-    if (
-      !selectedTest
-    ) {
-      setError(
-        "元テストを選択してください。"
-      );
-
-      return;
-    }
-
-    if (
-      selectedCandidateIds.length ===
-      0
-    ) {
-      setError(
-        "追試対象者を選択してください。"
-      );
-
-      return;
-    }
-
-    if (
-      !scheduledDate
-    ) {
-      setError(
-        "追試実施日を入力してください。"
-      );
-
-      return;
-    }
-
-    /*
-     * 選択テストの校舎権限。
-     */
-    if (
-      currentUser.role !==
-      "本部管理者"
-    ) {
-      if (
-        !currentUser.schoolIds.includes(
-          selectedTest.schoolId
-        )
-      ) {
-        setError(
-          "この校舎の追試を登録する権限がありません。"
-        );
-
-        return;
-      }
-    }
-
-    const thresholdValue =
-      Number(
-        threshold
-      );
-
-    if (
-      !Number.isFinite(
-        thresholdValue
-      ) ||
-      thresholdValue <
-        0
-    ) {
-      setError(
-        "追試基準点を正しく入力してください。"
-      );
-
-      return;
-    }
-
-    try {
-      setSaving(
-        true
-      );
-
-      setError("");
-      setMessage("");
-
-      const retestCode =
-        generateRetestCode(
-          selectedTest
-        );
-
-      /*
-       * 追試テストの既存確認。
-       */
-      const duplicateSnapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "tests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              currentUser.organizationId
-            ),
-            where(
-              "testId",
-              "==",
-              retestCode
-            )
-          )
-        );
-
-      let retestTestId =
-        duplicateSnapshot.empty
-          ? ""
-          : duplicateSnapshot.docs[0].id;
-
-      /*
-       * 追試専用テスト作成。
-       */
-      if (
-        !retestTestId
-      ) {
-        const newTest =
-          await addDoc(
-            collection(
-              db,
-              "tests"
-            ),
-            {
-              organizationId:
-                currentUser.organizationId,
-
-              schoolId:
-                selectedTest.schoolId,
-
-              testId:
-                retestCode,
-
-              name:
-                `${selectedTest.name} 追試`,
-
-              subject:
-                selectedTest.subject,
-
-              grade:
-                selectedTest.grade,
-
-              className:
-                selectedTest.className,
-
-              examDate:
-                scheduledDate,
-
-              totalScore:
-                selectedTest.totalScore,
-
-              active:
-                true,
-
-              /*
-               * 追試フラグ。
-               */
-              isRetest:
-                true,
-
-              /*
-               * 自動採点を完全に無効化。
-               */
-              automaticGrading:
-                false,
-
-              aiGrading:
-                false,
-
-              retestManualGrading:
-                true,
-
-              originalTestId:
-                selectedTest.id,
-
-              originalTestCode:
-                selectedTest.testId,
-
-              createdBy:
-                currentUser.uid,
-
-              createdAt:
-                serverTimestamp(),
-
-              updatedAt:
-                serverTimestamp(),
-            }
-          );
-
-        retestTestId =
-          newTest.id;
-      }
-
-      /*
-       * 対象者ごとに追試を作成。
-       */
-      for (
-        const studentId of
-          selectedCandidateIds
-      ) {
-        const candidate =
-          candidates.find(
-            (
-              item
-            ) =>
-              item.student.id ===
-              studentId
-          );
-
-        if (
-          !candidate
-        ) {
-          continue;
-        }
-
-        /*
-         * schoolIdを必ず保存。
-         */
-        await addDoc(
-          collection(
-            db,
-            "retests"
-          ),
-          {
-            organizationId:
-              currentUser.organizationId,
-
-            schoolId:
-              candidate.student.schoolId,
-
-            originalTestId:
-              selectedTest.id,
-
-            originalTestCode:
-              selectedTest.testId,
-
-            studentId:
-              candidate.student.id,
-
-            studentNumber:
-              candidate.student
-                .studentNumber,
-
-            originalScore:
-              candidate.answer
-                .totalScore,
-
-            retestTestId:
-              retestTestId,
-
-            retestTestCode:
-              retestCode,
-
-            scheduledDate,
-
-            status:
-              "未受験",
-
-            manualScore:
-              null,
-
-            manualMaxScore:
-              selectedTest.totalScore,
-
-            manualPercentage:
-              null,
-
-            appliedToResult:
-              false,
-
-            finalized:
-              false,
-
-            createdBy:
-              currentUser.uid,
-
-            createdAt:
-              serverTimestamp(),
-
-            updatedAt:
-              serverTimestamp(),
-          }
+        throw new Error(
+          `点数は0〜${selected.manualMaxScore}の範囲で入力してください。`
         );
       }
-
-      setSelectedCandidateIds(
-        []
-      );
-
-      setMessage(
-        `${selectedCandidateIds.length}人を追試対象として登録しました。`
-      );
-
-      await loadData(
-        currentUser
-      );
-    } catch (
-      err
-    ) {
-      console.error(
-        "Retest registration error:",
-        err
-      );
-
-      setError(
-        getSafeErrorMessage(
-          err
-        )
-      );
-    } finally {
-      setSaving(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Manual score input
-     ======================================================= */
-
-  function changeManualScore(
-    retestId: string,
-    value: string
-  ) {
-    setManualScores(
-      (
-        current
-      ) => ({
-        ...current,
-
-        [retestId]:
-          value,
-      })
-    );
-  }
-
-  /* =======================================================
-     Save manual score
-     ======================================================= */
-
-  async function saveManualScore(
-    retest: Retest
-  ) {
-    if (
-      saving
-    ) {
-      return;
-    }
-
-    if (
-      !currentUser
-    ) {
-      return;
-    }
-
-    if (
-      retest.status ===
-      "確定"
-    ) {
-      setError(
-        "確定済みの追試結果は変更できません。"
-      );
-
-      return;
-    }
-
-    /*
-     * クライアント側の校舎確認。
-     */
-    if (
-      currentUser.role !==
-      "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        retest.schoolId
-      )
-    ) {
-      setError(
-        "この追試結果を変更する権限がありません。"
-      );
-
-      return;
-    }
-
-    const raw =
-      manualScores[
-        retest.id
-      ] ??
-      "";
-
-    if (
-      raw.trim() ===
-      ""
-    ) {
-      setError(
-        "追試得点を入力してください。"
-      );
-
-      return;
-    }
-
-    const score =
-      Number(
-        raw
-      );
-
-    if (
-      !Number.isFinite(
-        score
-      )
-    ) {
-      setError(
-        "得点を正しく入力してください。"
-      );
-
-      return;
-    }
-
-    if (
-      score <
-        0 ||
-      score >
-        retest.manualMaxScore
-    ) {
-      setError(
-        `得点は0〜${retest.manualMaxScore}点で入力してください。`
-      );
-
-      return;
-    }
-
-    try {
-      setSaving(
-        true
-      );
-
-      setError("");
-      setMessage("");
-
-      const percentage =
-        retest.manualMaxScore >
-        0
-          ? (
-              score /
-              retest.manualMaxScore
-            ) *
-            100
-          : 0;
 
       await updateDoc(
         doc(
           db,
           "retests",
-          retest.id
+          selected.id
         ),
         {
           manualScore:
-            score,
-
-          manualMaxScore:
-            retest.manualMaxScore,
-
-          manualPercentage:
-            percentage,
+            numericScore,
 
           status:
             "採点済み",
-
-          appliedToResult:
-            false,
-
-          finalized:
-            false,
-
-          scoredBy:
-            currentUser.uid,
-
-          scoredByName:
-            currentUser.name,
-
-          scoredAt:
-            serverTimestamp(),
 
           updatedAt:
             serverTimestamp(),
@@ -1772,100 +485,73 @@ export default function RetestsPage() {
       );
 
       setMessage(
-        "追試の点数を保存しました。"
+        "追試の採点結果を保存しました。"
       );
 
-      await loadData(
-        currentUser
-      );
+      await loadPage();
     } catch (
-      err
+      error
     ) {
       console.error(
-        "Manual score save error:",
-        err
+        "Retest scoring error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
-      );
-    } finally {
-      setSaving(
-        false
+        error instanceof Error
+          ? error.message
+          : "追試の採点に失敗しました。"
       );
     }
   }
 
   /* =======================================================
-     Finalize retest
+     Finalize
      ======================================================= */
 
-  async function finalizeRetest(
-    retest: Retest
-  ) {
+  async function finalizeRetest() {
     if (
-      saving
+      !selected
     ) {
-      return;
-    }
-
-    if (
-      !currentUser
-    ) {
-      return;
-    }
-
-    if (
-      currentUser.role !==
-      "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        retest.schoolId
-      )
-    ) {
-      setError(
-        "この追試結果を確定する権限がありません。"
-      );
-
-      return;
-    }
-
-    if (
-      retest.manualScore ===
-      null
-    ) {
-      setError(
-        "先に追試得点を入力してください。"
-      );
-
-      return;
-    }
-
-    if (
-      retest.status !==
-      "採点済み"
-    ) {
-      setError(
-        "採点済みの追試だけ確定できます。"
-      );
-
       return;
     }
 
     try {
-      setSaving(
-        true
-      );
-
       setError("");
       setMessage("");
+
+      const user =
+        await getAppUser();
+
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "追試を確定する権限がありません。"
+        );
+      }
+
+      if (
+        selected.manualScore ===
+        null
+      ) {
+        throw new Error(
+          "先に手採点を完了してください。"
+        );
+      }
 
       await updateDoc(
         doc(
           db,
           "retests",
-          retest.id
+          selected.id
         ),
         {
           status:
@@ -1874,15 +560,6 @@ export default function RetestsPage() {
           finalized:
             true,
 
-          finalizedBy:
-            currentUser.uid,
-
-          finalizedByName:
-            currentUser.name,
-
-          finalizedAt:
-            serverTimestamp(),
-
           appliedToResult:
             false,
 
@@ -1892,330 +569,86 @@ export default function RetestsPage() {
       );
 
       setMessage(
-        "追試結果を確定しました。"
+        "追試を確定しました。"
       );
 
-      await loadData(
-        currentUser
-      );
+      await loadPage();
     } catch (
-      err
+      error
     ) {
       console.error(
-        "Retest finalization error:",
-        err
+        "Retest finalize error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
-      );
-    } finally {
-      setSaving(
-        false
+        error instanceof Error
+          ? error.message
+          : "追試を確定できませんでした。"
       );
     }
   }
 
   /* =======================================================
-     Apply to normal result
+     Summary
      ======================================================= */
 
-  async function applyRetestToResult(
-    retest: Retest
-  ) {
-    if (
-      saving
-    ) {
-      return;
-    }
+  const waiting =
+    retests.filter(
+      (
+        retest
+      ) =>
+        retest.status ===
+        "未受験"
+    ).length;
 
-    if (
-      !currentUser
-    ) {
-      return;
-    }
+  const scoring =
+    retests.filter(
+      (
+        retest
+      ) =>
+        retest.status ===
+        "採点待ち"
+    ).length;
 
-    if (
-      !currentUser.organizationId
-    ) {
-      return;
-    }
+  const scored =
+    retests.filter(
+      (
+        retest
+      ) =>
+        retest.status ===
+        "採点済み"
+    ).length;
 
-    if (
-      currentUser.role !==
-      "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        retest.schoolId
-      )
-    ) {
-      setError(
-        "この追試結果を成績へ反映する権限がありません。"
-      );
-
-      return;
-    }
-
-    if (
-      retest.status !==
-      "確定"
-    ) {
-      setError(
-        "確定済みの追試だけ成績へ反映できます。"
-      );
-
-      return;
-    }
-
-    if (
-      retest.manualScore ===
-      null
-    ) {
-      setError(
-        "追試得点がありません。"
-      );
-
-      return;
-    }
-
-    if (
-      retest.appliedToResult
-    ) {
-      setError(
-        "この追試結果はすでに成績へ反映されています。"
-      );
-
-      return;
-    }
-
-    try {
-      setSaving(
-        true
-      );
-
-      setError("");
-      setMessage("");
-
-      /*
-       * 既存反映データ確認。
-       *
-       * 同じretetIdを二重登録しない。
-       */
-      const existing =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "retestResults"
-            ),
-            where(
-              "organizationId",
-              "==",
-              currentUser.organizationId
-            ),
-            where(
-              "retestId",
-              "==",
-              retest.id
-            )
-          )
-        );
-
-      if (
-        !existing.empty
-      ) {
-        /*
-         * すでに存在するなら
-         * retests側だけ反映済みに修正。
-         */
-        await updateDoc(
-          doc(
-            db,
-            "retests",
-            retest.id
-          ),
-          {
-            appliedToResult:
-              true,
-
-            appliedAt:
-              serverTimestamp(),
-
-            appliedBy:
-              currentUser.uid,
-
-            updatedAt:
-              serverTimestamp(),
-          }
-        );
-
-        setMessage(
-          "この追試結果はすでに成績へ登録されています。"
-        );
-
-        await loadData(
-          currentUser
-        );
-
-        return;
-      }
-
-      /*
-       * retestResultsを作成。
-       *
-       * ここにもschoolIdを保存。
-       */
-      await addDoc(
-        collection(
-          db,
-          "retestResults"
-        ),
-        {
-          organizationId:
-            retest.organizationId,
-
-          schoolId:
-            retest.schoolId,
-
-          retestId:
-            retest.id,
-
-          originalTestId:
-            retest.originalTestId,
-
-          originalTestCode:
-            retest.originalTestCode,
-
-          studentId:
-            retest.studentId,
-
-          studentNumber:
-            retest.studentNumber,
-
-          originalScore:
-            retest.originalScore,
-
-          retestScore:
-            retest.manualScore,
-
-          retestMaxScore:
-            retest.manualMaxScore,
-
-          retestPercentage:
-            retest.manualPercentage,
-
-          /*
-           * 成績集計で採用する値。
-           */
-          appliedScore:
-            retest.manualScore,
-
-          appliedMaxScore:
-            retest.manualMaxScore,
-
-          appliedPercentage:
-            retest.manualPercentage,
-
-          source:
-            "追試",
-
-          createdBy:
-            currentUser.uid,
-
-          createdAt:
-            serverTimestamp(),
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      /*
-       * 二重反映防止。
-       */
-      await updateDoc(
-        doc(
-          db,
-          "retests",
-          retest.id
-        ),
-        {
-          appliedToResult:
-            true,
-
-          appliedAt:
-            serverTimestamp(),
-
-          appliedBy:
-            currentUser.uid,
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      setMessage(
-        "追試結果を通常成績の集計対象へ反映しました。"
-      );
-
-      await loadData(
-        currentUser
-      );
-    } catch (
-      err
-    ) {
-      console.error(
-        "Retest result apply error:",
-        err
-      );
-
-      setError(
-        getSafeErrorMessage(
-          err
-        )
-      );
-    } finally {
-      setSaving(
-        false
-      );
-    }
-  }
+  const finalized =
+    retests.filter(
+      (
+        retest
+      ) =>
+        retest.status ===
+        "確定"
+    ).length;
 
   /* =======================================================
-     Permission denied
+     Loading
      ======================================================= */
 
   if (
-    !currentUser
+    loading
   ) {
     return (
-      <main
-        style={
-          pageStyle
-        }
-      >
-        <section
-          style={
-            cardStyle
-          }
-        >
+      <main className="page">
+        <section className="content">
           <h1>
-            追試管理
+            追試
           </h1>
 
           <p>
-            ログイン状態を確認しています。
+            追試データを読み込んでいます...
           </p>
         </section>
       </main>
     );
-  }
-
-  if (
-    !canUsePage
-  ) {
-    return null;
   }
 
   /* =======================================================
@@ -2223,1036 +656,852 @@ export default function RetestsPage() {
      ======================================================= */
 
   return (
-    <main
-      style={
-        pageStyle
-      }
-    >
-      <div
-        style={{
-          maxWidth:
-            1500,
+    <main className="page">
+      <section className="content">
 
-          margin:
-            "0 auto",
-        }}
-      >
-        {/* ==================================================
-            Header
-            ================================================== */}
+        <header className="pageHeader">
+          <div>
+            <h1>
+              追試
+            </h1>
 
-        <header
-          style={{
-            marginBottom:
-              24,
-          }}
-        >
-          <h1
-            style={{
-              margin:
-                "0 0 8px",
-            }}
+            <p className="muted">
+              追試は自動採点せず、講師が手採点します。
+            </p>
+          </div>
+
+          <Link
+            href="/results/teacher"
+            className="button"
           >
-            追試管理
-          </h1>
-
-          <p
-            style={{
-              margin: 0,
-
-              color:
-                "#666",
-
-              lineHeight:
-                1.7,
-            }}
-          >
-            追試は講師が手採点し、確定した点数を通常テストの成績集計へ反映します。
-          </p>
+            成績
+          </Link>
         </header>
-
-        {/* ==================================================
-            Messages
-            ================================================== */}
 
         {error && (
           <div
-            style={
-              errorStyle
-            }
+            className="errorMessage"
+            role="alert"
           >
-            {error}
+            {
+              error
+            }
           </div>
         )}
 
         {message && (
           <div
-            style={
-              successStyle
-            }
+            className="successMessage"
+            role="status"
           >
-            {message}
+            {
+              message
+            }
           </div>
         )}
 
         {/* ==================================================
-            Registration
+            Summary
             ================================================== */}
 
-        <section
+        <div
           style={{
-            ...cardStyle,
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(4, minmax(0, 1fr))",
+
+            gap:
+              12,
 
             marginBottom:
-              20,
+              18,
           }}
         >
-          <h2
-            style={{
-              margin:
-                0,
-            }}
-          >
-            追試対象者を登録
-          </h2>
+          <SummaryCard
+            label="未受験"
+            value={
+              waiting
+            }
+          />
 
+          <SummaryCard
+            label="採点待ち"
+            value={
+              scoring
+            }
+          />
+
+          <SummaryCard
+            label="採点済み"
+            value={
+              scored
+            }
+          />
+
+          <SummaryCard
+            label="確定"
+            value={
+              finalized
+            }
+          />
+        </div>
+
+        {/* ==================================================
+            Filters
+            ================================================== */}
+
+        <section className="card">
           <div
             style={{
               display:
                 "grid",
 
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(220px, 1fr))",
+                "1fr 220px",
 
               gap:
-                16,
-
-              marginTop:
-                18,
+                10,
             }}
           >
-            <label
-              style={
-                labelStyle
+            <input
+              value={
+                search
+              }
+              onChange={(
+                event
+              ) =>
+                setSearch(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="生徒番号・氏名・テスト名"
+            />
+
+            <select
+              value={
+                statusFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setStatusFilter(
+                  event.target
+                    .value as
+                    | "all"
+                    | RetestStatus
+                )
               }
             >
-              元テスト
+              <option value="all">
+                すべて
+              </option>
 
-              <select
-                value={
-                  selectedTestId
-                }
-                onChange={(
-                  event
-                ) => {
-                  setSelectedTestId(
-                    event.target
-                      .value
-                  );
+              <option value="未受験">
+                未受験
+              </option>
 
-                  setSelectedCandidateIds(
-                    []
-                  );
-                }}
-                style={
-                  inputStyle
-                }
-              >
-                <option value="">
-                  テストを選択してください
-                </option>
+              <option value="採点待ち">
+                採点待ち
+              </option>
 
-                {availableTests.map(
-                  (
-                    test
-                  ) => (
-                    <option
-                      key={
-                        test.id
-                      }
-                      value={
-                        test.id
-                      }
-                    >
-                      {
-                        test.testId
-                      }
-                      {" — "}
-                      {
-                        test.name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+              <option value="採点済み">
+                採点済み
+              </option>
 
-            <label
-              style={
-                labelStyle
-              }
-            >
-              追試基準点
-
-              <input
-                type="number"
-                min="0"
-                value={
-                  threshold
-                }
-                onChange={(
-                  event
-                ) =>
-                  setThreshold(
-                    event.target
-                      .value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              />
-
-              <span
-                style={
-                  helpTextStyle
-                }
-              >
-                この点数未満の確定答案を追試候補にします。
-              </span>
-            </label>
-
-            <label
-              style={
-                labelStyle
-              }
-            >
-              追試実施日
-
-              <input
-                type="date"
-                value={
-                  scheduledDate
-                }
-                onChange={(
-                  event
-                ) =>
-                  setScheduledDate(
-                    event.target
-                      .value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              />
-            </label>
+              <option value="確定">
+                確定
+              </option>
+            </select>
           </div>
-
-          {selectedTest && (
-            <div
-              style={{
-                marginTop:
-                  18,
-
-                padding:
-                  14,
-
-                background:
-                  "#f7f7f7",
-
-                borderRadius:
-                  8,
-
-                fontSize:
-                  13,
-              }}
-            >
-              <strong>
-                {
-                  selectedTest.testId
-                }
-              </strong>
-
-              {" — "}
-
-              {
-                selectedTest.name
-              }
-
-              {" / "}
-
-              {
-                selectedTest.subject
-              }
-
-              {" / 満点 "}
-
-              {
-                selectedTest.totalScore
-              }
-              点
-            </div>
-          )}
         </section>
 
         {/* ==================================================
-            Candidates
+            Main
             ================================================== */}
 
-        <section
+        <div
           style={{
-            ...cardStyle,
+            display:
+              "grid",
 
-            marginBottom:
-              20,
+            gridTemplateColumns:
+              "minmax(0, 1.1fr) minmax(360px, .9fr)",
+
+            gap:
+              18,
+
+            marginTop:
+              16,
+
+            alignItems:
+              "start",
           }}
         >
-          <div
-            style={{
-              display:
-                "flex",
+          {/* List */}
 
-              justifyContent:
-                "space-between",
+          <section className="card">
+            <h2>
+              追試一覧
+            </h2>
 
-              alignItems:
-                "center",
-
-              gap:
-                16,
-            }}
-          >
-            <div>
-              <h2
+            {filtered.length ===
+            0 ? (
+              <EmptyState />
+            ) : (
+              <div
                 style={{
-                  margin:
-                    0,
+                  overflowX:
+                    "auto",
                 }}
               >
-                追試候補
-              </h2>
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>
+                        生徒
+                      </th>
 
-              <p
-                style={{
-                  margin:
-                    "5px 0 0",
+                      <th>
+                        元テスト
+                      </th>
 
-                  color:
-                    "#777",
+                      <th>
+                        追試
+                      </th>
 
-                  fontSize:
-                    12,
-                }}
-              >
-                {
-                  filteredCandidates.length
-                }
-                人
-              </p>
-            </div>
+                      <th>
+                        状態
+                      </th>
 
-            <div
-              style={{
-                display:
-                  "flex",
+                      <th>
+                        得点
+                      </th>
+                    </tr>
+                  </thead>
 
-                gap:
-                8,
-              }}
-            >
-              <button
-                type="button"
-                onClick={
-                  selectAllCandidates
-                }
-                style={
-                  secondaryButton
-                }
-              >
-                全員選択
-              </button>
-
-              <button
-                type="button"
-                onClick={
-                  clearSelection
-                }
-                style={
-                  secondaryButton
-                }
-              >
-                選択解除
-              </button>
-            </div>
-          </div>
-
-          <input
-            value={
-              search
-            }
-            onChange={(
-              event
-            ) =>
-              setSearch(
-                event.target
-                  .value
-              )
-            }
-            placeholder="氏名・生徒番号・クラス"
-            style={
-              inputStyle
-            }
-          />
-
-          <div
-            style={{
-              overflowX:
-                "auto",
-
-              marginTop:
-                16,
-            }}
-          >
-            <table
-              style={
-                tableStyle
-              }
-            >
-              <thead>
-                <tr>
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    選択
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    生徒番号
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    氏名
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    学年
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    クラス
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    元得点
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    満点
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredCandidates.map(
-                  (
-                    candidate
-                  ) => (
-                    <tr
-                      key={
-                        candidate.student.id
-                      }
-                    >
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedCandidateIds.includes(
-                            candidate.student.id
-                          )}
-                          onChange={() =>
-                            toggleCandidate(
-                              candidate.student.id
+                  <tbody>
+                    {filtered.map(
+                      (
+                        retest
+                      ) => (
+                        <tr
+                          key={
+                            retest.id
+                          }
+                          onClick={() =>
+                            setSelectedId(
+                              retest.id
                             )
                           }
-                        />
-                      </td>
+                          style={{
+                            cursor:
+                              "pointer",
 
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        {
-                          candidate
-                            .student
-                            .studentNumber
-                        }
-                      </td>
-
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        {
-                          candidate
-                            .student
-                            .name
-                        }
-                      </td>
-
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        {
-                          candidate
-                            .student
-                            .grade
-                        }
-                      </td>
-
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        {
-                          candidate
-                            .student
-                            .className ||
-                          "—"
-                        }
-                      </td>
-
-                      <td
-                        style={{
-                          ...tdStyle,
-
-                          color:
-                            "#a00000",
-
-                          fontWeight:
-                            700,
-                        }}
-                      >
-                        {
-                          candidate
-                            .answer
-                            .totalScore
-                        }
-                        点
-                      </td>
-
-                      <td
-                        style={
-                          tdStyle
-                        }
-                      >
-                        {
-                          candidate
-                            .answer
-                            .maxScore
-                        }
-                        点
-                      </td>
-                    </tr>
-                  )
-                )}
-
-                {filteredCandidates.length ===
-                  0 && (
-                  <tr>
-                    <td
-                      colSpan={
-                        7
-                      }
-                      style={{
-                        ...tdStyle,
-
-                        padding:
-                          40,
-
-                        textAlign:
-                          "center",
-
-                        color:
-                          "#777",
-                      }}
-                    >
-                      現在の条件では追試候補はいません。
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <button
-            type="button"
-            disabled={
-              saving ||
-              selectedCandidateIds.length ===
-                0
-            }
-            onClick={
-              registerRetests
-            }
-            style={{
-              ...primaryButton,
-
-              marginTop:
-                20,
-
-              opacity:
-                saving ||
-                selectedCandidateIds.length ===
-                  0
-                  ? 0.5
-                  : 1,
-            }}
-          >
-            {saving
-              ? "登録中..."
-              : `${selectedCandidateIds.length}人を追試対象に登録`}
-          </button>
-        </section>
-
-        {/* ==================================================
-            Manual grading
-            ================================================== */}
-
-        <section
-          style={
-            cardStyle
-          }
-        >
-          <h2
-            style={{
-              margin:
-                0,
-            }}
-          >
-            追試手採点
-          </h2>
-
-          <p
-            style={{
-              margin:
-                "7px 0 0",
-
-              color:
-                "#777",
-
-              fontSize:
-                12,
-
-              lineHeight:
-                1.7,
-            }}
-          >
-            追試ではQR解析・OCR・自動採点・AI採点を使用しません。
-            答案を確認して講師が点数を直接入力します。
-          </p>
-
-          <div
-            style={{
-              overflowX:
-                "auto",
-
-              marginTop:
-                18,
-            }}
-          >
-            <table
-              style={
-                tableStyle
-              }
-            >
-              <thead>
-                <tr>
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    追試ID
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    生徒番号
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    氏名
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    元得点
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    追試得点
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    得点率
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    状態
-                  </th>
-
-                  <th
-                    style={
-                      thStyle
-                    }
-                  >
-                    操作
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {displayedRetests.map(
-                  (
-                    retest
-                  ) => {
-                    const student =
-                      students.find(
-                        (
-                          item
-                        ) =>
-                          item.id ===
-                          retest.studentId
-                      );
-
-                    const scoreValue =
-                      manualScores[
-                        retest.id
-                      ] ??
-                      (
-                        retest.manualScore ??
-                        ""
-                      ).toString();
-
-                    return (
-                      <tr
-                        key={
-                          retest.id
-                        }
-                      >
-                        <td
-                          style={
-                            tdStyle
-                          }
+                            background:
+                              selectedId ===
+                              retest.id
+                                ? "#f5f5f5"
+                                : undefined,
+                          }}
                         >
-                          {
-                            retest.retestTestCode
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            retest.studentNumber
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {student?.name ??
-                            "—"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            retest.originalScore
-                          }
-                          点
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
-
-                              alignItems:
-                                "center",
-
-                              gap:
-                                5,
-                            }}
-                          >
-                            <input
-                              type="number"
-                              min="0"
-                              max={
-                                retest.manualMaxScore
+                          <td>
+                            <strong>
+                              {
+                                retest.studentName
                               }
-                              step="0.1"
-                              value={
-                                scoreValue
+                            </strong>
+
+                            <div
+                              className="muted"
+                              style={{
+                                fontSize:
+                                  11,
+                              }}
+                            >
+                              {
+                                retest.studentNumber
                               }
-                              disabled={
-                                retest.status ===
-                                "確定"
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                changeManualScore(
-                                  retest.id,
-                                  event
-                                    .target
-                                    .value
-                                )
-                              }
-                              style={
-                                scoreInputStyle
+                            </div>
+                          </td>
+
+                          <td>
+                            {
+                              retest.originalTestName
+                            }
+                          </td>
+
+                          <td>
+                            {
+                              retest.retestTestName
+                            }
+                          </td>
+
+                          <td>
+                            <StatusBadge
+                              status={
+                                retest.status
                               }
                             />
+                          </td>
 
-                            <span>
-                              /
-                              {
-                                retest.manualMaxScore
-                              }
-                            </span>
-                          </div>
-                        </td>
+                          <td>
+                            {retest.manualScore ===
+                            null
+                              ? "—"
+                              : `${retest.manualScore} / ${retest.manualMaxScore}`}
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {retest.manualPercentage ===
-                          null
-                            ? "—"
-                            : `${retest.manualPercentage.toFixed(
-                                1
-                              )}%`}
-                        </td>
+          {/* Detail */}
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <StatusBadge
-                            status={
-                              retest.status
-                            }
-                          />
-                        </td>
+          <section className="card">
+            {!selected ? (
+              <EmptyDetail />
+            ) : (
+              <>
+                <h2>
+                  追試採点
+                </h2>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
+                <div
+                  style={{
+                    display:
+                      "grid",
 
-                              gap:
-                                6,
+                    gridTemplateColumns:
+                      "1fr 1fr",
 
-                              flexWrap:
-                                "wrap",
-                            }}
-                          >
-                            {retest.status !==
-                              "確定" && (
-                              <button
-                                type="button"
-                                disabled={
-                                  saving
-                                }
-                                onClick={() =>
-                                  saveManualScore(
-                                    retest
-                                  )
-                                }
-                                style={
-                                  smallPrimaryButton
-                                }
-                              >
-                                点数保存
-                              </button>
-                            )}
+                    gap:
+                      10,
 
-                            {retest.status ===
-                              "採点済み" && (
-                              <button
-                                type="button"
-                                disabled={
-                                  saving
-                                }
-                                onClick={() =>
-                                  finalizeRetest(
-                                    retest
-                                  )
-                                }
-                                style={
-                                  smallSecondaryButton
-                                }
-                              >
-                                確定
-                              </button>
-                            )}
+                    marginTop:
+                      16,
+                  }}
+                >
+                  <Info
+                    label="生徒"
+                    value={
+                      selected.studentName
+                    }
+                  />
 
-                            {retest.status ===
-                              "確定" &&
-                              !retest.appliedToResult && (
-                                <button
-                                  type="button"
-                                  disabled={
-                                    saving
-                                  }
-                                  onClick={() =>
-                                    applyRetestToResult(
-                                      retest
-                                    )
-                                  }
-                                  style={
-                                    smallApplyButton
-                                  }
-                                >
-                                  成績へ反映
-                                </button>
-                            )}
+                  <Info
+                    label="生徒番号"
+                    value={
+                      selected.studentNumber
+                    }
+                  />
 
-                            {retest.appliedToResult && (
-                              <span
-                                style={{
-                                  color:
-                                    "#28733f",
+                  <Info
+                    label="元テスト"
+                    value={
+                      selected.originalTestName
+                    }
+                  />
 
-                                  fontSize:
-                                    11,
+                  <Info
+                    label="追試"
+                    value={
+                      selected.retestTestName
+                    }
+                  />
+                </div>
 
-                                  fontWeight:
-                                    600,
-                                }}
-                              >
-                                成績反映済み
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  }
-                )}
+                {/* Manual grading */}
 
-                {displayedRetests.length ===
-                  0 && (
-                  <tr>
-                    <td
-                      colSpan={
-                        8
+                <section
+                  style={{
+                    marginTop:
+                      22,
+                  }}
+                >
+                  <h3>
+                    手採点
+                  </h3>
+
+                  <p
+                    className="muted"
+                    style={{
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    追試は自動採点せず、講師が点数を入力します。
+                  </p>
+
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      alignItems:
+                        "center",
+
+                      gap:
+                        8,
+
+                      marginTop:
+                        12,
+                    }}
+                  >
+                    <input
+                      type="number"
+                      min={
+                        0
+                      }
+                      max={
+                        selected.manualMaxScore
+                      }
+                      value={
+                        score
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setScore(
+                          event.target
+                            .value
+                        )
+                      }
+                      disabled={
+                        selected.status ===
+                        "確定"
                       }
                       style={{
-                        ...tdStyle,
+                        width:
+                          120,
 
-                        padding:
-                          40,
+                        fontSize:
+                          20,
+                      }}
+                    />
 
-                        textAlign:
-                          "center",
+                    <span>
+                      /
+                      {
+                        selected.manualMaxScore
+                      }
+                      点
+                    </span>
+                  </div>
 
-                        color:
-                          "#777",
+                  {selected.status !==
+                    "確定" && (
+                    <button
+                      type="button"
+                      className="button primary"
+                      style={{
+                        marginTop:
+                          14,
+                      }}
+                      onClick={
+                        saveScore
+                      }
+                    >
+                      採点結果を保存
+                    </button>
+                  )}
+                </section>
+
+                {/* Finalize */}
+
+                {selected.status ===
+                  "採点済み" && (
+                  <section
+                    style={{
+                      marginTop:
+                        24,
+
+                      paddingTop:
+                        20,
+
+                      borderTop:
+                        "1px solid #eee",
+                    }}
+                  >
+                    <h3>
+                      追試確定
+                    </h3>
+
+                    <p
+                      className="muted"
+                      style={{
+                        fontSize:
+                          12,
                       }}
                     >
-                      追試対象はありません。
-                    </td>
-                  </tr>
+                      確定後は追試結果を成績集計へ反映できる状態になります。
+                    </p>
+
+                    <button
+                      type="button"
+                      className="button primary"
+                      style={{
+                        marginTop:
+                          10,
+                      }}
+                      onClick={
+                        finalizeRetest
+                      }
+                    >
+                      追試を確定
+                    </button>
+                  </section>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
+
+                {selected.status ===
+                  "確定" && (
+                  <div
+                    style={{
+                      marginTop:
+                        22,
+
+                      padding:
+                        14,
+
+                      borderRadius:
+                        8,
+
+                      background:
+                        "#f1f8f2",
+                    }}
+                  >
+                    <strong>
+                      追試は確定済みです。
+                    </strong>
+
+                    <p
+                      className="muted"
+                      style={{
+                        margin:
+                          "5px 0 0",
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      成績反映状態：
+                      {
+                        selected.appliedToResult
+                          ? "反映済み"
+                          : "未反映"
+                      }
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      </section>
     </main>
   );
 }
 
 /* =========================================================
+   Normalize
+   ========================================================= */
+
+function normalizeRetest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): RetestRow {
+  const studentId =
+    stringValue(
+      data.studentId
+    );
+
+  const originalTestId =
+    stringValue(
+      data.originalTestId
+    );
+
+  const retestTestId =
+    stringValue(
+      data.retestTestId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const originalTest =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+        originalTestId ||
+        item.testId ===
+        originalTestId
+    );
+
+  const retestTest =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+        retestTestId ||
+        item.testId ===
+        retestTestId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    originalTestId,
+
+    studentId,
+
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ) ||
+      student?.studentNumber ||
+      "",
+
+    retestTestId,
+
+    scheduledDate:
+      stringValue(
+        data.scheduledDate
+      ),
+
+    status:
+      normalizeStatus(
+        data.status
+      ),
+
+    manualScore:
+      nullableNumber(
+        data.manualScore
+      ),
+
+    manualMaxScore:
+      safeNumber(
+        data.manualMaxScore
+      ),
+
+    finalized:
+      data.finalized ===
+      true,
+
+    appliedToResult:
+      data.appliedToResult ===
+      true,
+
+    createdBy:
+      stringValue(
+        data.createdBy
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    studentName:
+      student?.name ??
+      "生徒未設定",
+
+    originalTestName:
+      originalTest?.name ??
+      "元テスト未設定",
+
+    retestTestName:
+      retestTest?.name ??
+      "追試テスト未設定",
+  };
+}
+
+function normalizeStudent(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Student {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ),
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
    Status
+   ========================================================= */
+
+function normalizeStatus(
+  value: unknown
+): RetestStatus {
+  switch (
+    value
+  ) {
+    case "未受験":
+    case "採点待ち":
+    case "採点済み":
+    case "確定":
+      return value;
+
+    default:
+      return "未受験";
+  }
+}
+
+/* =========================================================
+   Status badge
    ========================================================= */
 
 function StatusBadge({
@@ -3267,69 +1516,205 @@ function StatusBadge({
           "inline-block",
 
         padding:
-          "5px 9px",
+          "4px 8px",
 
         borderRadius:
           999,
 
         background:
-          getStatusBackground(
-            status
-          ),
-
-        color:
-          getStatusColor(
-            status
-          ),
+          status ===
+          "確定"
+            ? "#e8f5e9"
+            : status ===
+                "採点済み"
+              ? "#e8eef8"
+              : "#fff4d6",
 
         fontSize:
           11,
-
-        fontWeight:
-          600,
       }}
     >
-      {status}
+      {
+        status
+      }
     </span>
   );
 }
 
 /* =========================================================
-   Validation
+   Summary
    ========================================================= */
 
-function isUserRole(
-  value: unknown
-): value is UserRole {
-  return (
-    value ===
-      "本部管理者" ||
-    value ===
-      "校舎管理者" ||
-    value ===
-      "講師" ||
-    value ===
-      "生徒"
-  );
-}
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
 
-function isRetestStatus(
-  value: unknown
-): value is RetestStatus {
+  value: number;
+}) {
   return (
-    value ===
-      "未受験" ||
-    value ===
-      "採点待ち" ||
-    value ===
-      "採点済み" ||
-    value ===
-      "確定"
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            11,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+
+          fontSize:
+            24,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
   );
 }
 
 /* =========================================================
-   Value helpers
+   Info
+   ========================================================= */
+
+function Info({
+  label,
+  value,
+}: {
+  label: string;
+
+  value: string;
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          10,
+
+        background:
+          "#f7f7f7",
+
+        borderRadius:
+          7,
+      }}
+    >
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            3,
+        }}
+      >
+        {
+          value
+        }
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          50,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        追試はありません。
+      </strong>
+
+      <p
+        style={{
+          fontSize:
+            12,
+        }}
+      >
+        登録された追試だけがここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+function EmptyDetail() {
+  return (
+    <div
+      style={{
+        minHeight:
+          450,
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <div>
+        <strong>
+          追試を選択してください
+        </strong>
+
+        <p
+          style={{
+            fontSize:
+              12,
+          }}
+        >
+          左側から採点する追試を選択してください。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Primitive
    ========================================================= */
 
 function stringValue(
@@ -3350,429 +1735,44 @@ function nullableString(
     : null;
 }
 
-function numberValue(
-  value: unknown
-) {
-  return typeof value ===
-    "number"
-    ? value
-    : 0;
-}
-
 function nullableNumber(
   value: unknown
 ) {
-  return typeof value ===
-    "number"
-    ? value
+  if (
+    value ===
+      null ||
+    value ===
+      undefined ||
+    value ===
+      ""
+  ) {
+    return null;
+  }
+
+  const number =
+    Number(
+      value
+    );
+
+  return Number.isFinite(
+    number
+  )
+    ? number
     : null;
 }
 
-/* =========================================================
-   Error
-   ========================================================= */
-
-function getSafeErrorMessage(
-  error: unknown
+function safeNumber(
+  value: unknown
 ) {
-  const value =
-    error as {
-      code?: string;
-    };
+  const number =
+    Number(
+      value ??
+        0
+    );
 
-  switch (
-    value?.code
-  ) {
-    case "permission-denied":
-      return "この操作を行う権限がありません。";
-
-    case "unauthenticated":
-      return "ログイン状態を確認できません。";
-
-    case "failed-precondition":
-      return "現在この操作を実行できません。";
-
-    case "already-exists":
-      return "同じデータがすでに登録されています。";
-
-    case "unavailable":
-      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
-
-    default:
-      return error instanceof Error
-        ? error.message
-        : "追試情報を処理できませんでした。";
-  }
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
 }
-
-/* =========================================================
-   Status colors
-   ========================================================= */
-
-function getStatusColor(
-  status: RetestStatus
-) {
-  switch (
-    status
-  ) {
-    case "未受験":
-      return "#555";
-
-    case "採点待ち":
-      return "#765d00";
-
-    case "採点済み":
-      return "#28733f";
-
-    case "確定":
-      return "#1f4d80";
-
-    default:
-      return "#555";
-  }
-}
-
-function getStatusBackground(
-  status: RetestStatus
-) {
-  switch (
-    status
-  ) {
-    case "未受験":
-      return "#f0f0f0";
-
-    case "採点待ち":
-      return "#fff8df";
-
-    case "採点済み":
-      return "#eef9f1";
-
-    case "確定":
-      return "#eef5fc";
-
-    default:
-      return "#f0f0f0";
-  }
-}
-
-/* =========================================================
-   Styles
-   ========================================================= */
-
-const pageStyle:
-  React.CSSProperties = {
-    minHeight:
-      "100vh",
-
-    padding:
-      32,
-
-    background:
-      "#f5f6f8",
-  };
-
-const cardStyle:
-  React.CSSProperties = {
-    padding:
-      24,
-
-    background:
-      "#fff",
-
-    border:
-      "1px solid #e1e4e8",
-
-    borderRadius:
-      12,
-  };
-
-const labelStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    fontWeight:
-      600,
-  };
-
-const inputStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    width:
-      "100%",
-
-    marginTop:
-      7,
-
-    padding:
-      "10px 12px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    background:
-      "#fff",
-  };
-
-const helpTextStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    marginTop:
-      6,
-
-    color:
-      "#777",
-
-    fontSize:
-      11,
-
-    lineHeight:
-      1.6,
-  };
-
-const primaryButton:
-  React.CSSProperties = {
-    width:
-      "100%",
-
-    padding:
-      "13px 20px",
-
-    border:
-      "none",
-
-    borderRadius:
-      8,
-
-    background:
-      "#111",
-
-    color:
-      "#fff",
-
-    fontWeight:
-      600,
-
-    cursor:
-      "pointer",
-  };
-
-const secondaryButton:
-  React.CSSProperties = {
-    padding:
-      "9px 13px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    background:
-      "#fff",
-
-    cursor:
-      "pointer",
-
-    fontSize:
-      12,
-
-    fontWeight:
-      600,
-  };
-
-const smallPrimaryButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "none",
-
-    borderRadius:
-      6,
-
-    background:
-      "#111",
-
-    color:
-      "#fff",
-
-    cursor:
-      "pointer",
-
-    fontSize:
-      11,
-
-    fontWeight:
-      600,
-  };
-
-const smallSecondaryButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    cursor:
-      "pointer",
-
-    fontSize:
-      11,
-
-    fontWeight:
-      600,
-  };
-
-const smallApplyButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #6b8",
-
-    borderRadius:
-      6,
-
-    background:
-      "#f2faf4",
-
-    color:
-      "#28733f",
-
-    cursor:
-      "pointer",
-
-    fontSize:
-      11,
-
-    fontWeight:
-      600,
-  };
-
-const scoreInputStyle:
-  React.CSSProperties = {
-    width:
-      80,
-
-    padding:
-      "7px 8px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    textAlign:
-      "right",
-  };
-
-const tableStyle:
-  React.CSSProperties = {
-    width:
-      "100%",
-
-    borderCollapse:
-      "collapse",
-  };
-
-const thStyle:
-  React.CSSProperties = {
-    padding:
-      "11px 10px",
-
-    textAlign:
-      "left",
-
-    borderBottom:
-      "2px solid #ddd",
-
-    whiteSpace:
-      "nowrap",
-
-    fontSize:
-      12,
-  };
-
-const tdStyle:
-  React.CSSProperties = {
-    padding:
-      "11px 10px",
-
-    borderBottom:
-      "1px solid #eee",
-
-    fontSize:
-      13,
-
-    whiteSpace:
-      "nowrap",
-
-    verticalAlign:
-      "middle",
-  };
-
-const errorStyle:
-  React.CSSProperties = {
-    marginBottom:
-      16,
-
-    padding:
-      14,
-
-    border:
-      "1px solid #efb5b5",
-
-    borderRadius:
-      8,
-
-    background:
-      "#fff4f4",
-
-    color:
-      "#9b1c1c",
-
-    lineHeight:
-      1.6,
-  };
-
-const successStyle:
-  React.CSSProperties = {
-    marginBottom:
-      16,
-
-    padding:
-      14,
-
-    border:
-      "1px solid #b8d9c0",
-
-    borderRadius:
-      8,
-
-    background:
-      "#f2faf4",
-
-    color:
-      "#25633a",
-
-    lineHeight:
-      1.6,
-  };
