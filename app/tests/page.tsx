@@ -6,19 +6,14 @@ import {
   useState,
 } from "react";
 
-import Link from "next/link";
-
 import {
-  onAuthStateChanged,
-} from "firebase/auth";
-
-import {
-  addDoc,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -28,1156 +23,397 @@ import {
   db,
 } from "@/lib/firebase";
 
-type UserRole =
-  | "本部管理者"
-  | "校舎管理者"
-  | "講師"
-  | "生徒";
+import {
+  getAppUser,
+} from "@/lib/auth";
+
+import {
+  getScopedDocs,
+  testsQueries,
+  type FirestoreUser,
+} from "@/lib/firestore-scope";
+
+import type {
+  Test,
+  UserRole,
+} from "@/lib/types";
+
+/* =========================================================
+   Types
+   ========================================================= */
 
 type GradingMethod =
-  | "選択式"
-  | "数値"
-  | "短答"
-  | "記述"
-  | "手動";
+  | "automatic"
+  | "manual";
 
-type CurrentUser = {
-  uid: string;
-  organizationId: string | null;
-  role: UserRole | null;
-  schoolIds: string[];
-};
-
-type School = {
+type Question = {
   id: string;
-  name: string;
-  active: boolean;
-};
-
-type GradingSettings = {
-  automaticGrading: boolean;
-  aiGrading: boolean;
-  firstReviewRequired: boolean;
-  secondReviewRequired: boolean;
-  allowManualCorrection: boolean;
-};
-
-type Test = {
-  id: string;
-  organizationId: string;
-  schoolId: string;
-  testId: string;
-  name: string;
-  subject: string;
-  grade: string;
-  className: string;
-  examDate: string;
-  totalScore: number;
+  questionNumber: string;
+  title: string;
+  maxScore: number;
   gradingMethod: GradingMethod;
-  gradingSettings: GradingSettings;
-  active: boolean;
+  correctAnswer: string;
+  rubric: string;
+  requiresReview: boolean;
 };
 
-const SUBJECTS = [
-  "国語",
-  "数学",
-  "算数",
-  "英語",
-  "理科",
-  "社会",
-  "その他",
-];
+type TestRow =
+  Test & {
+    questionCount: number;
+    automaticCount: number;
+    manualCount: number;
+  };
 
-const GRADES = [
-  "未設定",
-  "小学1年",
-  "小学2年",
-  "小学3年",
-  "小学4年",
-  "小学5年",
-  "小学6年",
-  "中学1年",
-  "中学2年",
-  "中学3年",
-  "高校1年",
-  "高校2年",
-  "高校3年",
-];
-
-const GRADING_METHODS: GradingMethod[] = [
-  "選択式",
-  "数値",
-  "短答",
-  "記述",
-  "手動",
-];
-
-const DEFAULT_GRADING_SETTINGS: GradingSettings = {
-  automaticGrading: true,
-  aiGrading: false,
-  firstReviewRequired: true,
-  secondReviewRequired: true,
-  allowManualCorrection: true,
-};
+/* =========================================================
+   Page
+   ========================================================= */
 
 export default function TestsPage() {
   const [
-    currentUser,
-    setCurrentUser,
-  ] = useState<CurrentUser | null>(null);
+    role,
+    setRole,
+  ] =
+    useState<UserRole | null>(
+      null
+    );
 
   const [
     tests,
     setTests,
-  ] = useState<Test[]>([]);
+  ] =
+    useState<TestRow[]>(
+      []
+    );
 
   const [
-    schools,
-    setSchools,
-  ] = useState<School[]>([]);
+    selectedTestId,
+    setSelectedTestId,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    questions,
+    setQuestions,
+  ] =
+    useState<Question[]>(
+      []
+    );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
+
+  const [
+    detailLoading,
+    setDetailLoading,
+  ] =
+    useState(false);
 
   const [
     saving,
     setSaving,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     message,
     setMessage,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     search,
     setSearch,
-  ] = useState("");
+  ] =
+    useState("");
+
+  /* =======================================================
+     Create form
+     ======================================================= */
 
   const [
-    editingId,
-    setEditingId,
-  ] = useState<string | null>(null);
-
-  const [
-    testId,
-    setTestId,
-  ] = useState("");
+    showCreate,
+    setShowCreate,
+  ] =
+    useState(false);
 
   const [
     testName,
     setTestName,
-  ] = useState("");
-
-  const [
-    subject,
-    setSubject,
-  ] = useState("国語");
+  ] =
+    useState("");
 
   const [
     grade,
     setGrade,
-  ] = useState("未設定");
+  ] =
+    useState("");
 
   const [
     className,
     setClassName,
-  ] = useState("");
+  ] =
+    useState("");
+
+  const [
+    subject,
+    setSubject,
+  ] =
+    useState("");
 
   const [
     schoolId,
     setSchoolId,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     examDate,
     setExamDate,
-  ] = useState("");
-
-  const [
-    totalScore,
-    setTotalScore,
-  ] = useState("100");
-
-  const [
-    gradingMethod,
-    setGradingMethod,
   ] =
-    useState<GradingMethod>(
-      "選択式"
-    );
+    useState("");
 
-  const [
-    gradingSettings,
-    setGradingSettings,
-  ] =
-    useState<GradingSettings>(
-      DEFAULT_GRADING_SETTINGS
-    );
-
-  /*
-   * ========================================================
-   * 認証
-   * ========================================================
-   */
+  /* =======================================================
+     Load
+     ======================================================= */
 
   useEffect(() => {
-    const unsubscribe =
-      onAuthStateChanged(
-        auth,
-        async (firebaseUser) => {
-          /*
-           * エラーで勝手に
-           * /loginへ戻さない。
-           */
-          if (!firebaseUser) {
-            setLoading(false);
-
-            setError(
-              "ログイン状態を確認できません。"
-            );
-
-            return;
-          }
-
-          try {
-            const snapshot =
-              await getDocs(
-                query(
-                  collection(
-                    db,
-                    "users"
-                  ),
-                  where(
-                    "__name__",
-                    "==",
-                    firebaseUser.uid
-                  )
-                )
-              );
-
-            if (
-              snapshot.empty
-            ) {
-              setLoading(false);
-
-              setError(
-                "システムのユーザー情報が登録されていません。"
-              );
-
-              return;
-            }
-
-            const data =
-              snapshot.docs[0].data();
-
-            const role =
-              isUserRole(
-                data.role
-              )
-                ? data.role
-                : null;
-
-            const schoolIds =
-              Array.isArray(
-                data.schoolIds
-              )
-                ? data.schoolIds.filter(
-                    (
-                      value
-                    ): value is string =>
-                      typeof value ===
-                      "string"
-                  )
-                : [];
-
-            setCurrentUser({
-              uid:
-                firebaseUser.uid,
-
-              organizationId:
-                typeof data.organizationId ===
-                "string"
-                  ? data.organizationId
-                  : null,
-
-              role,
-
-              schoolIds,
-            });
-          } catch (err) {
-            console.error(
-              "Test authentication error:",
-              err
-            );
-
-            setError(
-              getSafeErrorMessage(
-                err
-              )
-            );
-
-            setLoading(false);
-          }
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
+    void loadTests();
   }, []);
 
-  /*
-   * ========================================================
-   * データ読み込み
-   * ========================================================
-   */
-
-  useEffect(() => {
-    if (
-      !currentUser?.organizationId
-    ) {
-      return;
-    }
-
-    void loadData(
-      currentUser.organizationId
-    );
-  }, [
-    currentUser?.organizationId,
-  ]);
-
-  async function loadData(
-    organizationId: string
-  ) {
+  async function loadTests() {
     try {
       setLoading(true);
+
       setError("");
 
-      const [
-        testSnapshot,
-        schoolSnapshot,
-      ] =
-        await Promise.all([
-          getDocs(
-            query(
-              collection(
-                db,
-                "tests"
-              ),
-              where(
-                "organizationId",
-                "==",
-                organizationId
-              )
-            )
-          ),
-
-          getDocs(
-            query(
-              collection(
-                db,
-                "schools"
-              ),
-              where(
-                "organizationId",
-                "==",
-                organizationId
-              )
-            )
-          ),
-        ]);
-
-      const loadedTests =
-        testSnapshot.docs.map(
-          (
-            item
-          ): Test => {
-            const data =
-              item.data();
-
-            const rawSettings =
-              data.gradingSettings;
-
-            const settings: GradingSettings =
-              isGradingSettings(
-                rawSettings
-              )
-                ? rawSettings
-                : {
-                    ...DEFAULT_GRADING_SETTINGS,
-                  };
-
-            return {
-              id:
-                item.id,
-
-              organizationId,
-
-              schoolId:
-                typeof data.schoolId ===
-                "string"
-                  ? data.schoolId
-                  : "",
-
-              testId:
-                typeof data.testId ===
-                "string"
-                  ? data.testId
-                  : "",
-
-              name:
-                typeof data.name ===
-                "string"
-                  ? data.name
-                  : "",
-
-              subject:
-                typeof data.subject ===
-                "string"
-                  ? data.subject
-                  : "",
-
-              grade:
-                typeof data.grade ===
-                "string"
-                  ? data.grade
-                  : "未設定",
-
-              className:
-                typeof data.className ===
-                "string"
-                  ? data.className
-                  : "",
-
-              examDate:
-                typeof data.examDate ===
-                "string"
-                  ? data.examDate
-                  : "",
-
-              totalScore:
-                typeof data.totalScore ===
-                "number"
-                  ? data.totalScore
-                  : 0,
-
-              gradingMethod:
-                isGradingMethod(
-                  data.gradingMethod
-                )
-                  ? data.gradingMethod
-                  : "選択式",
-
-              gradingSettings:
-                settings,
-
-              active:
-                data.active !==
-                false,
-            };
-          }
+      const user =
+        await getAppUser(
+          auth.currentUser
         );
 
-      const loadedSchools =
-        schoolSnapshot.docs.map(
-          (
-            item
-          ): School => {
-            const data =
-              item.data();
+      if (!user) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
 
-            return {
-              id:
-                item.id,
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者" &&
+        user.role !==
+          "講師"
+      ) {
+        throw new Error(
+          "テスト管理を利用する権限がありません。"
+        );
+      }
 
-              name:
-                typeof data.name ===
-                "string"
-                  ? data.name
-                  : "",
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織が設定されていません。"
+        );
+      }
 
-              active:
-                data.active !==
-                false,
-            };
-          }
+      setRole(
+        user.role
+      );
+
+      const scopeUser:
+        FirestoreUser =
+        {
+          uid:
+            user.uid,
+
+          organizationId:
+            user.organizationId,
+
+          role:
+            user.role,
+
+          schoolIds:
+            user.schoolIds,
+
+          studentId:
+            user.studentId,
+        };
+
+      const documents =
+        await getScopedDocs(
+          testsQueries(
+            scopeUser
+          )
+        );
+
+      const loaded =
+        await Promise.all(
+          documents
+            .map(
+              (
+                item
+              ) =>
+                normalizeTest(
+                  item.id,
+                  item.data
+                )
+            )
+            .filter(
+              (
+                test
+              ) =>
+                !test.isRetest
+            )
+            .map(
+              async (
+                test
+              ) => {
+                const loadedQuestions =
+                  await getQuestions(
+                    test.id
+                  );
+
+                return {
+                  ...test,
+
+                  questionCount:
+                    loadedQuestions.length,
+
+                  automaticCount:
+                    loadedQuestions.filter(
+                      (
+                        question
+                      ) =>
+                        question.gradingMethod ===
+                        "automatic"
+                    ).length,
+
+                  manualCount:
+                    loadedQuestions.filter(
+                      (
+                        question
+                      ) =>
+                        question.gradingMethod ===
+                        "manual"
+                    ).length,
+                };
+              }
+            )
         );
 
       setTests(
-        loadedTests
+        loaded
       );
 
-      setSchools(
-        loadedSchools
-      );
+      setSelectedTestId(
+        (
+          current
+        ) => {
+          if (
+            current &&
+            loaded.some(
+              (
+                test
+              ) =>
+                test.id ===
+                current
+            )
+          ) {
+            return current;
+          }
 
-      if (
-        !schoolId
-      ) {
-        const available =
-          getAvailableSchools(
-            loadedSchools,
-            currentUser
-          );
-
-        if (
-          available.length >
-          0
-        ) {
-          setSchoolId(
-            available[0].id
-          );
+          return null;
         }
-      }
-    } catch (err) {
+      );
+    } catch (
+      error
+    ) {
       console.error(
-        "Test loading error:",
-        err
+        "Tests load error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
+        error instanceof Error
+          ? error.message
+          : "テストを取得できませんでした。"
       );
     } finally {
       setLoading(false);
     }
   }
 
-  /*
-   * ========================================================
-   * 利用可能校舎
-   * ========================================================
-   */
+  /* =======================================================
+     Load questions
+     ======================================================= */
 
-  const availableSchools =
-    useMemo(
-      () =>
-        getAvailableSchools(
-          schools,
-          currentUser
-        ),
-      [
-        schools,
-        currentUser,
-      ]
+  useEffect(() => {
+    if (
+      !selectedTestId
+    ) {
+      setQuestions([]);
+      return;
+    }
+
+    void loadQuestions(
+      selectedTestId
     );
+  }, [
+    selectedTestId,
+  ]);
 
-  /*
-   * ========================================================
-   * テストID生成
-   * ========================================================
-   */
-
-  function generateTestId() {
-    const existing =
-      new Set(
-        tests.map(
-          (
-            test
-          ) =>
-            test.testId
-        )
-      );
-
-    let value = "";
-
-    do {
-      value =
-        `T${Date.now()
-          .toString(36)
-          .toUpperCase()
-          .slice(-7)}`;
-    } while (
-      existing.has(
-        value
-      )
-    );
-
-    setTestId(
-      value
-    );
-  }
-
-  /*
-   * ========================================================
-   * 採点設定更新
-   * ========================================================
-   */
-
-  function updateGradingSetting<
-    K extends keyof GradingSettings
-  >(
-    key: K,
-    value: GradingSettings[K]
+  async function loadQuestions(
+    testId: string
   ) {
-    setGradingSettings(
-      (
-        current
-      ) => ({
-        ...current,
-
-        [key]:
-          value,
-      })
-    );
-
-    setMessage("");
-  }
-
-  /*
-   * ========================================================
-   * 採点方式変更
-   * ========================================================
-   */
-
-  function handleGradingMethodChange(
-    value: GradingMethod
-  ) {
-    setGradingMethod(
-      value
-    );
-
-    /*
-     * 手動採点の場合、
-     * 自動採点とAI採点はOFF。
-     */
-    if (
-      value ===
-      "手動"
-    ) {
-      setGradingSettings(
-        (
-          current
-        ) => ({
-          ...current,
-
-          automaticGrading:
-            false,
-
-          aiGrading:
-            false,
-        })
-      );
-
-      return;
-    }
-
-    /*
-     * 記述の場合はAI採点を
-     * 利用できる状態にする。
-     */
-    if (
-      value ===
-      "記述"
-    ) {
-      setGradingSettings(
-        (
-          current
-        ) => ({
-          ...current,
-
-          automaticGrading:
-            true,
-
-          aiGrading:
-            true,
-        })
-      );
-
-      return;
-    }
-
-    setGradingSettings(
-      (
-        current
-      ) => ({
-        ...current,
-
-        automaticGrading:
-          true,
-      })
-    );
-  }
-
-  /*
-   * ========================================================
-   * 保存
-   * ========================================================
-   */
-
-  async function saveTest() {
-    if (
-      saving
-    ) {
-      return;
-    }
-
-    setError("");
-    setMessage("");
-
-    if (
-      !currentUser?.organizationId
-    ) {
-      setError(
-        "組織情報を確認できません。"
-      );
-
-      return;
-    }
-
-    if (
-      !schoolId
-    ) {
-      setError(
-        "校舎を選択してください。"
-      );
-
-      return;
-    }
-
-    if (
-      !testId.trim()
-    ) {
-      setError(
-        "テストIDを入力してください。"
-      );
-
-      return;
-    }
-
-    if (
-      !testName.trim()
-    ) {
-      setError(
-        "テスト名を入力してください。"
-      );
-
-      return;
-    }
-
-    const score =
-      Number(
-        totalScore
-      );
-
-    if (
-      !Number.isFinite(
-        score
-      ) ||
-      score <=
-        0
-    ) {
-      setError(
-        "満点は1以上の数字で入力してください。"
-      );
-
-      return;
-    }
-
-    /*
-     * 校舎権限
-     */
-    if (
-      currentUser.role !==
-      "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        schoolId
-      )
-    ) {
-      setError(
-        "この校舎のテストを管理する権限がありません。"
-      );
-
-      return;
-    }
-
-    /*
-     * 手動採点なら自動採点OFF
-     */
-    if (
-      gradingMethod ===
-      "手動" &&
-      gradingSettings.automaticGrading
-    ) {
-      setError(
-        "手動採点では自動採点を有効にできません。"
-      );
-
-      return;
-    }
-
     try {
-      setSaving(true);
+      setDetailLoading(
+        true
+      );
 
-      /*
-       * テストID重複確認
-       */
-
-      const duplicateSnapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "tests"
-            ),
-            where(
-              "organizationId",
-              "==",
-              currentUser.organizationId
-            ),
-            where(
-              "testId",
-              "==",
-              testId
-                .trim()
-                .toUpperCase()
-            )
-          )
-        );
-
-      const duplicate =
-        duplicateSnapshot.docs.find(
-          (
-            item
-          ) =>
-            item.id !==
-            editingId
-        );
-
-      if (
-        duplicate
-      ) {
-        throw new Error(
-          "このテストIDはすでに使用されています。"
-        );
-      }
-
-      const payload = {
-        organizationId:
-          currentUser.organizationId,
-
-        schoolId,
-
-        testId:
+      const loaded =
+        await getQuestions(
           testId
-            .trim()
-            .toUpperCase(),
-
-        name:
-          testName.trim(),
-
-        subject,
-
-        grade,
-
-        className:
-          className.trim(),
-
-        examDate,
-
-        totalScore:
-          score,
-
-        gradingMethod,
-
-        gradingSettings: {
-          ...gradingSettings,
-
-          /*
-           * 手動採点なら
-           * 自動採点を強制OFF。
-           */
-          automaticGrading:
-            gradingMethod ===
-            "手動"
-              ? false
-              : gradingSettings.automaticGrading,
-
-          aiGrading:
-            gradingMethod ===
-            "手動"
-              ? false
-              : gradingSettings.aiGrading,
-        },
-
-        active:
-          true,
-
-        updatedAt:
-          serverTimestamp(),
-      };
-
-      if (
-        editingId
-      ) {
-        await updateDoc(
-          doc(
-            db,
-            "tests",
-            editingId
-          ),
-          payload
         );
 
-        setMessage(
-          "テストを更新しました。"
-        );
-      } else {
-        await addDoc(
-          collection(
-            db,
-            "tests"
-          ),
-          {
-            ...payload,
-
-            createdAt:
-              serverTimestamp(),
-          }
-        );
-
-        setMessage(
-          "テストを登録しました。"
-        );
-      }
-
-      resetForm();
-
-      await loadData(
-        currentUser.organizationId
+      setQuestions(
+        loaded
       );
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        "Test save error:",
-        err
+        "Question load error:",
+        error
       );
 
-      if (
-        err instanceof Error &&
-        !isFirebaseError(
-          err
-        )
-      ) {
-        setError(
-          err.message
-        );
-      } else {
-        setError(
-          getSafeErrorMessage(
-            err
-          )
-        );
-      }
+      setQuestions([]);
+
+      setError(
+        "問題設定を取得できませんでした。"
+      );
     } finally {
-      setSaving(false);
-    }
-  }
-
-  /*
-   * ========================================================
-   * 編集
-   * ========================================================
-   */
-
-  function startEdit(
-    test: Test
-  ) {
-    setEditingId(
-      test.id
-    );
-
-    setTestId(
-      test.testId
-    );
-
-    setTestName(
-      test.name
-    );
-
-    setSubject(
-      test.subject
-    );
-
-    setGrade(
-      test.grade
-    );
-
-    setClassName(
-      test.className
-    );
-
-    setSchoolId(
-      test.schoolId
-    );
-
-    setExamDate(
-      test.examDate
-    );
-
-    setTotalScore(
-      test.totalScore.toString()
-    );
-
-    setGradingMethod(
-      test.gradingMethod
-    );
-
-    setGradingSettings(
-      {
-        ...test.gradingSettings,
-      }
-    );
-
-    setError("");
-    setMessage("");
-
-    window.scrollTo({
-      top: 0,
-      behavior:
-        "smooth",
-    });
-  }
-
-  /*
-   * ========================================================
-   * 停止/有効化
-   * ========================================================
-   */
-
-  async function toggleTest(
-    test: Test
-  ) {
-    if (
-      !currentUser
-    ) {
-      return;
-    }
-
-    if (
-      currentUser.role !==
-      "本部管理者" &&
-      !currentUser.schoolIds.includes(
-        test.schoolId
-      )
-    ) {
-      setError(
-        "このテストを変更する権限がありません。"
-      );
-
-      return;
-    }
-
-    try {
-      setError("");
-      setMessage("");
-
-      await updateDoc(
-        doc(
-          db,
-          "tests",
-          test.id
-        ),
-        {
-          active:
-            !test.active,
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      setMessage(
-        test.active
-          ? "テストを停止しました。"
-          : "テストを有効にしました。"
-      );
-
-      if (
-        currentUser.organizationId
-      ) {
-        await loadData(
-          currentUser.organizationId
-        );
-      }
-    } catch (err) {
-      console.error(
-        "Test status error:",
-        err
-      );
-
-      setError(
-        getSafeErrorMessage(
-          err
-        )
+      setDetailLoading(
+        false
       );
     }
   }
 
-  /*
-   * ========================================================
-   * フォームリセット
-   * ========================================================
-   */
-
-  function resetForm() {
-    setEditingId(
-      null
-    );
-
-    setTestId("");
-
-    setTestName("");
-
-    setSubject(
-      "国語"
-    );
-
-    setGrade(
-      "未設定"
-    );
-
-    setClassName("");
-
-    setExamDate("");
-
-    setTotalScore(
-      "100"
-    );
-
-    setGradingMethod(
-      "選択式"
-    );
-
-    setGradingSettings(
-      {
-        ...DEFAULT_GRADING_SETTINGS,
-      }
-    );
-
-    const first =
-      availableSchools[0];
-
-    setSchoolId(
-      first?.id ??
-        ""
-    );
-  }
-
-  /*
-   * ========================================================
-   * 検索
-   * ========================================================
-   */
+  /* =======================================================
+     Filter
+     ======================================================= */
 
   const filteredTests =
     useMemo(() => {
@@ -1196,17 +432,17 @@ export default function TestsPage() {
         (
           test
         ) =>
-          test.testId
-            .toLowerCase()
-            .includes(
-              keyword
-            ) ||
           test.name
             .toLowerCase()
             .includes(
               keyword
             ) ||
           test.subject
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          test.grade
             .toLowerCase()
             .includes(
               keyword
@@ -1222,736 +458,853 @@ export default function TestsPage() {
       search,
     ]);
 
-  /*
-   * ========================================================
-   * 権限
-   * ========================================================
-   */
+  const selectedTest =
+    tests.find(
+      (
+        test
+      ) =>
+        test.id ===
+        selectedTestId
+    ) ??
+    null;
+
+  /* =======================================================
+     Create
+     ======================================================= */
+
+  async function createTest() {
+    if (
+      saving
+    ) {
+      return;
+    }
+
+    try {
+      setSaving(
+        true
+      );
+
+      setError("");
+
+      setMessage("");
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者"
+      ) {
+        throw new Error(
+          "テストを作成する権限がありません。"
+        );
+      }
+
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織がありません。"
+        );
+      }
+
+      if (
+        !testName.trim()
+      ) {
+        throw new Error(
+          "テスト名を入力してください。"
+        );
+      }
+
+      if (
+        !grade.trim()
+      ) {
+        throw new Error(
+          "学年を入力してください。"
+        );
+      }
+
+      if (
+        !subject.trim()
+      ) {
+        throw new Error(
+          "教科を入力してください。"
+        );
+      }
+
+      if (
+        !schoolId.trim()
+      ) {
+        throw new Error(
+          "校舎IDを入力してください。"
+        );
+      }
+
+      if (
+        user.role ===
+          "校舎管理者" &&
+        !user.schoolIds.includes(
+          schoolId
+        )
+      ) {
+        throw new Error(
+          "所属していない校舎にはテストを作成できません。"
+        );
+      }
+
+      const testRef =
+        doc(
+          collection(
+            db,
+            "tests"
+          )
+        );
+
+      await setDoc(
+        testRef,
+        {
+          organizationId:
+            user.organizationId,
+
+          schoolId,
+
+          testId:
+            testRef.id,
+
+          name:
+            testName.trim(),
+
+          subject:
+            subject.trim(),
+
+          grade:
+            grade.trim(),
+
+          className:
+            className.trim(),
+
+          examDate:
+            examDate,
+
+          totalScore:
+            0,
+
+          active:
+            true,
+
+          isRetest:
+            false,
+
+          originalTestId:
+            null,
+
+          /*
+           * テスト全体の自動採点フラグではなく、
+           * 実際の採点方式は問題単位で管理する。
+           */
+          automaticGrading:
+            false,
+
+          createdBy:
+            user.uid,
+
+          createdAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      setMessage(
+        "テストを作成しました。"
+      );
+
+      setShowCreate(
+        false
+      );
+
+      setTestName("");
+      setGrade("");
+      setClassName("");
+      setSubject("");
+      setSchoolId("");
+      setExamDate("");
+
+      await loadTests();
+
+      setSelectedTestId(
+        testRef.id
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Create test error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "テストを作成できませんでした。"
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Add question
+     ======================================================= */
+
+  async function addQuestion() {
+    if (
+      !selectedTest
+    ) {
+      return;
+    }
+
+    try {
+      setSaving(
+        true
+      );
+
+      setError("");
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者" &&
+        user.role !==
+          "講師"
+      ) {
+        throw new Error(
+          "問題を編集する権限がありません。"
+        );
+      }
+
+      const questionRef =
+        doc(
+          collection(
+            db,
+            "testQuestions"
+          )
+        );
+
+      const nextNumber =
+        String(
+          questions.length +
+            1
+        );
+
+      await setDoc(
+        questionRef,
+        {
+          testId:
+            selectedTest.id,
+
+          organizationId:
+            selectedTest.organizationId,
+
+          questionNumber:
+            nextNumber,
+
+          title:
+            `問${nextNumber}`,
+
+          maxScore:
+            1,
+
+          gradingMethod:
+            "manual",
+
+          correctAnswer:
+            "",
+
+          rubric:
+            "",
+
+          requiresReview:
+            true,
+
+          order:
+            questions.length,
+
+          createdAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      await loadQuestions(
+        selectedTest.id
+      );
+
+      await loadTests();
+
+      setMessage(
+        `問${nextNumber}を追加しました。`
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Add question error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "問題を追加できませんでした。"
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Update question
+     ======================================================= */
+
+  async function updateQuestion(
+    question: Question
+  ) {
+    if (
+      !selectedTest
+    ) {
+      return;
+    }
+
+    try {
+      setSaving(
+        true
+      );
+
+      setError("");
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者" &&
+        user.role !==
+          "講師"
+      ) {
+        throw new Error(
+          "問題を編集する権限がありません。"
+        );
+      }
+
+      await updateDoc(
+        doc(
+          db,
+          "testQuestions",
+          question.id
+        ),
+        {
+          questionNumber:
+            question.questionNumber,
+
+          title:
+            question.title,
+
+          maxScore:
+            Math.max(
+              0,
+              question.maxScore
+            ),
+
+          gradingMethod:
+            question.gradingMethod,
+
+          correctAnswer:
+            question.correctAnswer,
+
+          rubric:
+            question.rubric,
+
+          /*
+           * 自動採点問題でも、
+           * 確認を必要とする設定を
+           * 明示的に保持。
+           */
+          requiresReview:
+            question.gradingMethod ===
+              "manual"
+              ? true
+              : question.requiresReview,
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+
+      await loadQuestions(
+        selectedTest.id
+      );
+
+      await loadTests();
+
+      setMessage(
+        `問${question.questionNumber}を保存しました。`
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Update question error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "問題設定を保存できませんでした。"
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Delete question
+     ======================================================= */
+
+  async function deleteQuestion(
+    question: Question
+  ) {
+    if (
+      !selectedTest
+    ) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `問${question.questionNumber}を削除しますか？`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setSaving(
+        true
+      );
+
+      setError("");
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      /*
+       * 問題削除は管理者のみ。
+       */
+      if (
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者"
+      ) {
+        throw new Error(
+          "問題を削除する権限がありません。"
+        );
+      }
+
+      await deleteDoc(
+        doc(
+          db,
+          "testQuestions",
+          question.id
+        )
+      );
+
+      await loadQuestions(
+        selectedTest.id
+      );
+
+      await loadTests();
+
+      setMessage(
+        "問題を削除しました。"
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Delete question error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "問題を削除できませんでした。"
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Loading
+     ======================================================= */
 
   if (
-    currentUser &&
-    currentUser.role !==
-      "本部管理者" &&
-    currentUser.role !==
-      "校舎管理者" &&
-    currentUser.role !==
-      "講師"
+    loading
   ) {
     return (
-      <main
-        style={
-          pageStyle
-        }
-      >
-        <section
-          style={
-            cardStyle
-          }
-        >
+      <main className="page">
+        <section className="content">
           <h1>
             テスト管理
           </h1>
 
           <p>
-            この機能を利用する権限がありません。
+            テストを読み込んでいます...
           </p>
         </section>
       </main>
     );
   }
 
-  return (
-    <main
-      style={
-        pageStyle
-      }
-    >
-      <div
-        style={{
-          maxWidth:
-            1400,
-          margin:
-            "0 auto",
-        }}
-      >
-        <header
-          style={{
-            marginBottom:
-              28,
-          }}
-        >
-          <h1
-            style={{
-              margin:
-                "0 0 8px",
-            }}
-          >
-            テスト管理
-          </h1>
+  /* =======================================================
+     Render
+     ======================================================= */
 
-          <p
-            style={{
-              margin: 0,
-              color:
-                "#666",
-              lineHeight:
-                1.7,
-            }}
-          >
-            テスト情報と採点方法を管理します。
-          </p>
+  return (
+    <main className="page">
+      <section className="content">
+
+        {/* ==================================================
+            Header
+            ================================================== */}
+
+        <header className="pageHeader">
+          <div>
+            <h1>
+              テスト管理
+            </h1>
+
+            <p className="muted">
+              テスト・教科・問題ごとの採点方式を管理します。
+            </p>
+          </div>
+
+          {(role ===
+            "本部管理者" ||
+            role ===
+              "校舎管理者") && (
+            <button
+              type="button"
+              className="button primary"
+              onClick={() =>
+                setShowCreate(
+                  (
+                    current
+                  ) =>
+                    !current
+                )
+              }
+            >
+              {showCreate
+                ? "作成画面を閉じる"
+                : "テストを作成"}
+            </button>
+          )}
         </header>
 
         {error && (
-          <Message
-            type="error"
-            message={error}
-          />
+          <div
+            className="errorMessage"
+            role="alert"
+          >
+            {error}
+          </div>
         )}
 
         {message && (
-          <Message
-            type="success"
-            message={message}
-          />
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {message}
+          </div>
         )}
 
         {/* ==================================================
-            テスト登録
+            Create
             ================================================== */}
 
-        <section
-          style={{
-            ...cardStyle,
-            marginBottom:
-              24,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
-              justifyContent:
-                "space-between",
-              alignItems:
-                "center",
-              gap:
-                16,
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                {editingId
-                  ? "テストを編集"
-                  : "テストを登録"}
-              </h2>
+        {showCreate && (
+          <section className="card">
+            <h2>
+              テスト作成
+            </h2>
 
-              <p
-                style={{
-                  margin:
-                    "6px 0 0",
-                  color:
-                    "#777",
-                  fontSize:
-                    13,
-                }}
-              >
-                問題文や問題データは登録せず、答案画像から解析します。
-              </p>
-            </div>
+            <div
+              style={{
+                display:
+                  "grid",
 
-            {editingId && (
-              <button
-                type="button"
-                onClick={
-                  resetForm
+                gridTemplateColumns:
+                  "repeat(2, minmax(0, 1fr))",
+
+                gap:
+                  12,
+
+                marginTop:
+                  14,
+              }}
+            >
+              <Field
+                label="テスト名"
+                value={
+                  testName
                 }
-                style={
-                  secondaryButton
+                onChange={
+                  setTestName
                 }
-              >
-                新規登録に戻す
-              </button>
-            )}
-          </div>
+              />
 
-          {/* ================================================
-              基本情報
-              ================================================ */}
+              <Field
+                label="教科"
+                value={
+                  subject
+                }
+                onChange={
+                  setSubject
+                }
+              />
 
-          <h3
-            style={{
-              marginTop:
-                24,
-              marginBottom:
-                0,
-              fontSize:
-                15,
-            }}
-          >
-            基本情報
-          </h3>
+              <Field
+                label="学年"
+                value={
+                  grade
+                }
+                onChange={
+                  setGrade
+                }
+              />
 
-          <div
-            style={{
-              display:
-                "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(220px, 1fr))",
-              gap:
-                16,
-              marginTop:
-                16,
-            }}
-          >
-            <label>
-              テストID
+              <Field
+                label="クラス"
+                value={
+                  className
+                }
+                onChange={
+                  setClassName
+                }
+              />
 
-              <div
-                style={{
-                  display:
-                    "flex",
-                  gap:
-                    8,
-                }}
-              >
+              <Field
+                label="校舎ID"
+                value={
+                  schoolId
+                }
+                onChange={
+                  setSchoolId
+                }
+              />
+
+              <label>
+                <span
+                  style={{
+                    display:
+                      "block",
+
+                    marginBottom:
+                      6,
+
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  実施日
+                </span>
+
                 <input
+                  type="date"
                   value={
-                    testId
+                    examDate
                   }
                   onChange={(
                     event
                   ) =>
-                    setTestId(
-                      event.target.value
+                    setExamDate(
+                      event.target
+                        .value
                     )
                   }
-                  placeholder="T2026A01"
-                  style={
-                    inputStyle
-                  }
+                  style={{
+                    width:
+                      "100%",
+                  }}
                 />
+              </label>
+            </div>
 
-                {!editingId && (
-                  <button
-                    type="button"
-                    onClick={
-                      generateTestId
-                    }
-                    style={
-                      secondaryButton
-                    }
-                  >
-                    自動発行
-                  </button>
-                )}
-              </div>
-            </label>
+            <p
+              className="muted"
+              style={{
+                marginTop:
+                  12,
 
-            <label>
-              テスト名
-
-              <input
-                value={
-                  testName
-                }
-                onChange={(
-                  event
-                ) =>
-                  setTestName(
-                    event.target.value
-                  )
-                }
-                placeholder="第1回定期テスト"
-                style={
-                  inputStyle
-                }
-              />
-            </label>
-
-            <label>
-              教科
-
-              <select
-                value={
-                  subject
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSubject(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              >
-                {SUBJECTS.map(
-                  (
-                    item
-                  ) => (
-                    <option
-                      key={
-                        item
-                      }
-                      value={
-                        item
-                      }
-                    >
-                      {
-                        item
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              学年
-
-              <select
-                value={
-                  grade
-                }
-                onChange={(
-                  event
-                ) =>
-                  setGrade(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              >
-                {GRADES.map(
-                  (
-                    item
-                  ) => (
-                    <option
-                      key={
-                        item
-                      }
-                      value={
-                        item
-                      }
-                    >
-                      {
-                        item
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              クラス
-
-              <input
-                value={
-                  className
-                }
-                onChange={(
-                  event
-                ) =>
-                  setClassName(
-                    event.target.value
-                  )
-                }
-                placeholder="3年2組"
-                style={
-                  inputStyle
-                }
-              />
-            </label>
-
-            <label>
-              校舎
-
-              <select
-                value={
-                  schoolId
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSchoolId(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              >
-                <option value="">
-                  選択してください
-                </option>
-
-                {availableSchools.map(
-                  (
-                    school
-                  ) => (
-                    <option
-                      key={
-                        school.id
-                      }
-                      value={
-                        school.id
-                      }
-                    >
-                      {
-                        school.name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              実施日
-
-              <input
-                type="date"
-                value={
-                  examDate
-                }
-                onChange={(
-                  event
-                ) =>
-                  setExamDate(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              />
-            </label>
-
-            <label>
-              満点
-
-              <input
-                type="number"
-                min="1"
-                value={
-                  totalScore
-                }
-                onChange={(
-                  event
-                ) =>
-                  setTotalScore(
-                    event.target.value
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              />
-            </label>
-          </div>
-
-          {/* ================================================
-              採点設定
-              ================================================ */}
-
-          <h3
-            style={{
-              marginTop:
-                30,
-              marginBottom:
-                0,
-              fontSize:
-                15,
-            }}
-          >
-            採点設定
-          </h3>
-
-          <div
-            style={{
-              marginTop:
-                16,
-            }}
-          >
-            <label>
-              採点方式
-
-              <select
-                value={
-                  gradingMethod
-                }
-                onChange={(
-                  event
-                ) =>
-                  handleGradingMethodChange(
-                    event.target
-                      .value as GradingMethod
-                  )
-                }
-                style={
-                  inputStyle
-                }
-              >
-                {GRADING_METHODS.map(
-                  (
-                    method
-                  ) => (
-                    <option
-                      key={
-                        method
-                      }
-                      value={
-                        method
-                      }
-                    >
-                      {
-                        method
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+                fontSize:
+                  12,
+              }}
+            >
+              採点方式はテスト全体ではなく、登録した問題ごとに設定します。
+            </p>
 
             <div
               style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "flex-end",
+
                 marginTop:
-                  18,
-
-                border:
-                  "1px solid #eee",
-
-                borderRadius:
-                  10,
-
-                overflow:
-                  "hidden",
+                  14,
               }}
             >
-              <SettingToggle
-                label="自動採点を使用する"
-                description="OCR・答案解析後に採点処理を自動で実行します。"
-                checked={
-                  gradingSettings.automaticGrading
-                }
-                disabled={
-                  gradingMethod ===
-                  "手動"
-                }
-                onChange={(
-                  value
-                ) =>
-                  updateGradingSetting(
-                    "automaticGrading",
-                    value
-                  )
-                }
-              />
-
-              <SettingToggle
-                label="AI採点を使用する"
-                description="記述式など、単純な正誤比較が難しい答案の採点候補をAIで作成します。"
-                checked={
-                  gradingSettings.aiGrading
-                }
-                disabled={
-                  gradingMethod ===
-                    "手動" ||
-                  gradingMethod !==
-                    "記述"
-                }
-                onChange={(
-                  value
-                ) =>
-                  updateGradingSetting(
-                    "aiGrading",
-                    value
-                  )
-                }
-              />
-
-              <SettingToggle
-                label="一次確認を必須にする"
-                description="自動採点後、講師などによる一次確認を必須にします。"
-                checked={
-                  gradingSettings.firstReviewRequired
-                }
-                onChange={(
-                  value
-                ) =>
-                  updateGradingSetting(
-                    "firstReviewRequired",
-                    value
-                  )
-                }
-              />
-
-              <SettingToggle
-                label="二次確認を必須にする"
-                description="一次確認後、別の確認者による二次確認を必須にします。"
-                checked={
-                  gradingSettings.secondReviewRequired
-                }
-                onChange={(
-                  value
-                ) =>
-                  updateGradingSetting(
-                    "secondReviewRequired",
-                    value
-                  )
-                }
-              />
-
-              <SettingToggle
-                label="手動修正を許可する"
-                description="自動採点結果を確認者が修正できるようにします。"
-                checked={
-                  gradingSettings.allowManualCorrection
-                }
-                onChange={(
-                  value
-                ) =>
-                  updateGradingSetting(
-                    "allowManualCorrection",
-                    value
-                  )
-                }
-              />
-            </div>
-          </div>
-
-          <div
-            style={{
-              marginTop:
-                18,
-
-              padding:
-                14,
-
-              background:
-                "#f7f7f7",
-
-              borderRadius:
-                8,
-
-              color:
-                "#555",
-
-              fontSize:
-                13,
-
-              lineHeight:
-                1.7,
-            }}
-          >
-            <strong>
-              現在の設定：
-            </strong>
-
-            {" "}
-
-            {gradingMethod}
-
-            {" / "}
-
-            {gradingSettings.automaticGrading
-              ? "自動採点"
-              : "手動採点"}
-
-            {" / "}
-
-            {gradingSettings.firstReviewRequired
-              ? "一次確認あり"
-              : "一次確認なし"}
-
-            {" / "}
-
-            {gradingSettings.secondReviewRequired
-              ? "二次確認あり"
-              : "二次確認なし"}
-          </div>
-
-          {/* ================================================
-              保存
-              ================================================ */}
-
-          <div
-            style={{
-              display:
-                "flex",
-              gap:
-                10,
-              marginTop:
-                24,
-            }}
-          >
-            <button
-              type="button"
-              disabled={
-                saving
-              }
-              onClick={
-                saveTest
-              }
-              style={
-                primaryButton
-              }
-            >
-              {saving
-                ? "保存中..."
-                : editingId
-                  ? "変更を保存"
-                  : "テストを登録"}
-            </button>
-
-            {editingId && (
               <button
                 type="button"
-                onClick={
-                  resetForm
+                className="button primary"
+                disabled={
+                  saving
                 }
-                style={
-                  secondaryButton
+                onClick={
+                  createTest
                 }
               >
-                キャンセル
+                {saving
+                  ? "作成中..."
+                  : "テストを作成"}
               </button>
-            )}
-          </div>
+            </div>
+          </section>
+        )}
+
+        {/* ==================================================
+            Search
+            ================================================== */}
+
+        <section className="card">
+          <input
+            value={
+              search
+            }
+            onChange={(
+              event
+            ) =>
+              setSearch(
+                event.target
+                  .value
+              )
+            }
+            placeholder="テスト名・教科・学年・クラス"
+            style={{
+              width:
+                "100%",
+            }}
+          />
         </section>
 
         {/* ==================================================
-            テスト一覧
+            Main
             ================================================== */}
 
-        <section
-          style={
-            cardStyle
-          }
+        <div
+          style={{
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "minmax(360px, .9fr) minmax(0, 1.4fr)",
+
+            gap:
+              18,
+
+            marginTop:
+              16,
+
+            alignItems:
+              "start",
+          }}
         >
-          <div
-            style={{
-              display:
-                "flex",
-              alignItems:
-                "center",
-              justifyContent:
-                "space-between",
-              gap:
-                16,
-            }}
-          >
-            <div>
+
+          {/* ================================================
+              Test list
+              ================================================ */}
+
+          <section className="card">
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                marginBottom:
+                  12,
+              }}
+            >
               <h2
                 style={{
                   margin:
@@ -1961,817 +1314,1205 @@ export default function TestsPage() {
                 テスト一覧
               </h2>
 
-              <p
+              <span className="muted">
+                {
+                  filteredTests.length
+                }
+                件
+              </span>
+            </div>
+
+            {filteredTests.length ===
+              0 && (
+              <EmptyTests />
+            )}
+
+            {filteredTests.map(
+              (
+                test
+              ) => (
+                <button
+                  key={
+                    test.id
+                  }
+                  type="button"
+                  onClick={() =>
+                    setSelectedTestId(
+                      test.id
+                    )
+                  }
+                  style={{
+                    display:
+                      "block",
+
+                    width:
+                      "100%",
+
+                    marginBottom:
+                      8,
+
+                    padding:
+                      14,
+
+                    textAlign:
+                      "left",
+
+                    border:
+                      selectedTestId ===
+                      test.id
+                        ? "2px solid #111"
+                        : "1px solid #ddd",
+
+                    borderRadius:
+                      8,
+
+                    background:
+                      selectedTestId ===
+                      test.id
+                        ? "#f7f7f7"
+                        : "#fff",
+
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  <strong>
+                    {
+                      test.name
+                    }
+                  </strong>
+
+                  <div
+                    className="muted"
+                    style={{
+                      marginTop:
+                        4,
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
+                      test.subject
+                    }
+
+                    {" / "}
+
+                    {
+                      test.grade
+                    }
+
+                    {test.className &&
+                      ` / ${test.className}`}
+                  </div>
+
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      gap:
+                        6,
+
+                      marginTop:
+                        10,
+                    }}
+                  >
+                    <Badge
+                      label="問題"
+                      value={
+                        test.questionCount
+                      }
+                    />
+
+                    <Badge
+                      label="自動"
+                      value={
+                        test.automaticCount
+                      }
+                    />
+
+                    <Badge
+                      label="手動"
+                      value={
+                        test.manualCount
+                      }
+                    />
+                  </div>
+                </button>
+              )
+            )}
+          </section>
+
+          {/* ================================================
+              Detail
+              ================================================ */}
+
+          <section className="card">
+            {!selectedTest ? (
+              <EmptyDetail />
+            ) : detailLoading ? (
+              <div
                 style={{
-                  margin:
-                    "6px 0 0",
-                  color:
-                    "#777",
-                  fontSize:
-                    13,
+                  padding:
+                    50,
+
+                  textAlign:
+                    "center",
                 }}
               >
-                {tests.length}
-                件
-              </p>
-            </div>
+                問題設定を読み込んでいます...
+              </div>
+            ) : (
+              <>
+                <header
+                  style={{
+                    display:
+                      "flex",
 
-            <input
-              value={
-                search
-              }
-              onChange={(
-                event
-              ) =>
-                setSearch(
-                  event.target.value
-                )
-              }
-              placeholder="テストID・名称・教科・クラス"
-              style={{
-                ...inputStyle,
-                maxWidth:
-                  320,
-                marginTop:
-                  0,
-              }}
-            />
-          </div>
+                    justifyContent:
+                      "space-between",
 
-          {loading ? (
-            <p
-              style={{
-                marginTop:
-                  24,
-              }}
-            >
-              読み込み中...
-            </p>
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-                marginTop:
-                  20,
-              }}
-            >
-              <table
-                style={
-                  tableStyle
-                }
-              >
-                <thead>
-                  <tr>
-                    <th
-                      style={
-                        thStyle
+                    alignItems:
+                      "flex-start",
+
+                    gap:
+                      20,
+
+                    paddingBottom:
+                      16,
+
+                    borderBottom:
+                      "1px solid #eee",
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        margin:
+                          0,
+                      }}
+                    >
+                      {
+                        selectedTest.name
+                      }
+                    </h2>
+
+                    <p
+                      className="muted"
+                      style={{
+                        margin:
+                          "5px 0 0",
+                      }}
+                    >
+                      {
+                        selectedTest.subject
+                      }
+
+                      {" / "}
+
+                      {
+                        selectedTest.grade
+                      }
+
+                      {selectedTest.examDate &&
+                        ` / ${selectedTest.examDate}`}
+                    </p>
+                  </div>
+
+                  {(role ===
+                    "本部管理者" ||
+                    role ===
+                      "校舎管理者" ||
+                    role ===
+                      "講師") && (
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={
+                        saving
+                      }
+                      onClick={
+                        addQuestion
                       }
                     >
-                      テストID
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      テスト名
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      教科
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      学年
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      採点方式
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      実施日
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      状態
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredTests.map(
-                    (
-                      test
-                    ) => (
-                      <tr
-                        key={
-                          test.id
-                        }
-                      >
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <strong>
-                            {
-                              test.testId
-                            }
-                          </strong>
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            test.name
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            test.subject
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            test.grade
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            test.gradingMethod
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {test.examDate ||
-                            "—"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {test.active
-                            ? "有効"
-                            : "停止"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
-                              gap:
-                                8,
-                              flexWrap:
-                                "wrap",
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() =>
-                                startEdit(
-                                  test
-                                )
-                              }
-                              style={
-                                smallButton
-                              }
-                            >
-                              編集
-                            </button>
-
-                            <Link
-                              href={`/test-qr?testId=${encodeURIComponent(
-                                test.testId
-                              )}`}
-                              style={
-                                smallLink
-                              }
-                            >
-                              テストQR
-                            </Link>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleTest(
-                                  test
-                                )
-                              }
-                              style={
-                                dangerButton
-                              }
-                            >
-                              {test.active
-                                ? "停止"
-                                : "有効化"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
+                      問題を追加
+                    </button>
                   )}
+                </header>
 
-                  {filteredTests.length ===
+                {/* ==========================================
+                    Grading method notice
+                    ========================================== */}
+
+                <div
+                  style={{
+                    marginTop:
+                      16,
+
+                    padding:
+                      14,
+
+                    background:
+                      "#f7f7f7",
+
+                    borderRadius:
+                      8,
+                  }}
+                >
+                  <strong>
+                    採点方式
+                  </strong>
+
+                  <p
+                    className="muted"
+                    style={{
+                      margin:
+                        "5px 0 0",
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    自動採点できる問題だけ自動採点します。記述問題などは手動採点として設定できます。
+                  </p>
+                </div>
+
+                {/* ==========================================
+                    Questions
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      20,
+                  }}
+                >
+                  <h3>
+                    問題設定
+                  </h3>
+
+                  {questions.length ===
                     0 && (
-                    <tr>
-                      <td
-                        colSpan={
-                          8
-                        }
+                    <div
+                      style={{
+                        padding:
+                          40,
+
+                        textAlign:
+                          "center",
+
+                        color:
+                          "#777",
+
+                        border:
+                          "1px solid #eee",
+
+                        borderRadius:
+                          8,
+                      }}
+                    >
+                      <strong>
+                        問題がありません。
+                      </strong>
+
+                      <p
                         style={{
-                          ...tdStyle,
-                          padding:
-                            40,
-                          textAlign:
-                            "center",
-                          color:
-                            "#777",
+                          fontSize:
+                            12,
                         }}
                       >
-                        テストがありません。
-                      </td>
-                    </tr>
+                        「問題を追加」から問題を登録してください。
+                      </p>
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
+
+                  {questions.map(
+                    (
+                      question
+                    ) => (
+                      <QuestionEditor
+                        key={
+                          question.id
+                        }
+                        question={
+                          question
+                        }
+                        saving={
+                          saving
+                        }
+                        canDelete={
+                          role ===
+                            "本部管理者" ||
+                          role ===
+                            "校舎管理者"
+                        }
+                        onSave={
+                          updateQuestion
+                        }
+                        onDelete={
+                          deleteQuestion
+                        }
+                      />
+                    )
+                  )}
+                </section>
+              </>
+            )}
+          </section>
+        </div>
+      </section>
     </main>
   );
 }
 
 /* =========================================================
-   SettingToggle
+   Question editor
    ========================================================= */
 
-function SettingToggle({
+function QuestionEditor({
+  question,
+  saving,
+  canDelete,
+  onSave,
+  onDelete,
+}: {
+  question: Question;
+
+  saving: boolean;
+
+  canDelete: boolean;
+
+  onSave: (
+    question: Question
+  ) => Promise<void>;
+
+  onDelete: (
+    question: Question
+  ) => Promise<void>;
+}) {
+  const [
+    local,
+    setLocal,
+  ] =
+    useState<Question>(
+      question
+    );
+
+  useEffect(() => {
+    setLocal(
+      question
+    );
+  }, [
+    question,
+  ]);
+
+  return (
+    <div
+      style={{
+        padding:
+          16,
+
+        marginBottom:
+          12,
+
+        border:
+          "1px solid #ddd",
+
+        borderRadius:
+          8,
+      }}
+    >
+      <div
+        style={{
+          display:
+            "grid",
+
+          gridTemplateColumns:
+            "100px 1fr 120px",
+
+          gap:
+            10,
+        }}
+      >
+        <label>
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                5,
+
+              fontSize:
+                11,
+            }}
+          >
+            問題番号
+          </span>
+
+          <input
+            value={
+              local.questionNumber
+            }
+            onChange={(
+              event
+            ) =>
+              setLocal({
+                ...local,
+
+                questionNumber:
+                  event.target
+                    .value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                5,
+
+              fontSize:
+                11,
+            }}
+          >
+            問題名
+          </span>
+
+          <input
+            value={
+              local.title
+            }
+            onChange={(
+              event
+            ) =>
+              setLocal({
+                ...local,
+
+                title:
+                  event.target
+                    .value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                5,
+
+              fontSize:
+                11,
+            }}
+          >
+            配点
+          </span>
+
+          <input
+            type="number"
+            min={
+              0
+            }
+            value={
+              local.maxScore
+            }
+            onChange={(
+              event
+            ) =>
+              setLocal({
+                ...local,
+
+                maxScore:
+                  Number(
+                    event.target
+                      .value
+                  ),
+              })
+            }
+          />
+        </label>
+      </div>
+
+      {/* Grading method */}
+
+      <div
+        style={{
+          display:
+            "grid",
+
+          gridTemplateColumns:
+            "1fr 1fr",
+
+          gap:
+            10,
+
+          marginTop:
+            12,
+        }}
+      >
+        <label>
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                5,
+
+              fontSize:
+                11,
+            }}
+          >
+            採点方式
+          </span>
+
+          <select
+            value={
+              local.gradingMethod
+            }
+            onChange={(
+              event
+            ) =>
+              setLocal({
+                ...local,
+
+                gradingMethod:
+                  event.target
+                    .value as GradingMethod,
+
+                /*
+                 * 手動採点なら必ず確認対象。
+                 */
+                requiresReview:
+                  event.target
+                    .value ===
+                  "manual"
+                    ? true
+                    : local.requiresReview,
+              })
+            }
+          >
+            <option value="manual">
+              手動採点
+            </option>
+
+            <option value="automatic">
+              自動採点
+            </option>
+          </select>
+        </label>
+
+        {local.gradingMethod ===
+          "automatic" && (
+          <label>
+            <span
+              style={{
+                display:
+                  "block",
+
+                marginBottom:
+                  5,
+
+                fontSize:
+                  11,
+              }}
+            >
+              正答
+            </span>
+
+            <input
+              value={
+                local.correctAnswer
+              }
+              onChange={(
+                event
+              ) =>
+                setLocal({
+                  ...local,
+
+                  correctAnswer:
+                    event.target
+                      .value,
+                })
+              }
+              placeholder="例：A / 12 / 東京"
+            />
+          </label>
+        )}
+      </div>
+
+      {/* Rubric */}
+
+      <label
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            12,
+        }}
+      >
+        <span
+          style={{
+            display:
+              "block",
+
+            marginBottom:
+              5,
+
+            fontSize:
+              11,
+          }}
+        >
+          採点基準・ルーブリック
+        </span>
+
+        <textarea
+          value={
+            local.rubric
+          }
+          onChange={(
+            event
+          ) =>
+            setLocal({
+              ...local,
+
+              rubric:
+                event.target
+                  .value,
+            })
+          }
+          rows={
+            3
+          }
+          placeholder="記述問題などの採点基準"
+          style={{
+            width:
+              "100%",
+          }}
+        />
+      </label>
+
+      {/* Auto review */}
+
+      {local.gradingMethod ===
+        "automatic" && (
+        <label
+          style={{
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            gap:
+              8,
+
+            marginTop:
+              10,
+
+            fontSize:
+              12,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={
+              local.requiresReview
+            }
+            onChange={(
+              event
+            ) =>
+              setLocal({
+                ...local,
+
+                requiresReview:
+                  event.target
+                    .checked,
+              })
+            }
+          />
+
+          自動採点後も一次確認を必須にする
+        </label>
+      )}
+
+      {/* Actions */}
+
+      <div
+        style={{
+          display:
+            "flex",
+
+          justifyContent:
+            "flex-end",
+
+          gap:
+            8,
+
+          marginTop:
+            14,
+        }}
+      >
+        {canDelete && (
+          <button
+            type="button"
+            className="button"
+            disabled={
+              saving
+            }
+            onClick={() =>
+              onDelete(
+                local
+              )
+            }
+          >
+            削除
+          </button>
+        )}
+
+        <button
+          type="button"
+          className="button primary"
+          disabled={
+            saving
+          }
+          onClick={() =>
+            onSave(
+              local
+            )
+          }
+        >
+          保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Firestore
+   ========================================================= */
+
+async function getQuestions(
+  testId: string
+): Promise<Question[]> {
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "testQuestions"
+        ),
+
+        where(
+          "testId",
+          "==",
+          testId
+        )
+      )
+    );
+
+  return snapshot.docs
+    .map(
+      (
+        item
+      ) =>
+        normalizeQuestion(
+          item.id,
+          item.data()
+        )
+    )
+    .sort(
+      (
+        a,
+        b
+      ) =>
+        questionOrder(
+          a
+        ) -
+        questionOrder(
+          b
+        )
+    );
+}
+
+/* =========================================================
+   Normalize test
+   ========================================================= */
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Normalize question
+   ========================================================= */
+
+function normalizeQuestion(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Question {
+  const gradingMethod =
+    data.gradingMethod ===
+    "automatic"
+      ? "automatic"
+      : "manual";
+
+  return {
+    id,
+
+    questionNumber:
+      stringValue(
+        data.questionNumber
+      ),
+
+    title:
+      stringValue(
+        data.title
+      ),
+
+    maxScore:
+      safeNumber(
+        data.maxScore
+      ),
+
+    gradingMethod,
+
+    correctAnswer:
+      stringValue(
+        data.correctAnswer
+      ),
+
+    rubric:
+      stringValue(
+        data.rubric
+      ),
+
+    requiresReview:
+      gradingMethod ===
+        "manual"
+        ? true
+        : data.requiresReview ===
+          true,
+  };
+}
+
+/* =========================================================
+   Ordering
+   ========================================================= */
+
+function questionOrder(
+  question: Question
+) {
+  const numeric =
+    Number(
+      question.questionNumber
+    );
+
+  return Number.isFinite(
+    numeric
+  )
+    ? numeric
+    : Number.MAX_SAFE_INTEGER;
+}
+
+/* =========================================================
+   Fields
+   ========================================================= */
+
+function Field({
   label,
-  description,
-  checked,
-  disabled,
+  value,
   onChange,
 }: {
   label: string;
 
-  description: string;
-
-  checked: boolean;
-
-  disabled?: boolean;
+  value: string;
 
   onChange: (
-    value: boolean
+    value: string
   ) => void;
 }) {
   return (
-    <label
-      style={{
-        display:
-          "flex",
+    <label>
+      <span
+        style={{
+          display:
+            "block",
 
-        alignItems:
-          "flex-start",
+          marginBottom:
+            6,
 
-        gap:
-          12,
-
-        padding:
-          15,
-
-        borderBottom:
-          "1px solid #eee",
-
-        cursor:
-          disabled
-            ? "default"
-            : "pointer",
-
-        opacity:
-          disabled
-            ? 0.5
-            : 1,
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={
-          checked
+          fontWeight:
+            600,
+        }}
+      >
+        {
+          label
         }
-        disabled={
-          disabled
+      </span>
+
+      <input
+        value={
+          value
         }
         onChange={(
           event
         ) =>
           onChange(
             event.target
-              .checked
+              .value
           )
         }
         style={{
-          marginTop:
-            3,
+          width:
+            "100%",
         }}
       />
-
-      <span>
-        <strong>
-          {label}
-        </strong>
-
-        <span
-          style={{
-            display:
-              "block",
-
-            marginTop:
-              4,
-
-            color:
-              "#777",
-
-            fontSize:
-              12,
-
-            lineHeight:
-              1.6,
-          }}
-        >
-          {
-            description
-          }
-        </span>
-      </span>
     </label>
   );
 }
 
 /* =========================================================
-   Message
+   Badge
    ========================================================= */
 
-function Message({
-  type,
-  message,
+function Badge({
+  label,
+  value,
 }: {
-  type:
-    | "error"
-    | "success";
+  label: string;
 
-  message: string;
+  value: number;
 }) {
+  return (
+    <span
+      style={{
+        padding:
+          "3px 7px",
+
+        borderRadius:
+          999,
+
+        background:
+          "#f1f1f1",
+
+        fontSize:
+          10,
+      }}
+    >
+      {
+        label
+      }
+      {" "}
+      {
+        value
+      }
+    </span>
+  );
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyTests() {
   return (
     <div
       style={{
-        marginBottom:
-          16,
-
         padding:
-          14,
+          50,
 
-        border:
-          "1px solid",
-
-        borderColor:
-          type ===
-          "error"
-            ? "#efb5b5"
-            : "#b8d9c0",
-
-        borderRadius:
-          8,
-
-        background:
-          type ===
-          "error"
-            ? "#fff4f4"
-            : "#f2faf4",
+        textAlign:
+          "center",
 
         color:
-          type ===
-          "error"
-            ? "#9b1c1c"
-            : "#25633a",
-
-        lineHeight:
-          1.6,
+          "#777",
       }}
     >
-      {message}
+      <strong>
+        テストがありません。
+      </strong>
+
+      <p
+        style={{
+          fontSize:
+            12,
+        }}
+      >
+        登録された通常テストがここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+function EmptyDetail() {
+  return (
+    <div
+      style={{
+        minHeight:
+          450,
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <div>
+        <strong>
+          テストを選択してください
+        </strong>
+
+        <p
+          style={{
+            fontSize:
+              12,
+          }}
+        >
+          左側から問題設定を編集するテストを選択してください。
+        </p>
+      </div>
     </div>
   );
 }
 
 /* =========================================================
-   Helpers
+   Primitive
    ========================================================= */
 
-function isUserRole(
+function stringValue(
   value: unknown
-): value is UserRole {
-  return (
-    value ===
-      "本部管理者" ||
-    value ===
-      "校舎管理者" ||
-    value ===
-      "講師" ||
-    value ===
-      "生徒"
-  );
-}
-
-function isGradingMethod(
-  value: unknown
-): value is GradingMethod {
-  return (
-    value ===
-      "選択式" ||
-    value ===
-      "数値" ||
-    value ===
-      "短答" ||
-    value ===
-      "記述" ||
-    value ===
-      "手動"
-  );
-}
-
-function isGradingSettings(
-  value: unknown
-): value is GradingSettings {
-  if (
-    !value ||
-    typeof value !==
-      "object"
-  ) {
-    return false;
-  }
-
-  const data =
-    value as Record<
-      string,
-      unknown
-    >;
-
-  return (
-    typeof data.automaticGrading ===
-      "boolean" &&
-    typeof data.aiGrading ===
-      "boolean" &&
-    typeof data.firstReviewRequired ===
-      "boolean" &&
-    typeof data.secondReviewRequired ===
-      "boolean" &&
-    typeof data.allowManualCorrection ===
-      "boolean"
-  );
-}
-
-function getAvailableSchools(
-  schools: School[],
-  user: CurrentUser | null
 ) {
-  if (!user) {
-    return [];
-  }
+  return typeof value ===
+    "string"
+    ? value
+    : "";
+}
 
-  const activeSchools =
-    schools.filter(
-      (
-        school
-      ) =>
-        school.active
+function nullableString(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : null;
+}
+
+function safeNumber(
+  value: unknown
+) {
+  const number =
+    Number(
+      value ??
+        0
     );
 
-  if (
-    user.role ===
-    "本部管理者"
-  ) {
-    return activeSchools;
-  }
-
-  return activeSchools.filter(
-    (
-      school
-    ) =>
-      user.schoolIds.includes(
-        school.id
-      )
-  );
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
 }
-
-function isFirebaseError(
-  error: unknown
-) {
-  const value =
-    error as {
-      code?: string;
-    };
-
-  return Boolean(
-    value?.code
-  );
-}
-
-function getSafeErrorMessage(
-  error: unknown
-) {
-  const value =
-    error as {
-      code?: string;
-    };
-
-  switch (
-    value?.code
-  ) {
-    case "permission-denied":
-      return "この操作を行う権限がありません。";
-
-    case "unauthenticated":
-      return "ログイン状態を確認できません。";
-
-    case "already-exists":
-      return "同じデータがすでに登録されています。";
-
-    case "failed-precondition":
-      return "現在この操作を実行できません。";
-
-    case "unavailable":
-      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
-
-    default:
-      return "テスト情報を処理できませんでした。";
-  }
-}
-
-/* =========================================================
-   Styles
-   ========================================================= */
-
-const pageStyle:
-  React.CSSProperties = {
-    minHeight:
-      "100vh",
-
-    padding:
-      32,
-
-    background:
-      "#f5f6f8",
-  };
-
-const cardStyle:
-  React.CSSProperties = {
-    padding:
-      24,
-
-    background:
-      "#fff",
-
-    border:
-      "1px solid #e1e4e8",
-
-    borderRadius:
-      12,
-  };
-
-const inputStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    width:
-      "100%",
-
-    marginTop:
-      7,
-
-    padding:
-      "11px 12px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    background:
-      "#fff",
-  };
-
-const primaryButton:
-  React.CSSProperties = {
-    padding:
-      "11px 22px",
-
-    border:
-      "none",
-
-    borderRadius:
-      7,
-
-    background:
-      "#111",
-
-    color:
-      "#fff",
-
-    fontWeight:
-      600,
-
-    cursor:
-      "pointer",
-  };
-
-const secondaryButton:
-  React.CSSProperties = {
-    padding:
-      "10px 16px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    background:
-      "#fff",
-
-    cursor:
-      "pointer",
-
-    whiteSpace:
-      "nowrap",
-  };
-
-const smallButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    cursor:
-      "pointer",
-  };
-
-const smallLink:
-  React.CSSProperties = {
-    display:
-      "inline-flex",
-
-    alignItems:
-      "center",
-
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    color:
-      "#333",
-
-    textDecoration:
-      "none",
-
-    fontSize:
-      13,
-  };
-
-const dangerButton:
-  React.CSSProperties = {
-    padding:
-      "7px 10px",
-
-    border:
-      "1px solid #d99",
-
-    borderRadius:
-      6,
-
-    background:
-      "#fff",
-
-    color:
-      "#a00000",
-
-    cursor:
-      "pointer",
-  };
-
-const tableStyle:
-  React.CSSProperties = {
-    width:
-      "100%",
-
-    borderCollapse:
-      "collapse",
-  };
-
-const thStyle:
-  React.CSSProperties = {
-    padding:
-      "11px 12px",
-
-    textAlign:
-      "left",
-
-    borderBottom:
-      "2px solid #ddd",
-
-    whiteSpace:
-      "nowrap",
-  };
-
-const tdStyle:
-  React.CSSProperties = {
-    padding:
-      "12px",
-
-    borderBottom:
-      "1px solid #eee",
-
-    fontSize:
-      14,
-
-    whiteSpace:
-      "nowrap",
-  };
