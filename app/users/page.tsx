@@ -38,83 +38,46 @@ type UserRole =
 
 type CurrentUser = {
   uid: string;
-
   name: string;
-
-  email:
-    | string
-    | null;
-
-  organizationId:
-    | string
-    | null;
-
-  role:
-    | UserRole
-    | null;
-
+  email: string | null;
+  organizationId: string | null;
+  role: UserRole | null;
   schoolIds: string[];
 };
 
 type ManagedUser = {
   id: string;
-
   name: string;
-
   email: string;
-
-  role:
-    | UserRole
-    | null;
-
+  role: UserRole | null;
   schoolIds: string[];
-
-  studentId:
-    | string
-    | null;
-
+  studentId: string | null;
   active: boolean;
 };
 
 type Invitation = {
   id: string;
-
   email: string;
-
   name: string;
-
   role: UserRole;
-
   schoolIds: string[];
-
-  studentId:
-    | string
-    | null;
-
+  studentId: string | null;
   active: boolean;
 };
 
 type School = {
   id: string;
-
   name: string;
 };
 
 type Student = {
   id: string;
-
   studentNumber: string;
-
   name: string;
-
   grade: string;
-
   className: string;
-
   schoolId: string;
-
   schoolName: string;
-
   active: boolean;
 };
 
@@ -133,108 +96,91 @@ export default function UsersPage() {
   const [
     currentUser,
     setCurrentUser,
-  ] =
-    useState<
-      CurrentUser | null
-    >(null);
+  ] = useState<CurrentUser | null>(
+    null
+  );
 
   const [
     users,
     setUsers,
-  ] =
-    useState<
-      ManagedUser[]
-    >([]);
+  ] = useState<ManagedUser[]>(
+    []
+  );
 
   const [
     invitations,
     setInvitations,
-  ] =
-    useState<
-      Invitation[]
-    >([]);
+  ] = useState<Invitation[]>(
+    []
+  );
 
   const [
     schools,
     setSchools,
-  ] =
-    useState<
-      School[]
-    >([]);
+  ] = useState<School[]>(
+    []
+  );
 
   const [
     students,
     setStudents,
-  ] =
-    useState<
-      Student[]
-    >([]);
+  ] = useState<Student[]>(
+    []
+  );
 
   const [
     loading,
     setLoading,
-  ] =
-    useState(true);
+  ] = useState(true);
 
   const [
     saving,
     setSaving,
-  ] =
-    useState(false);
+  ] = useState(false);
 
   const [
     error,
     setError,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     message,
     setMessage,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     search,
     setSearch,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     email,
     setEmail,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     name,
     setName,
-  ] =
-    useState("");
+  ] = useState("");
 
   const [
     role,
     setRole,
-  ] =
-    useState<UserRole>(
-      "講師"
-    );
+  ] = useState<UserRole>(
+    "講師"
+  );
 
   const [
     selectedSchoolIds,
     setSelectedSchoolIds,
-  ] =
-    useState<string[]>(
-      []
-    );
+  ] = useState<string[]>(
+    []
+  );
 
   const [
     selectedStudentId,
     setSelectedStudentId,
-  ] =
-    useState<
-      string
-    >("");
+  ] = useState("");
 
   /* =======================================================
      Current user
@@ -247,12 +193,8 @@ export default function UsersPage() {
         async (
           firebaseUser
         ) => {
-          if (
-            !firebaseUser
-          ) {
-            setLoading(
-              false
-            );
+          if (!firebaseUser) {
+            setLoading(false);
 
             setError(
               "ログイン状態を確認できません。"
@@ -280,9 +222,7 @@ export default function UsersPage() {
             if (
               snapshot.empty
             ) {
-              setLoading(
-                false
-              );
+              setLoading(false);
 
               setError(
                 "ユーザー情報が登録されていません。"
@@ -340,9 +280,7 @@ export default function UsersPage() {
               schoolIds,
             });
 
-            setLoading(
-              false
-            );
+            setLoading(false);
           } catch (
             err
           ) {
@@ -356,9 +294,7 @@ export default function UsersPage() {
                 : "ユーザー情報を取得できません。"
             );
 
-            setLoading(
-              false
-            );
+            setLoading(false);
           }
         }
       );
@@ -390,15 +326,11 @@ export default function UsersPage() {
     organizationId: string
   ) {
     try {
-      setLoading(
-        true
-      );
-
+      setLoading(true);
       setError("");
 
-      /*
-       * Users
-       */
+      /* Users */
+
       const userSnapshot =
         await getDocs(
           query(
@@ -471,9 +403,8 @@ export default function UsersPage() {
           }
         );
 
-      /*
-       * Invitations
-       */
+      /* Invitations */
+
       const invitationSnapshot =
         await getDocs(
           query(
@@ -546,9 +477,8 @@ export default function UsersPage() {
           }
         );
 
-      /*
-       * Schools
-       */
+      /* Schools */
+
       const schoolSnapshot =
         await getDocs(
           query(
@@ -582,9 +512,8 @@ export default function UsersPage() {
           })
         );
 
-      /*
-       * Students
-       */
+      /* Students */
+
       const studentSnapshot =
         await getDocs(
           query(
@@ -601,10 +530,7 @@ export default function UsersPage() {
         );
 
       const schoolMap =
-        new Map<
-          string,
-          string
-        >(
+        new Map<string, string>(
           loadedSchools.map(
             (
               school
@@ -710,9 +636,7 @@ export default function UsersPage() {
           : "データを取得できませんでした。"
       );
     } finally {
-      setLoading(
-        false
-      );
+      setLoading(false);
     }
   }
 
@@ -728,10 +652,6 @@ export default function UsersPage() {
         return [];
       }
 
-      /*
-       * 本部管理者
-       * → 組織内すべて
-       */
       if (
         currentUser.role ===
         "本部管理者"
@@ -739,10 +659,6 @@ export default function UsersPage() {
         return students;
       }
 
-      /*
-       * 校舎管理者
-       * → 所属校舎のみ
-       */
       if (
         currentUser.role ===
         "校舎管理者"
@@ -788,10 +704,6 @@ export default function UsersPage() {
       nextRole
     );
 
-    /*
-     * 生徒以外なら
-     * 生徒情報をクリア。
-     */
     if (
       nextRole !==
       "生徒"
@@ -801,10 +713,6 @@ export default function UsersPage() {
       );
     }
 
-    /*
-     * 生徒なら
-     * 校舎は生徒から自動設定する。
-     */
     if (
       nextRole ===
       "生徒"
@@ -841,9 +749,6 @@ export default function UsersPage() {
       return;
     }
 
-    /*
-     * 生徒の所属校舎を自動設定。
-     */
     if (
       student.schoolId
     ) {
@@ -852,10 +757,6 @@ export default function UsersPage() {
       ]);
     }
 
-    /*
-     * 生徒マスターの氏名を
-     * アカウント登録名の初期値にする。
-     */
     if (
       student.name
     ) {
@@ -890,7 +791,7 @@ export default function UsersPage() {
     }
 
     if (
-      !currentUser.organizationId
+      !currentUser?.organizationId
     ) {
       setError(
         "組織情報がありません。"
@@ -929,9 +830,6 @@ export default function UsersPage() {
       return;
     }
 
-    /*
-     * 生徒以外の名前。
-     */
     if (
       !trimmedName
     ) {
@@ -942,9 +840,6 @@ export default function UsersPage() {
       return;
     }
 
-    /*
-     * 校舎管理者は本部管理者を作れない。
-     */
     if (
       currentUser.role ===
         "校舎管理者" &&
@@ -958,10 +853,6 @@ export default function UsersPage() {
       return;
     }
 
-    /*
-     * 生徒の場合は
-     * 既存の生徒を必ず選択。
-     */
     if (
       role ===
       "生徒"
@@ -996,17 +887,21 @@ export default function UsersPage() {
         return;
       }
 
-      /*
-       * 生徒の校舎を強制。
-       */
-      setSelectedSchoolIds([
-        selectedStudent.schoolId,
-      ]);
+      if (
+        currentUser.role ===
+          "校舎管理者" &&
+        !currentUser.schoolIds.includes(
+          selectedStudent.schoolId
+        )
+      ) {
+        setError(
+          "所属していない校舎の生徒は登録できません。"
+        );
+
+        return;
+      }
     }
 
-    /*
-     * 生徒以外は校舎必須。
-     */
     if (
       role !==
         "生徒" &&
@@ -1020,9 +915,6 @@ export default function UsersPage() {
       return;
     }
 
-    /*
-     * 校舎管理者は所属校舎のみ。
-     */
     if (
       currentUser.role ===
         "校舎管理者"
@@ -1049,17 +941,13 @@ export default function UsersPage() {
     }
 
     try {
-      setSaving(
-        true
-      );
-
+      setSaving(true);
       setError("");
-
       setMessage("");
 
-      /*
-       * 既存ユーザー確認
-       */
+      const organizationId =
+        currentUser.organizationId;
+
       const existingUsers =
         await getDocs(
           query(
@@ -1070,7 +958,7 @@ export default function UsersPage() {
             where(
               "organizationId",
               "==",
-              currentUser.organizationId
+              organizationId
             ),
             where(
               "email",
@@ -1088,10 +976,6 @@ export default function UsersPage() {
         );
       }
 
-      /*
-       * 同じ生徒にすでに
-       * アカウントがないか確認。
-       */
       if (
         role ===
         "生徒"
@@ -1106,7 +990,7 @@ export default function UsersPage() {
               where(
                 "organizationId",
                 "==",
-                currentUser.organizationId
+                organizationId
               ),
               where(
                 "studentId",
@@ -1125,9 +1009,6 @@ export default function UsersPage() {
         }
       }
 
-      /*
-       * 既存招待確認
-       */
       const existingInvitations =
         await getDocs(
           query(
@@ -1138,7 +1019,7 @@ export default function UsersPage() {
             where(
               "organizationId",
               "==",
-              currentUser.organizationId
+              organizationId
             ),
             where(
               "email",
@@ -1161,9 +1042,6 @@ export default function UsersPage() {
         );
       }
 
-      /*
-       * 同じ生徒の登録待ち確認。
-       */
       if (
         role ===
         "生徒"
@@ -1178,7 +1056,7 @@ export default function UsersPage() {
               where(
                 "organizationId",
                 "==",
-                currentUser.organizationId
+                organizationId
               ),
               where(
                 "studentId",
@@ -1202,17 +1080,13 @@ export default function UsersPage() {
         }
       }
 
-      /*
-       * 招待登録
-       */
       await addDoc(
         collection(
           db,
           "userInvitations"
         ),
         {
-          organizationId:
-            currentUser.organizationId,
+          organizationId,
 
           email:
             normalizedEmail,
@@ -1223,12 +1097,13 @@ export default function UsersPage() {
           role,
 
           schoolIds:
-            selectedSchoolIds,
+            role ===
+            "生徒"
+              ? [
+                  selectedStudent!.schoolId,
+                ]
+              : selectedSchoolIds,
 
-          /*
-           * 生徒の場合は既存studentsのID。
-           * その他の権限ではnull。
-           */
           studentId:
             role ===
             "生徒"
@@ -1250,17 +1125,13 @@ export default function UsersPage() {
       );
 
       setEmail("");
-
       setName("");
-
       setRole(
         "講師"
       );
-
       setSelectedSchoolIds(
         []
       );
-
       setSelectedStudentId(
         ""
       );
@@ -1269,11 +1140,11 @@ export default function UsersPage() {
         role ===
         "生徒"
           ? "生徒アカウントの登録待ちを作成しました。指定したGoogleアカウントでログインすると、既存の生徒情報と紐付いた状態で利用できます。"
-          : "ユーザー登録を受け付けました。対象者が登録したGoogleアカウントでログインすると、正式ユーザー化されます。"
+          : "ユーザー登録を受け付けました。"
       );
 
       await loadData(
-        currentUser.organizationId
+        organizationId
       );
     } catch (
       err
@@ -1320,7 +1191,6 @@ export default function UsersPage() {
 
     try {
       setError("");
-
       setMessage("");
 
       await updateDoc(
@@ -1373,7 +1243,6 @@ export default function UsersPage() {
   ) {
     try {
       setError("");
-
       setMessage("");
 
       await updateDoc(
@@ -1533,10 +1402,6 @@ export default function UsersPage() {
             "0 auto",
         }}
       >
-        {/* ==================================================
-            Header
-            ================================================== */}
-
         <header
           style={{
             marginBottom:
@@ -1554,12 +1419,9 @@ export default function UsersPage() {
 
           <p
             style={{
-              margin:
-                0,
-
+              margin: 0,
               color:
                 "#666",
-
               lineHeight:
                 1.7,
             }}
@@ -1587,13 +1449,12 @@ export default function UsersPage() {
         )}
 
         {/* ==================================================
-            Create
+            User registration
             ================================================== */}
 
         <section
           style={{
             ...cardStyle,
-
             marginBottom:
               24,
           }}
@@ -1606,29 +1467,24 @@ export default function UsersPage() {
             style={{
               color:
                 "#666",
-
               fontSize:
                 13,
-
               lineHeight:
                 1.7,
             }}
           >
             Googleアカウントのメールアドレスを指定して登録します。
-            生徒の場合は、CSVなどで登録済みの生徒情報を選択して紐付けます。
+            生徒の場合は、登録済みの生徒情報を選択して紐付けます。
           </p>
 
           <div
             style={{
               display:
                 "grid",
-
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(220px, 1fr))",
-
               gap:
                 16,
-
               marginTop:
                 20,
             }}
@@ -1728,9 +1584,7 @@ export default function UsersPage() {
             </label>
           </div>
 
-          {/* =================================================
-              Student link
-              ================================================= */}
+          {/* Student linking */}
 
           {role ===
             "生徒" && (
@@ -1757,10 +1611,12 @@ export default function UsersPage() {
               </strong>
 
               <p
-                className="muted"
                 style={{
                   margin:
                     "5px 0 12px",
+
+                  color:
+                    "#777",
 
                   fontSize:
                     12,
@@ -1770,7 +1626,6 @@ export default function UsersPage() {
                 }}
               >
                 既に生徒管理へ登録されている生徒を選択してください。
-                生徒本人が自分で生徒情報を作成する必要はありません。
               </p>
 
               <select
@@ -1805,13 +1660,21 @@ export default function UsersPage() {
                         student.id
                       }
                     >
-                      {student.studentNumber}
+                      {
+                        student.studentNumber
+                      }
                       {"　"}
-                      {student.name}
+                      {
+                        student.name
+                      }
                       {"　"}
-                      {student.grade}
+                      {
+                        student.grade
+                      }
                       {"　"}
-                      {student.className}
+                      {
+                        student.className
+                      }
                       {student.schoolName &&
                         `　${student.schoolName}`}
                     </option>
@@ -1844,13 +1707,11 @@ export default function UsersPage() {
                       1.8,
                   }}
                 >
-                  <div>
-                    <strong>
-                      {
-                        selectedStudent.name
-                      }
-                    </strong>
-                  </div>
+                  <strong>
+                    {
+                      selectedStudent.name
+                    }
+                  </strong>
 
                   <div>
                     生徒番号：
@@ -1901,9 +1762,7 @@ export default function UsersPage() {
             </div>
           )}
 
-          {/* =================================================
-              Schools
-              ================================================= */}
+          {/* Schools */}
 
           {role !==
             "生徒" && (
@@ -1937,11 +1796,13 @@ export default function UsersPage() {
                     (
                       school
                     ) =>
-                      currentUser?.role ===
-                        "本部管理者" ||
-                      currentUser.schoolIds.includes(
-                        school.id
-                      )
+                      currentUser
+                        ? currentUser.role ===
+                            "本部管理者" ||
+                          currentUser.schoolIds.includes(
+                            school.id
+                          )
+                        : false
                   )
                   .map(
                     (
@@ -1979,7 +1840,7 @@ export default function UsersPage() {
                             onChange={() => {
                               setSelectedSchoolIds(
                                 (
-                                  current
+                                  current: string[]
                                 ) =>
                                   checked
                                     ? current.filter(
@@ -2008,9 +1869,7 @@ export default function UsersPage() {
             </div>
           )}
 
-          {/* =================================================
-              Student school
-              ================================================= */}
+          {/* Student school */}
 
           {role ===
             "生徒" &&
@@ -2080,7 +1939,6 @@ export default function UsersPage() {
         <section
           style={{
             ...cardStyle,
-
             marginBottom:
               24,
           }}
