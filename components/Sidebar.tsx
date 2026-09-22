@@ -4,18 +4,14 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 
 import Link from "next/link";
 
 import {
   usePathname,
-  useRouter,
 } from "next/navigation";
-
-import {
-  signOut,
-} from "firebase/auth";
 
 import {
   auth,
@@ -23,10 +19,10 @@ import {
 
 import {
   getAppUser,
+  type AppUser,
 } from "@/lib/auth";
 
 import type {
-  AppUser,
   UserRole,
 } from "@/lib/types";
 
@@ -34,183 +30,534 @@ import type {
    Types
    ========================================================= */
 
-type MenuItem = {
-  label: string;
+type SidebarProps = {
+  children?: ReactNode;
 
+  collapsed?: boolean;
+
+  onCollapsedChange?: (
+    collapsed: boolean
+  ) => void;
+};
+
+type MenuItem = {
   href: string;
+
+  label: string;
 
   description?: string;
 
-  /*
-   * 親メニューの場合のみ。
-   */
+  roles: UserRole[];
+
   children?: MenuItem[];
 };
 
 /* =========================================================
-   Props
+   Menu
    ========================================================= */
 
-type SidebarProps = {
-  /*
-   * layout側からユーザーを渡せる場合に対応。
-   *
-   * 渡されなくてもFirebaseのログインユーザーから取得する。
-   */
-  user?: AppUser | null;
+const MENU_ITEMS: MenuItem[] = [
+  {
+    href:
+      "/dashboard/head-office",
 
-  onNavigate?: () => void;
-};
+    label:
+      "ホーム",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    href:
+      "/dashboard/school",
+
+    label:
+      "ホーム",
+
+    roles: [
+      "校舎管理者",
+    ],
+  },
+
+  {
+    href:
+      "/dashboard/teacher",
+
+    label:
+      "ホーム",
+
+    roles: [
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/dashboard/student",
+
+    label:
+      "ホーム",
+
+    roles: [
+      "生徒",
+    ],
+  },
+
+  {
+    href:
+      "/schools",
+
+    label:
+      "校舎管理",
+
+    description:
+      "校舎・校舎情報",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    href:
+      "/users",
+
+    label:
+      "ユーザー管理",
+
+    description:
+      "アカウント管理",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    href:
+      "/students",
+
+    label:
+      "生徒管理",
+
+    description:
+      "生徒情報",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    href:
+      "/tests",
+
+    label:
+      "テスト管理",
+
+    description:
+      "テスト・問題",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/answers",
+
+    label:
+      "答案",
+
+    description:
+      "答案画像・答案管理",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/grading",
+
+    label:
+      "採点",
+
+    description:
+      "採点状況",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+
+    children: [
+      {
+        href:
+          "/grading/auto",
+
+        label:
+          "自動採点",
+
+        roles: [
+          "本部管理者",
+          "校舎管理者",
+          "講師",
+        ],
+      },
+
+      {
+        href:
+          "/grading/review",
+
+        label:
+          "一次確認",
+
+        roles: [
+          "本部管理者",
+          "校舎管理者",
+          "講師",
+        ],
+      },
+
+      {
+        href:
+          "/grading/second-review",
+
+        label:
+          "二次確認",
+
+        roles: [
+          "本部管理者",
+          "校舎管理者",
+          "講師",
+        ],
+      },
+
+      {
+        href:
+          "/grading/confirm",
+
+        label:
+          "採点確定",
+
+        roles: [
+          "本部管理者",
+          "校舎管理者",
+          "講師",
+        ],
+      },
+    ],
+  },
+
+  {
+    href:
+      "/results",
+
+    label:
+      "成績",
+
+    description:
+      "成績・順位",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/reports",
+
+    label:
+      "成績表",
+
+    description:
+      "成績表作成・確認",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/retests",
+
+    label:
+      "追試",
+
+    description:
+      "追試・手動採点",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    href:
+      "/qr-stickers",
+
+    label:
+      "QRシール",
+
+    description:
+      "生徒QRシール",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    href:
+      "/settings",
+
+    label:
+      "システム設定",
+
+    description:
+      "システム設定",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+];
 
 /* =========================================================
-   Component
+   Sidebar
    ========================================================= */
 
 export default function Sidebar({
-  user: externalUser,
-  onNavigate,
+  collapsed:
+    controlledCollapsed,
+  onCollapsedChange,
 }: SidebarProps) {
   const pathname =
     usePathname();
-
-  const router =
-    useRouter();
 
   const [
     user,
     setUser,
   ] =
     useState<AppUser | null>(
-      externalUser ??
-        null
+      null
     );
 
   const [
-    loading,
-    setLoading,
-  ] =
-    useState(
-      !externalUser
-    );
-
-  const [
-    signingOut,
-    setSigningOut,
+    internalCollapsed,
+    setInternalCollapsed,
   ] =
     useState(false);
 
+  const [
+    openGroups,
+    setOpenGroups,
+  ] =
+    useState<
+      Record<string, boolean>
+    >({});
+
+  const collapsed =
+    controlledCollapsed ??
+    internalCollapsed;
+
   /* =======================================================
-     User
+     Auth
      ======================================================= */
 
   useEffect(() => {
-    if (
-      externalUser !==
-      undefined
-    ) {
-      setUser(
-        externalUser
-      );
+    let mounted =
+      true;
 
-      setLoading(
-        false
-      );
+    async function loadUser() {
+      try {
+        const currentUser =
+          auth.currentUser;
 
-      return;
+        if (
+          !currentUser
+        ) {
+          if (
+            mounted
+          ) {
+            setUser(
+              null
+            );
+          }
+
+          return;
+        }
+
+        const appUser =
+          await getAppUser(
+            currentUser
+          );
+
+        if (
+          mounted
+        ) {
+          setUser(
+            appUser
+          );
+        }
+      } catch (
+        error
+      ) {
+        console.error(
+          "Sidebar user load error:",
+          error
+        );
+
+        if (
+          mounted
+        ) {
+          setUser(
+            null
+          );
+        }
+      }
     }
 
     void loadUser();
+
+    return () => {
+      mounted =
+        false;
+    };
+  }, []);
+
+  /* =======================================================
+     Visible menu
+     ======================================================= */
+
+  const visibleItems =
+    useMemo(
+      () => {
+        if (
+          !user
+        ) {
+          return [];
+        }
+
+        return filterMenuByRole(
+          MENU_ITEMS,
+          user.role
+        );
+      },
+      [
+        user,
+      ]
+    );
+
+  /* =======================================================
+     Auto open current group
+     ======================================================= */
+
+  useEffect(() => {
+    const currentGroups:
+      Record<
+        string,
+        boolean
+      > = {};
+
+    visibleItems.forEach(
+      (
+        item
+      ) => {
+        if (
+          item.children?.some(
+            (
+              child
+            ) =>
+              isActivePath(
+                pathname,
+                child.href
+              )
+          )
+        ) {
+          currentGroups[
+            item.href
+          ] =
+            true;
+        }
+      }
+    );
+
+    setOpenGroups(
+      (
+        current
+      ) => ({
+        ...current,
+        ...currentGroups,
+      })
+    );
   }, [
-    externalUser,
+    pathname,
+    visibleItems,
   ]);
 
-  async function loadUser() {
-    try {
-      setLoading(
-        true
-      );
+  /* =======================================================
+     Toggle collapsed
+     ======================================================= */
 
-      const appUser =
-        await getAppUser();
+  function toggleCollapsed() {
+    const next =
+      !collapsed;
 
-      setUser(
-        appUser
-      );
-    } catch (
-      error
+    if (
+      onCollapsedChange
     ) {
-      console.error(
-        "Sidebar user load error:",
-        error
+      onCollapsedChange(
+        next
       );
-
-      setUser(
-        null
-      );
-    } finally {
-      setLoading(
-        false
+    } else {
+      setInternalCollapsed(
+        next
       );
     }
   }
 
   /* =======================================================
-     Menu
+     Toggle group
      ======================================================= */
 
-  const menu =
-    useMemo(
-      () =>
-        createMenu(
-          user?.role ??
-            null
-        ),
-      [
-        user?.role,
-      ]
+  function toggleGroup(
+    href: string
+  ) {
+    setOpenGroups(
+      (
+        current: Record<
+          string,
+          boolean
+        >
+      ) => ({
+        ...current,
+
+        [href]:
+          !current[href],
+      })
     );
-
-  /* =======================================================
-     Logout
-     ======================================================= */
-
-  async function handleLogout() {
-    if (
-      signingOut
-    ) {
-      return;
-    }
-
-    try {
-      setSigningOut(
-        true
-      );
-
-      await signOut(
-        auth
-      );
-
-      setUser(
-        null
-      );
-
-      onNavigate?.();
-
-      router.replace(
-        "/login"
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Logout error:",
-        error
-      );
-
-      setSigningOut(
-        false
-      );
-    }
   }
 
   /* =======================================================
@@ -219,167 +566,201 @@ export default function Sidebar({
 
   return (
     <aside
-      className="sidebar"
-      aria-label="メインメニュー"
+      className={
+        collapsed
+          ? "sidebar collapsed"
+          : "sidebar"
+      }
+      style={{
+        width:
+          collapsed
+            ? 68
+            : 240,
+
+        minWidth:
+          collapsed
+            ? 68
+            : 240,
+
+        minHeight:
+          "100vh",
+
+        background:
+          "#fff",
+
+        borderRight:
+          "1px solid #e5e5e5",
+
+        display:
+          "flex",
+
+        flexDirection:
+          "column",
+
+        transition:
+          "width .15s ease",
+      }}
     >
       {/* ==================================================
-          Brand
+          Header
           ================================================== */}
 
       <div
         style={{
+          height:
+            60,
+
           padding:
-            "20px 18px 18px",
+            collapsed
+              ? "0 10px"
+              : "0 14px",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            collapsed
+              ? "center"
+              : "space-between",
 
           borderBottom:
             "1px solid #eee",
         }}
       >
-        <Link
-          href={
-            getDashboardPath(
-              user?.role ??
-                null
-            )
-          }
-          onClick={
-            onNavigate
-          }
-          style={{
-            textDecoration:
-              "none",
-
-            color:
-              "inherit",
-          }}
-        >
-          <strong
+        {!collapsed && (
+          <div
             style={{
-              display:
-                "block",
-
-              fontSize:
-                20,
+              minWidth:
+                0,
             }}
           >
-            テストシステム
-          </strong>
+            <strong
+              style={{
+                display:
+                  "block",
 
-          <span
+                fontSize:
+                  15,
+              }}
+            >
+              テストシステム
+            </strong>
+
+            {user && (
+              <span
+                style={{
+                  display:
+                    "block",
+
+                  marginTop:
+                    2,
+
+                  color:
+                    "#777",
+
+                  fontSize:
+                    10,
+                }}
+              >
+                {
+                  user.role
+                }
+              </span>
+            )}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={
+            toggleCollapsed
+          }
+          aria-label={
+            collapsed
+              ? "メニューを開く"
+              : "メニューを閉じる"
+          }
+          title={
+            collapsed
+              ? "メニューを開く"
+              : "メニューを閉じる"
+          }
+          style={{
+            width:
+              32,
+
+            height:
+              32,
+
+            border:
+              "1px solid #ddd",
+
+            borderRadius:
+              6,
+
+            background:
+              "#fff",
+
+            cursor:
+              "pointer",
+
+            fontSize:
+              14,
+          }}
+        >
+          {collapsed
+            ? ">"
+            : "<"}
+        </button>
+      </div>
+
+      {/* ==================================================
+          Menu
+          ================================================== */}
+
+      <nav
+        aria-label="メインメニュー"
+        style={{
+          flex:
+            1,
+
+          padding:
+            "12px 8px",
+
+          overflowY:
+            "auto",
+        }}
+      >
+        {visibleItems.length ===
+        0 ? (
+          <div
             style={{
-              display:
-                "block",
+              padding:
+                12,
 
-              marginTop:
-                3,
+              color:
+                "#999",
 
               fontSize:
                 11,
 
-              color:
-                "#777",
+              textAlign:
+                "center",
             }}
           >
-            成績・答案管理システム
-          </span>
-        </Link>
-      </div>
-
-      {/* ==================================================
-          User
-          ================================================== */}
-
-      <div
-        style={{
-          padding:
-            "14px 18px",
-
-          borderBottom:
-            "1px solid #eee",
-        }}
-      >
-        {loading ? (
-          <div
-            style={{
-              fontSize:
-                12,
-
-              color:
-                "#888",
-            }}
-          >
-            読み込み中...
+            {collapsed
+              ? "—"
+              : "利用可能なメニューがありません"}
           </div>
-        ) : user ? (
-          <>
-            <div
-              style={{
-                fontWeight:
-                  700,
-
-                fontSize:
-                  13,
-              }}
-            >
-              {
-                user.name
-              }
-            </div>
-
-            <div
-              style={{
-                marginTop:
-                  3,
-
-                fontSize:
-                  11,
-
-                color:
-                  "#777",
-              }}
-            >
-              {
-                user.role
-              }
-            </div>
-          </>
         ) : (
-          <div
-            style={{
-              fontSize:
-                12,
-
-              color:
-                "#888",
-            }}
-          >
-            未ログイン
-          </div>
-        )}
-      </div>
-
-      {/* ==================================================
-          Navigation
-          ================================================== */}
-
-      <nav
-        style={{
-          padding:
-            "12px 10px",
-
-          overflowY:
-            "auto",
-
-          flex:
-            1,
-        }}
-      >
-        {!loading &&
-          menu.map(
+          visibleItems.map(
             (
               item
             ) => (
-              <SidebarMenuItem
+              <SidebarItem
                 key={
                   item.href
                 }
@@ -389,873 +770,449 @@ export default function Sidebar({
                 pathname={
                   pathname
                 }
-                onNavigate={
-                  onNavigate
+                collapsed={
+                  collapsed
+                }
+                open={
+                  openGroups[
+                    item.href
+                  ] === true
+                }
+                onToggle={() =>
+                  toggleGroup(
+                    item.href
+                  )
                 }
               />
             )
-          )}
-
-        {!loading &&
-          menu.length ===
-            0 && (
-            <div
-              style={{
-                padding:
-                  14,
-
-                fontSize:
-                  12,
-
-                color:
-                  "#777",
-              }}
-            >
-              利用できるメニューがありません。
-            </div>
-          )}
+          )
+        )}
       </nav>
 
       {/* ==================================================
-          Account
+          Footer
           ================================================== */}
 
-      <div
-        style={{
-          padding:
-            10,
-
-          borderTop:
-            "1px solid #eee",
-        }}
-      >
-        <button
-          type="button"
-          onClick={
-            handleLogout
-          }
-          disabled={
-            signingOut
-          }
+      {!collapsed && (
+        <div
           style={{
-            width:
-              "100%",
-
             padding:
-              "10px 12px",
+              "10px 14px",
 
-            border:
-              "1px solid #ddd",
+            borderTop:
+              "1px solid #eee",
 
-            borderRadius:
-              7,
-
-            background:
-              "#fff",
-
-            cursor:
-              signingOut
-                ? "default"
-                : "pointer",
+            color:
+              "#999",
 
             fontSize:
-              12,
+              9,
           }}
         >
-          {signingOut
-            ? "ログアウト中..."
-            : "ログアウト"}
-        </button>
-      </div>
+          テストシステム
+        </div>
+      )}
     </aside>
   );
 }
 
 /* =========================================================
-   Menu item
+   Sidebar item
    ========================================================= */
 
-function SidebarMenuItem({
+function SidebarItem({
   item,
   pathname,
-  onNavigate,
+  collapsed,
+  open,
+  onToggle,
 }: {
   item: MenuItem;
 
   pathname: string;
 
-  onNavigate?: () => void;
+  collapsed: boolean;
+
+  open: boolean;
+
+  onToggle: () => void;
 }) {
+  const active =
+    isActivePath(
+      pathname,
+      item.href
+    );
+
+  const childActive =
+    item.children?.some(
+      (
+        child
+      ) =>
+        isActivePath(
+          pathname,
+          child.href
+        )
+    ) ??
+    false;
+
   const hasChildren =
     Boolean(
       item.children &&
-        item.children.length >
-          0
+      item.children.length >
+        0
     );
-
-  const active =
-    isMenuActive(
-      item,
-      pathname
-    );
-
-  const [
-    open,
-    setOpen,
-  ] =
-    useState(
-      active
-    );
-
-  useEffect(() => {
-    if (
-      active
-    ) {
-      setOpen(
-        true
-      );
-    }
-  }, [
-    active,
-  ]);
 
   /*
-   * 子メニューがない通常リンク。
-   */
-  if (
-    !hasChildren
-  ) {
-    return (
-      <Link
-        href={
-          item.href
-        }
-        onClick={
-          onNavigate
-        }
-        className={
-          active
-            ? "sidebarLink active"
-            : "sidebarLink"
-        }
-        style={{
-          display:
-            "block",
-
-          padding:
-            "10px 12px",
-
-          marginBottom:
-            3,
-
-          borderRadius:
-            7,
-
-          textDecoration:
-            "none",
-
-          color:
-            active
-              ? "#111"
-              : "#444",
-
-          background:
-            active
-              ? "#f1f1f1"
-              : "transparent",
-
-          fontWeight:
-            active
-              ? 700
-              : 500,
-        }}
-      >
-        <span>
-          {
-            item.label
-          }
-        </span>
-
-        {item.description && (
-          <span
-            style={{
-              display:
-                "block",
-
-              marginTop:
-                2,
-
-              fontSize:
-                10,
-
-              color:
-                "#888",
-
-              fontWeight:
-                400,
-            }}
-          >
-            {
-              item.description
-            }
-          </span>
-        )}
-      </Link>
-    );
-  }
-
-  /*
-   * 子メニューあり。
+   * 子メニューがある場合、
+   * 親自身が実ページならリンクとして扱う。
+   * そうでなければ開閉ボタンとして扱う。
    */
   return (
     <div
       style={{
         marginBottom:
-          4,
+          2,
       }}
     >
-      <button
-        type="button"
-        onClick={() =>
-          setOpen(
-            (
-              current
-            ) =>
-              !current
-          )
-        }
+      <div
         style={{
           display:
             "flex",
 
           alignItems:
             "center",
-
-          justifyContent:
-            "space-between",
-
-          width:
-            "100%",
-
-          padding:
-            "10px 12px",
-
-          border:
-            0,
-
-          borderRadius:
-            7,
-
-          background:
-            active
-              ? "#f1f1f1"
-              : "transparent",
-
-          cursor:
-            "pointer",
-
-          textAlign:
-            "left",
-
-          fontWeight:
-            active
-              ? 700
-              : 600,
-
-          color:
-            "#333",
         }}
       >
-        <span>
-          {
-            item.label
+        <Link
+          href={
+            item.href
           }
-        </span>
-
-        <span
-          aria-hidden="true"
+          title={
+            collapsed
+              ? item.label
+              : undefined
+          }
+          aria-current={
+            active
+              ? "page"
+              : undefined
+          }
           style={{
-            fontSize:
-              11,
+            flex:
+              1,
 
-            transform:
-              open
-                ? "rotate(180deg)"
-                : "rotate(0deg)",
+            minWidth:
+              0,
 
-            transition:
-              "transform .15s ease",
+            display:
+              "block",
+
+            padding:
+              collapsed
+                ? "10px 8px"
+                : "9px 10px",
+
+            borderRadius:
+              7,
+
+            background:
+              active
+                ? "#eeeeee"
+                : childActive
+                  ? "#f7f7f7"
+                  : "transparent",
+
+            color:
+              "#222",
+
+            textDecoration:
+              "none",
+
+            fontWeight:
+              active ||
+              childActive
+                ? 700
+                : 400,
           }}
         >
-          ▼
-        </span>
-      </button>
+          {collapsed ? (
+            <span
+              style={{
+                display:
+                  "block",
 
-      {open && (
-        <div
-          style={{
-            marginLeft:
-              8,
+                textAlign:
+                  "center",
 
-            paddingLeft:
-              8,
+                fontSize:
+                  12,
 
-            borderLeft:
-              "1px solid #eee",
-          }}
-        >
-          {item.children!.map(
-            (
-              child
-            ) => (
-              <SidebarMenuItem
-                key={
-                  child.href
+                fontWeight:
+                  700,
+              }}
+            >
+              {
+                getMenuInitial(
+                  item.label
+                )
+              }
+            </span>
+          ) : (
+            <>
+              <span
+                style={{
+                  display:
+                    "block",
+
+                  fontSize:
+                    13,
+
+                  lineHeight:
+                    1.4,
+                }}
+              >
+                {
+                  item.label
                 }
-                item={
-                  child
-                }
-                pathname={
-                  pathname
-                }
-                onNavigate={
-                  onNavigate
-                }
-              />
-            )
+              </span>
+
+              {item.description && (
+                <small
+                  style={{
+                    display:
+                      "block",
+
+                    marginTop:
+                      2,
+
+                    color:
+                      "#888",
+
+                    fontSize:
+                      9,
+
+                    lineHeight:
+                      1.4,
+                  }}
+                >
+                  {
+                    item.description
+                  }
+                </small>
+              )}
+            </>
           )}
-        </div>
-      )}
+        </Link>
+
+        {hasChildren &&
+          !collapsed && (
+            <button
+              type="button"
+              onClick={
+                onToggle
+              }
+              aria-label={
+                open
+                  ? `${item.label}を閉じる`
+                  : `${item.label}を開く`
+              }
+              style={{
+                width:
+                  30,
+
+                height:
+                  34,
+
+                marginLeft:
+                  2,
+
+                border:
+                  "none",
+
+                background:
+                  "transparent",
+
+                cursor:
+                  "pointer",
+
+                color:
+                  "#777",
+
+                fontSize:
+                  11,
+              }}
+            >
+              {open
+                ? "▲"
+                : "▼"}
+            </button>
+          )}
+      </div>
+
+      {/* ==================================================
+          Children
+          ================================================== */}
+
+      {hasChildren &&
+        open &&
+        !collapsed && (
+          <div
+            style={{
+              marginLeft:
+                12,
+
+              paddingLeft:
+                8,
+
+              borderLeft:
+                "1px solid #e5e5e5",
+            }}
+          >
+            {item.children?.map(
+              (
+                child
+              ) => (
+                <Link
+                  key={
+                    child.href
+                  }
+                  href={
+                    child.href
+                  }
+                  aria-current={
+                    isActivePath(
+                      pathname,
+                      child.href
+                    )
+                      ? "page"
+                      : undefined
+                  }
+                  style={{
+                    display:
+                      "block",
+
+                    marginTop:
+                      2,
+
+                    padding:
+                      "7px 9px",
+
+                    borderRadius:
+                      6,
+
+                    background:
+                      isActivePath(
+                        pathname,
+                        child.href
+                      )
+                        ? "#eeeeee"
+                        : "transparent",
+
+                    color:
+                      "#333",
+
+                    textDecoration:
+                      "none",
+
+                    fontSize:
+                      11,
+
+                    fontWeight:
+                      isActivePath(
+                        pathname,
+                        child.href
+                      )
+                        ? 700
+                        : 400,
+                  }}
+                >
+                  {
+                    child.label
+                  }
+                </Link>
+              )
+            )}
+          </div>
+        )}
     </div>
   );
 }
 
 /* =========================================================
-   Create menu
+   Filter by role
    ========================================================= */
 
-function createMenu(
-  role:
-    | UserRole
-    | null
+function filterMenuByRole(
+  items: MenuItem[],
+  role: UserRole
 ): MenuItem[] {
-  switch (
-    role
-  ) {
-    /* =====================================================
-       本部管理者
-       ===================================================== */
-
-    case "本部管理者":
-      return [
-        {
-          label:
-            "ダッシュボード",
-
-          href:
-            "/dashboard/head-office",
-        },
-
-        {
-          label:
-            "生徒管理",
-
-          href:
-            "/students",
-        },
-
-        {
-          label:
-            "テスト管理",
-
-          href:
-            "/tests",
-        },
-
-        {
-          label:
-            "答案・採点",
-
-          href:
-            "/grading",
-
-          children: [
-            {
-              label:
-                "答案管理",
-
-              href:
-                "/answers",
-            },
-
-            {
-              label:
-                "採点管理",
-
-              href:
-                "/grading",
-            },
-
-            {
-              label:
-                "一次確認",
-
-              href:
-                "/grading/review",
-            },
-
-            {
-              label:
-                "二次確認",
-
-              href:
-                "/grading/second-review",
-            },
-
-            {
-              label:
-                "採点確定",
-
-              href:
-                "/grading/confirm",
-            },
-          ],
-        },
-
-        {
-          label:
-            "成績",
-
-          href:
-            "/results/management",
-
-          children: [
-            {
-              label:
-                "成績一覧",
-
-              href:
-                "/results/management",
-            },
-
-            {
-              label:
-                "成績表",
-
-              href:
-                "/reports/management",
-            },
-          ],
-        },
-
-        {
-          label:
-            "追試",
-
-          href:
-            "/retests",
-        },
-
-        {
-          label:
-            "QRシール",
-
-          href:
-            "/qr-stickers",
-        },
-
-        {
-          label:
-            "校舎管理",
-
-          href:
-            "/schools",
-        },
-
-        {
-          label:
-            "ユーザー管理",
-
-          href:
-            "/users",
-        },
-
-        {
-          label:
-            "設定",
-
-          href:
-            "/settings",
-        },
-      ];
-
-    /* =====================================================
-       校舎管理者
-       ===================================================== */
-
-    case "校舎管理者":
-      return [
-        {
-          label:
-            "ダッシュボード",
-
-          href:
-            "/dashboard/school",
-        },
-
-        {
-          label:
-            "生徒管理",
-
-          href:
-            "/students",
-        },
-
-        {
-          label:
-            "テスト管理",
-
-          href:
-            "/tests",
-        },
-
-        {
-          label:
-            "答案・採点",
-
-          href:
-            "/grading",
-
-          children: [
-            {
-              label:
-                "答案管理",
-
-              href:
-                "/answers",
-            },
-
-            {
-              label:
-                "採点管理",
-
-              href:
-                "/grading",
-            },
-
-            {
-              label:
-                "一次確認",
-
-              href:
-                "/grading/review",
-            },
-
-            {
-              label:
-                "二次確認",
-
-              href:
-                "/grading/second-review",
-            },
-
-            {
-              label:
-                "採点確定",
-
-              href:
-                "/grading/confirm",
-            },
-          ],
-        },
-
-        {
-          label:
-            "成績",
-
-          href:
-            "/results/management",
-
-          children: [
-            {
-              label:
-                "成績一覧",
-
-              href:
-                "/results/management",
-            },
-
-            {
-              label:
-                "成績表",
-
-              href:
-                "/reports/management",
-            },
-          ],
-        },
-
-        {
-          label:
-            "追試",
-
-          href:
-            "/retests",
-        },
-
-        {
-          label:
-            "QRシール",
-
-          href:
-            "/qr-stickers",
-        },
-
-        {
-          label:
-            "ユーザー管理",
-
-          href:
-            "/users",
-        },
-
-        {
-          label:
-            "設定",
-
-          href:
-            "/settings",
-        },
-      ];
-
-    /* =====================================================
-       講師
-       ===================================================== */
-
-    case "講師":
-      return [
-        {
-          label:
-            "ダッシュボード",
-
-          href:
-            "/dashboard/teacher",
-        },
-
-        {
-          label:
-            "テスト",
-
-          href:
-            "/tests",
-        },
-
-        {
-          label:
-            "答案・採点",
-
-          href:
-            "/grading",
-
-          children: [
-            {
-              label:
-                "答案管理",
-
-              href:
-                "/answers",
-            },
-
-            {
-              label:
-                "採点管理",
-
-              href:
-                "/grading",
-            },
-
-            {
-              label:
-                "一次確認",
-
-              href:
-                "/grading/review",
-            },
-
-            {
-              label:
-                "二次確認",
-
-              href:
-                "/grading/second-review",
-            },
-
-            {
-              label:
-                "採点確定",
-
-              href:
-                "/grading/confirm",
-            },
-          ],
-        },
-
-        {
-          label:
-            "成績",
-
-          href:
-            "/results/teacher",
-
-          children: [
-            {
-              label:
-                "成績一覧",
-
-              href:
-                "/results/teacher",
-            },
-
-            {
-              label:
-                "成績表",
-
-              href:
-                "/reports/teacher",
-            },
-          ],
-        },
-
-        {
-          label:
-            "追試",
-
-          href:
-            "/retests",
-        },
-
-        {
-          label:
-            "QRシール",
-
-          href:
-            "/qr-stickers",
-        },
-      ];
-
-    /* =====================================================
-       生徒
-       ===================================================== */
-
-    case "生徒":
-      return [
-        {
-          label:
-            "ホーム",
-
-          href:
-            "/dashboard/student",
-        },
-
-        {
-          label:
-            "成績",
-
-          href:
-            "/results/student",
-
-          children: [
-            {
-              label:
-                "成績一覧",
-
-              href:
-                "/results/student",
-            },
-
-            {
-              label:
-                "成績表",
-
-              href:
-                "/reports/student",
-            },
-          ],
-        },
-      ];
-
-    default:
-      return [];
-  }
+  return items
+    .filter(
+      (
+        item
+      ) =>
+        item.roles.includes(
+          role
+        )
+    )
+    .map(
+      (
+        item
+      ) => ({
+        ...item,
+
+        children:
+          item.children
+            ?.filter(
+              (
+                child
+              ) =>
+                child.roles.includes(
+                  role
+                )
+            ),
+      })
+    );
 }
 
 /* =========================================================
-   Dashboard
+   Active path
    ========================================================= */
 
-function getDashboardPath(
-  role:
-    | UserRole
-    | null
-) {
-  switch (
-    role
-  ) {
-    case "本部管理者":
-      return "/dashboard/head-office";
-
-    case "校舎管理者":
-      return "/dashboard/school";
-
-    case "講師":
-      return "/dashboard/teacher";
-
-    case "生徒":
-      return "/dashboard/student";
-
-    default:
-      return "/login";
-  }
-}
-
-/* =========================================================
-   Active
-   ========================================================= */
-
-function isMenuActive(
-  item: MenuItem,
-  pathname: string
+function isActivePath(
+  pathname: string,
+  href: string
 ) {
   if (
     pathname ===
-    item.href
+    href
   ) {
     return true;
   }
 
+  /*
+   * /grading と /grading/xxx を
+   * 同じグループとして扱う。
+   */
+  return pathname.startsWith(
+    `${href}/`
+  );
+}
+
+/* =========================================================
+   Collapsed icon
+   ========================================================= */
+
+function getMenuInitial(
+  label: string
+) {
   if (
-    item.href !==
-      "/" &&
-    pathname.startsWith(
-      `${item.href}/`
-    )
+    !label
   ) {
-    return true;
+    return "・";
   }
 
-  if (
-    item.children
-  ) {
-    return item.children.some(
-      (
-        child
-      ) =>
-        isMenuActive(
-          child,
-          pathname
-        )
-    );
-  }
-
-  return false;
+  return label.charAt(
+    0
+  );
 }
