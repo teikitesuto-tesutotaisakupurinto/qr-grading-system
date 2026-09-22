@@ -48,19 +48,28 @@ type GradingMethod =
 
 type Question = {
   id: string;
+
   questionNumber: string;
+
   title: string;
+
   maxScore: number;
+
   gradingMethod: GradingMethod;
+
   correctAnswer: string;
+
   rubric: string;
+
   requiresReview: boolean;
 };
 
 type TestRow =
   Test & {
     questionCount: number;
+
     automaticCount: number;
+
     manualCount: number;
   };
 
@@ -184,7 +193,7 @@ export default function TestsPage() {
     useState("");
 
   /* =======================================================
-     Load
+     Load tests
      ======================================================= */
 
   useEffect(() => {
@@ -193,7 +202,9 @@ export default function TestsPage() {
 
   async function loadTests() {
     try {
-      setLoading(true);
+      setLoading(
+        true
+      );
 
       setError("");
 
@@ -202,7 +213,9 @@ export default function TestsPage() {
           auth.currentUser
         );
 
-      if (!user) {
+      if (
+        !user
+      ) {
         throw new Error(
           "ログインしてください。"
         );
@@ -320,7 +333,7 @@ export default function TestsPage() {
 
       setSelectedTestId(
         (
-          current
+          current: string | null
         ) => {
           if (
             current &&
@@ -352,7 +365,9 @@ export default function TestsPage() {
           : "テストを取得できませんでした。"
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
 
@@ -365,6 +380,7 @@ export default function TestsPage() {
       !selectedTestId
     ) {
       setQuestions([]);
+
       return;
     }
 
@@ -469,7 +485,7 @@ export default function TestsPage() {
     null;
 
   /* =======================================================
-     Create
+     Create test
      ======================================================= */
 
   async function createTest() {
@@ -593,8 +609,7 @@ export default function TestsPage() {
           className:
             className.trim(),
 
-          examDate:
-            examDate,
+          examDate,
 
           totalScore:
             0,
@@ -609,8 +624,7 @@ export default function TestsPage() {
             null,
 
           /*
-           * テスト全体の自動採点フラグではなく、
-           * 実際の採点方式は問題単位で管理する。
+           * 採点方式は問題単位で管理。
            */
           automaticGrading:
             false,
@@ -684,6 +698,8 @@ export default function TestsPage() {
 
       setError("");
 
+      setMessage("");
+
       const user =
         await getAppUser();
 
@@ -740,6 +756,9 @@ export default function TestsPage() {
           maxScore:
             1,
 
+          /*
+           * 新規問題は最初から自動採点。
+           */
           gradingMethod:
             "automatic",
 
@@ -770,7 +789,7 @@ export default function TestsPage() {
       await loadTests();
 
       setMessage(
-        `問${nextNumber}を追加しました。`
+        `問${nextNumber}を追加しました。採点方式は自動採点になっています。`
       );
     } catch (
       error
@@ -865,9 +884,7 @@ export default function TestsPage() {
             question.rubric,
 
           /*
-           * 自動採点問題でも、
-           * 確認を必要とする設定を
-           * 明示的に保持。
+           * 手動採点は必ず確認対象。
            */
           requiresReview:
             question.gradingMethod ===
@@ -918,54 +935,78 @@ export default function TestsPage() {
   ) {
     if (
       !selectedTest ||
-      questions.length === 0
+      questions.length ===
+        0
     ) {
       return;
     }
 
     try {
-      setSaving(true);
+      setSaving(
+        true
+      );
+
       setError("");
+
       setMessage("");
 
       const user =
         await getAppUser();
 
-      if (!user) {
+      if (
+        !user
+      ) {
         throw new Error(
           "ログインしてください。"
         );
       }
 
       if (
-        user.role !== "本部管理者" &&
-        user.role !== "校舎管理者" &&
-        user.role !== "講師"
+        user.role !==
+          "本部管理者" &&
+        user.role !==
+          "校舎管理者" &&
+        user.role !==
+          "講師"
       ) {
         throw new Error(
           "問題を編集する権限がありません。"
         );
       }
 
-      const updates = questions.map(
-        (question) =>
-          updateDoc(
-            doc(
-              db,
-              "testQuestions",
-              question.id
-            ),
-            {
-              gradingMethod,
-              requiresReview:
-                false,
-              updatedAt:
-                serverTimestamp(),
-            }
-          )
-      );
+      /*
+       * 一括変更。
+       *
+       * 自動：
+       *   requiresReviewはfalseにする。
+       *
+       * 手動：
+       *   requiresReviewはtrueにする。
+       */
+      await Promise.all(
+        questions.map(
+          (
+            question
+          ) =>
+            updateDoc(
+              doc(
+                db,
+                "testQuestions",
+                question.id
+              ),
+              {
+                gradingMethod,
 
-      await Promise.all(updates);
+                requiresReview:
+                  gradingMethod ===
+                  "manual",
+
+                updatedAt:
+                  serverTimestamp(),
+              }
+            )
+        )
+      );
 
       await loadQuestions(
         selectedTest.id
@@ -974,11 +1015,14 @@ export default function TestsPage() {
       await loadTests();
 
       setMessage(
-        gradingMethod === "automatic"
+        gradingMethod ===
+          "automatic"
           ? "全問題を自動採点に設定しました。"
           : "全問題を手動採点に設定しました。"
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "Bulk grading method error:",
         error
@@ -990,24 +1034,10 @@ export default function TestsPage() {
           : "採点方式を一括変更できませんでした。"
       );
     } finally {
-      setSaving(false);
+      setSaving(
+        false
+      );
     }
-  }
-
-  /* =======================================================
-     Bulk automatic default
-     ======================================================= */
-
-  async function setAllAutomatic() {
-    await updateAllGradingMethods(
-      "automatic"
-    );
-  }
-
-  async function setAllManual() {
-    await updateAllGradingMethods(
-      "manual"
-    );
   }
 
   /* =======================================================
@@ -1049,9 +1079,6 @@ export default function TestsPage() {
         );
       }
 
-      /*
-       * 問題削除は管理者のみ。
-       */
       if (
         user.role !==
           "本部管理者" &&
@@ -1141,7 +1168,7 @@ export default function TestsPage() {
             </h1>
 
             <p className="muted">
-              テスト・教科・問題ごとの採点方式を管理します。
+              テスト・問題・採点方式を管理します。
             </p>
           </div>
 
@@ -1155,7 +1182,7 @@ export default function TestsPage() {
               onClick={() =>
                 setShowCreate(
                   (
-                    current
+                    current: boolean
                   ) =>
                     !current
                 )
@@ -1168,12 +1195,18 @@ export default function TestsPage() {
           )}
         </header>
 
+        {/* ==================================================
+            Messages
+            ================================================== */}
+
         {error && (
           <div
             className="errorMessage"
             role="alert"
           >
-            {error}
+            {
+              error
+            }
           </div>
         )}
 
@@ -1182,7 +1215,9 @@ export default function TestsPage() {
             className="successMessage"
             role="status"
           >
-            {message}
+            {
+              message
+            }
           </div>
         )}
 
@@ -1298,18 +1333,38 @@ export default function TestsPage() {
               </label>
             </div>
 
-            <p
-              className="muted"
+            <div
               style={{
                 marginTop:
+                  14,
+
+                padding:
                   12,
+
+                borderRadius:
+                  8,
+
+                background:
+                  "#f7f7f7",
 
                 fontSize:
                   12,
               }}
             >
-              採点方式はテスト全体ではなく、登録した問題ごとに設定します。
-            </p>
+              <strong>
+                採点方式
+              </strong>
+
+              <p
+                className="muted"
+                style={{
+                  margin:
+                    "5px 0 0",
+                }}
+              >
+                問題を追加すると、初期状態はすべて自動採点です。必要な問題だけ手動採点に変更できます。
+              </p>
+            </div>
 
             <div
               style={{
@@ -1643,7 +1698,7 @@ export default function TestsPage() {
                 </header>
 
                 {/* ==========================================
-                    Grading method notice
+                    Grading method
                     ========================================== */}
 
                 <div
@@ -1661,22 +1716,85 @@ export default function TestsPage() {
                       8,
                   }}
                 >
-                  <strong>
-                    採点方式
-                  </strong>
-
-                  <p
-                    className="muted"
+                  <div
                     style={{
-                      margin:
-                        "5px 0 0",
+                      display:
+                        "flex",
 
-                      fontSize:
+                      justifyContent:
+                        "space-between",
+
+                      alignItems:
+                        "center",
+
+                      gap:
                         12,
+
+                      flexWrap:
+                        "wrap",
                     }}
                   >
-                    通常は全問題を自動採点として登録します。記述問題など、必要な問題だけ手動採点に変更できます。上のボタンから全問題を一括変更することもできます。
-                  </p>
+                    <div>
+                      <strong>
+                        採点方式
+                      </strong>
+
+                      <p
+                        className="muted"
+                        style={{
+                          margin:
+                            "5px 0 0",
+
+                          fontSize:
+                            12,
+                        }}
+                      >
+                        通常は自動採点。必要な問題だけ手動採点に変更できます。
+                      </p>
+                    </div>
+
+                    {questions.length >
+                      0 && (
+                      <div
+                        style={{
+                          display:
+                            "flex",
+
+                          gap:
+                            8,
+
+                          flexWrap:
+                            "wrap",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={
+                            saving
+                          }
+                          onClick={
+                            setAllAutomatic
+                          }
+                        >
+                          全問題を自動採点
+                        </button>
+
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={
+                            saving
+                          }
+                          onClick={
+                            setAllManual
+                          }
+                        >
+                          全問題を手動採点
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* ==========================================
@@ -1689,52 +1807,14 @@ export default function TestsPage() {
                       20,
                   }}
                 >
-                  <div
+                  <h3
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 12,
-                      flexWrap: "wrap",
-                      marginBottom: 10,
+                      margin:
+                        "0 0 10px",
                     }}
                   >
-                    <h3
-                      style={{
-                        margin: 0,
-                      }}
-                    >
-                      問題設定
-                    </h3>
-
-                    {questions.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          className="button"
-                          disabled={saving}
-                          onClick={setAllAutomatic}
-                        >
-                          全問題を自動採点
-                        </button>
-
-                        <button
-                          type="button"
-                          className="button"
-                          disabled={saving}
-                          onClick={setAllManual}
-                        >
-                          全問題を手動採点
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                    問題設定
+                  </h3>
 
                   {questions.length ===
                     0 && (
@@ -1988,7 +2068,9 @@ function QuestionEditor({
         </label>
       </div>
 
-      {/* Grading method */}
+      {/* ==================================================
+          Grading method
+          ================================================== */}
 
       <div
         style={{
@@ -2027,32 +2109,31 @@ function QuestionEditor({
             }
             onChange={(
               event
-            ) =>
+            ) => {
+              const nextMethod =
+                event.target
+                  .value as GradingMethod;
+
               setLocal({
                 ...local,
 
                 gradingMethod:
-                  event.target
-                    .value as GradingMethod,
+                  nextMethod,
 
-                /*
-                 * 手動採点なら必ず確認対象。
-                 */
                 requiresReview:
-                  event.target
-                    .value ===
+                  nextMethod ===
                   "manual"
                     ? true
                     : local.requiresReview,
-              })
-            }
+              });
+            }}
           >
-            <option value="manual">
-              手動採点
-            </option>
-
             <option value="automatic">
               自動採点
+            </option>
+
+            <option value="manual">
+              手動採点
             </option>
           </select>
         </label>
@@ -2096,7 +2177,9 @@ function QuestionEditor({
         )}
       </div>
 
-      {/* Rubric */}
+      {/* ==================================================
+          Rubric
+          ================================================== */}
 
       <label
         style={{
@@ -2148,7 +2231,9 @@ function QuestionEditor({
         />
       </label>
 
-      {/* Auto review */}
+      {/* ==================================================
+          Review
+          ================================================== */}
 
       {local.gradingMethod ===
         "automatic" && (
@@ -2192,7 +2277,9 @@ function QuestionEditor({
         </label>
       )}
 
-      {/* Actions */}
+      {/* ==================================================
+          Actions
+          ================================================== */}
 
       <div
         style={{
@@ -2388,11 +2475,16 @@ function normalizeQuestion(
     unknown
   >
 ): Question {
-  const gradingMethod =
+  /*
+   * 既存データにgradingMethodが無い場合も
+   * 自動採点をデフォルトにする。
+   */
+  const gradingMethod:
+    GradingMethod =
     data.gradingMethod ===
-    "automatic"
-      ? "automatic"
-      : "manual";
+    "manual"
+      ? "manual"
+      : "automatic";
 
   return {
     id,
@@ -2453,7 +2545,7 @@ function questionOrder(
 }
 
 /* =========================================================
-   Fields
+   Field
    ========================================================= */
 
 function Field({
