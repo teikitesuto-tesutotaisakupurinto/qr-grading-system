@@ -63,7 +63,7 @@ export function getSupabase(): SupabaseClient {
 }
 
 /*
- * 既存画面用。
+ * 既存画面との互換用。
  */
 export const supabase =
   typeof window !==
@@ -72,7 +72,7 @@ export const supabase =
     : null;
 
 /* =========================================================
-   Storage buckets
+   Storage Buckets
    ========================================================= */
 
 export const ANSWERS_BUCKET =
@@ -80,3 +80,87 @@ export const ANSWERS_BUCKET =
 
 export const SCHOOL_ASSETS_BUCKET =
   "school-assets";
+
+/* =========================================================
+   Answer signed URL
+   ========================================================= */
+
+export async function createAnswerSignedUrl(
+  fileKey: string,
+  expiresIn = 3600
+) {
+  if (
+    !fileKey
+  ) {
+    return null;
+  }
+
+  const storage =
+    getSupabase().storage;
+
+  const {
+    data,
+    error,
+  } =
+    await storage
+      .from(
+        ANSWERS_BUCKET
+      )
+      .createSignedUrl(
+        fileKey,
+        Math.min(
+          Math.max(
+            expiresIn,
+            60
+          ),
+          86400
+        )
+      );
+
+  if (
+    error
+  ) {
+    throw new Error(
+      `答案画像URLの取得に失敗しました: ${error.message}`
+    );
+  }
+
+  return (
+    data?.signedUrl ??
+    null
+  );
+}
+
+/* =========================================================
+   Delete answer file
+   ========================================================= */
+
+export async function deleteAnswerFile(
+  fileKey: string
+) {
+  if (
+    !fileKey
+  ) {
+    return;
+  }
+
+  const {
+    error,
+  } =
+    await getSupabase()
+      .storage
+      .from(
+        ANSWERS_BUCKET
+      )
+      .remove([
+        fileKey,
+      ]);
+
+  if (
+    error
+  ) {
+    throw new Error(
+      `答案画像の削除に失敗しました: ${error.message}`
+    );
+  }
+}
