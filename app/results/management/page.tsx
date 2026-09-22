@@ -36,6 +36,14 @@ type ResultRow =
     percentage: number;
   };
 
+type PublicationStatus =
+  | "未公開"
+  | "公開済み";
+
+type CalculationStatus =
+  | "未計算"
+  | "計算済み";
+
 /* =========================================================
    Page
    ========================================================= */
@@ -98,6 +106,34 @@ export default function ResultsManagementPage() {
     useState<string[]>(
       []
     );
+
+  const [
+    publicationStatus,
+    setPublicationStatus,
+  ] =
+    useState<PublicationStatus>(
+      "未公開"
+    );
+
+  const [
+    calculationStatus,
+    setCalculationStatus,
+  ] =
+    useState<CalculationStatus>(
+      "未計算"
+    );
+
+  const [
+    processing,
+    setProcessing,
+  ] =
+    useState(false);
+
+  const [
+    processMessage,
+    setProcessMessage,
+  ] =
+    useState("");
 
   /* =======================================================
      Load
@@ -203,6 +239,28 @@ export default function ResultsManagementPage() {
 
       setSelectedIds(
         []
+      );
+
+      /*
+       * 現在のデータに計算済み情報があるか確認。
+       */
+      const hasCalculatedData =
+        loaded.some(
+          (
+            result
+          ) =>
+            result.average !==
+              null ||
+            result.deviationScore !==
+              null ||
+            result.rank !==
+              null
+        );
+
+      setCalculationStatus(
+        hasCalculatedData
+          ? "計算済み"
+          : "未計算"
       );
     } catch (
       error
@@ -364,7 +422,7 @@ export default function ResultsManagementPage() {
   ) {
     setSelectedIds(
       (
-        current
+        current: string[]
       ) =>
         current.includes(
           id
@@ -399,7 +457,7 @@ export default function ResultsManagementPage() {
 
       setSelectedIds(
         (
-          current
+          current: string[]
         ) =>
           current.filter(
             (
@@ -416,7 +474,7 @@ export default function ResultsManagementPage() {
 
     setSelectedIds(
       (
-        current
+        current: string[]
       ) =>
         Array.from(
           new Set([
@@ -429,6 +487,47 @@ export default function ResultsManagementPage() {
             ),
           ])
         )
+    );
+  }
+
+  /* =======================================================
+     Publication
+     ======================================================= */
+
+  /*
+   * 現時点では、正式な「点数公開」APIが
+   * lib/results.tsにまだ存在しないため、
+   * UI上の状態だけを勝手にFirestoreへ
+   * 書き込まない。
+   */
+  function handlePublication() {
+    setError("");
+
+    setProcessMessage(
+      "点数公開処理は、全員の採点確定を確認する公開処理と接続してから実行します。"
+    );
+  }
+
+  /* =======================================================
+     Calculation
+     ======================================================= */
+
+  function handleCalculation() {
+    setError("");
+
+    if (
+      publicationStatus !==
+      "公開済み"
+    ) {
+      setProcessMessage(
+        "先に全員分の点数を公開してください。"
+      );
+
+      return;
+    }
+
+    setProcessMessage(
+      "成績計算処理は、平均・偏差値・順位を一括計算する処理と接続してから実行します。"
     );
   }
 
@@ -473,33 +572,16 @@ export default function ResultsManagementPage() {
             </h1>
 
             <p className="muted">
-              採点確定済みの成績だけを表示しています。
+              採点確定後の点数公開・成績計算を管理します。
             </p>
           </div>
 
-          <div
-            style={{
-              display:
-                "flex",
-
-              gap:
-                8,
-            }}
+          <Link
+            href="/reports"
+            className="button"
           >
-            <Link
-              href="/grading/confirm"
-              className="button"
-            >
-              採点確定
-            </Link>
-
-            <Link
-              href="/reports/management"
-              className="button"
-            >
-              成績表
-            </Link>
-          </div>
+            成績表
+          </Link>
         </header>
 
         {/* ==================================================
@@ -517,6 +599,136 @@ export default function ResultsManagementPage() {
           </div>
         )}
 
+        {processMessage && (
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {
+              processMessage
+            }
+          </div>
+        )}
+
+        {/* ==================================================
+            Workflow
+            ================================================== */}
+
+        <section className="card">
+          <h2>
+            成績処理
+          </h2>
+
+          <div
+            style={{
+              display:
+                "grid",
+
+              gridTemplateColumns:
+                "repeat(3, minmax(0, 1fr))",
+
+              gap:
+                12,
+
+              marginTop:
+                12,
+            }}
+          >
+            {/* Step 1 */}
+
+            <WorkflowCard
+              number="1"
+              title="採点確定"
+              status="採点確定済み"
+              description="全員・全問題の採点が確定してから次へ進みます。"
+              completed={
+                results.length >
+                0
+              }
+            />
+
+            {/* Step 2 */}
+
+            <WorkflowCard
+              number="2"
+              title="点数公開"
+              status={
+                publicationStatus
+              }
+              description="確定した点数を公開します。"
+              completed={
+                publicationStatus ===
+                "公開済み"
+              }
+            />
+
+            {/* Step 3 */}
+
+            <WorkflowCard
+              number="3"
+              title="成績計算"
+              status={
+                calculationStatus
+              }
+              description="公開後に平均・偏差値・順位を計算します。"
+              completed={
+                calculationStatus ===
+                "計算済み"
+              }
+            />
+          </div>
+
+          <div
+            style={{
+              display:
+                "flex",
+
+              flexWrap:
+                "wrap",
+
+              gap:
+                8,
+
+              marginTop:
+                16,
+            }}
+          >
+            <button
+              type="button"
+              className="button primary"
+              disabled={
+                processing ||
+                results.length ===
+                  0 ||
+                publicationStatus ===
+                  "公開済み"
+              }
+              onClick={
+                handlePublication
+              }
+            >
+              点数を公開
+            </button>
+
+            <button
+              type="button"
+              className="button"
+              disabled={
+                processing ||
+                publicationStatus !==
+                  "公開済み" ||
+                calculationStatus ===
+                  "計算済み"
+              }
+              onClick={
+                handleCalculation
+              }
+            >
+              成績計算
+            </button>
+          </div>
+        </section>
+
         {/* ==================================================
             Summary
             ================================================== */}
@@ -531,6 +743,9 @@ export default function ResultsManagementPage() {
 
             gap:
               12,
+
+            marginTop:
+              16,
 
             marginBottom:
               16,
@@ -603,8 +818,7 @@ export default function ResultsManagementPage() {
                 event
               ) =>
                 setSearch(
-                  event.target
-                    .value
+                  event.target.value
                 )
               }
               placeholder="生徒番号・テスト名・教科"
@@ -618,8 +832,7 @@ export default function ResultsManagementPage() {
                 event
               ) =>
                 setSubjectFilter(
-                  event.target
-                    .value
+                  event.target.value
                 )
               }
             >
@@ -695,7 +908,7 @@ export default function ResultsManagementPage() {
         </section>
 
         {/* ==================================================
-            Data
+            Results
             ================================================== */}
 
         <section
@@ -949,90 +1162,175 @@ export default function ResultsManagementPage() {
         </section>
 
         {/* ==================================================
-            Footer links
+            Report
             ================================================== */}
 
         <section
+          className="card"
           style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(2, minmax(0, 1fr))",
-
-            gap:
-              12,
-
             marginTop:
               16,
           }}
         >
-          <Link
-            href="/reports/management"
-            className="card"
+          <h2>
+            次の処理
+          </h2>
+
+          <p
+            className="muted"
             style={{
-              display:
-                "block",
+              fontSize:
+                12,
 
-              color:
-                "inherit",
-
-              textDecoration:
-                "none",
+              margin:
+                "5px 0 12px",
             }}
           >
-            <strong>
-              成績表を確認
-            </strong>
-
-            <p
-              className="muted"
-              style={{
-                margin:
-                  "5px 0 0",
-
-                fontSize:
-                  12,
-              }}
-            >
-              生徒ごとの科目別成績・偏差値・順位を確認します。
-            </p>
-          </Link>
+            点数公開と成績計算が完了したら、成績表を作成できます。
+          </p>
 
           <Link
-            href="/grading"
-            className="card"
-            style={{
-              display:
-                "block",
-
-              color:
-                "inherit",
-
-              textDecoration:
-                "none",
-            }}
+            href="/reports"
+            className="button"
           >
-            <strong>
-              採点へ戻る
-            </strong>
-
-            <p
-              className="muted"
-              style={{
-                margin:
-                  "5px 0 0",
-
-                fontSize:
-                  12,
-              }}
-            >
-              未確定の答案は採点画面から確認します。
-            </p>
+            成績表を確認
           </Link>
         </section>
       </section>
     </main>
+  );
+}
+
+/* =========================================================
+   Workflow Card
+   ========================================================= */
+
+function WorkflowCard({
+  number,
+  title,
+  status,
+  description,
+  completed,
+}: {
+  number: string;
+
+  title: string;
+
+  status: string;
+
+  description: string;
+
+  completed: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          16,
+
+        border:
+          "1px solid #ddd",
+
+        borderRadius:
+          9,
+
+        background:
+          completed
+            ? "#f5faf6"
+            : "#fff",
+      }}
+    >
+      <div
+        style={{
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          gap:
+            8,
+        }}
+      >
+        <span
+          style={{
+            width:
+              28,
+
+            height:
+              28,
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
+            borderRadius:
+              "50%",
+
+            background:
+              completed
+                ? "#e1f0e4"
+                : "#eee",
+
+            fontSize:
+              11,
+
+            fontWeight:
+              700,
+          }}
+        >
+          {
+            number
+          }
+        </span>
+
+        <strong>
+          {
+            title
+          }
+        </strong>
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            10,
+
+          fontSize:
+            12,
+
+          fontWeight:
+            600,
+        }}
+      >
+        {
+          status
+        }
+      </div>
+
+      <p
+        className="muted"
+        style={{
+          margin:
+            "5px 0 0",
+
+          fontSize:
+            10,
+
+          lineHeight:
+            1.6,
+        }}
+      >
+        {
+          description
+        }
+      </p>
+    </div>
   );
 }
 
