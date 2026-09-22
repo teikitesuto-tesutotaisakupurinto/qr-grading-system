@@ -1,359 +1,242 @@
 import type {
   UserRole,
-} from "@/types";
+} from "@/lib/types";
 
 import type {
   ServerUser,
-} from "./server-auth";
-
-import {
-  serverHasPermission,
-} from "./server-permissions";
+} from "@/lib/server-permissions";
 
 /* =========================================================
-   Route rule
+   Route Access
    ========================================================= */
 
-type ServerRouteRule = {
-  path: string;
+export type RouteAccessRule = {
+  prefix: string;
 
-  roles: readonly UserRole[];
-
-  permission: Parameters<
-    typeof serverHasPermission
-  >[1];
+  roles: UserRole[];
 };
 
 /* =========================================================
-   Rules
+   Protected routes
    ========================================================= */
 
-const RULES: readonly ServerRouteRule[] =
-  [
-    {
-      path:
-        "/dashboard/head-office",
-
-      roles: [
-        "本部管理者",
-      ],
-
-      permission:
-        "dashboard.headOffice",
-    },
-
-    {
-      path:
-        "/dashboard/school",
-
-      roles: [
-        "校舎管理者",
-      ],
-
-      permission:
-        "dashboard.school",
-    },
-
-    {
-      path:
-        "/dashboard/teacher",
-
-      roles: [
-        "講師",
-      ],
-
-      permission:
-        "dashboard.teacher",
-    },
-
-    {
-      path:
-        "/dashboard/student",
-
-      roles: [
-        "生徒",
-      ],
-
-      permission:
-        "dashboard.student",
-    },
-
-    {
-      path:
-        "/students",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "students.view",
-    },
-
-    {
-      path:
-        "/tests",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "tests.view",
-    },
-
-    {
-      path:
-        "/answers",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "answers.view",
-    },
-
-    {
-      path:
-        "/grading/review",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "grading.firstReview",
-    },
-
-    {
-      path:
-        "/grading/second-review",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "grading.secondReview",
-    },
-
-    {
-      path:
-        "/grading/confirm",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "grading.confirm",
-    },
-
-    {
-      path:
-        "/grading",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "grading.view",
-    },
-
-    {
-      path:
-        "/results/management",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "results.all",
-    },
-
-    {
-      path:
-        "/results/teacher",
-
-      roles: [
-        "講師",
-      ],
-
-      permission:
-        "results.all",
-    },
-
-    {
-      path:
-        "/results/student",
-
-      roles: [
-        "生徒",
-      ],
-
-      permission:
-        "results.self",
-    },
-
-    {
-      path:
-        "/reports/management",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "reports.all",
-    },
-
-    {
-      path:
-        "/reports/teacher",
-
-      roles: [
-        "講師",
-      ],
-
-      permission:
-        "reports.all",
-    },
-
-    {
-      path:
-        "/reports/student",
-
-      roles: [
-        "生徒",
-      ],
-
-      permission:
-        "reports.self",
-    },
-
-    {
-      path:
-        "/retests",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "retests.view",
-    },
-
-    {
-      path:
-        "/qr-stickers",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-        "講師",
-      ],
-
-      permission:
-        "qr.view",
-    },
-
-    {
-      path:
-        "/schools",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "schools.manage",
-    },
-
-    {
-      path:
-        "/users",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "users.manage",
-    },
-
-    {
-      path:
-        "/settings",
-
-      roles: [
-        "本部管理者",
-        "校舎管理者",
-      ],
-
-      permission:
-        "settings.manage",
-    },
-  ];
+export const ROUTE_ACCESS_RULES:
+  RouteAccessRule[] = [
+  {
+    prefix:
+      "/dashboard/head-office",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/school",
+
+    roles: [
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/teacher",
+
+    roles: [
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/student",
+
+    roles: [
+      "生徒",
+    ],
+  },
+
+  {
+    prefix:
+      "/schools",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/users",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/students",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/tests",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/answers",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/grading",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/results",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/reports",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/retests",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/qr-stickers",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/settings",
+
+    roles: [
+      "本部管理者",
+    ],
+  },
+];
 
 /* =========================================================
-   Access
+   Find rule
    ========================================================= */
 
-export function canAccessServerRoute(
-  user: ServerUser,
+export function findRouteAccessRule(
+  pathname: string
+):
+  | RouteAccessRule
+  | null {
+  const rules =
+    [
+      ...ROUTE_ACCESS_RULES,
+    ].sort(
+      (
+        a,
+        b
+      ) =>
+        b.prefix.length -
+        a.prefix.length
+    );
+
+  return (
+    rules.find(
+      (
+        rule
+      ) =>
+        pathname ===
+          rule.prefix ||
+        pathname.startsWith(
+          `${rule.prefix}/`
+        )
+    ) ??
+    null
+  );
+}
+
+/* =========================================================
+   Check role
+   ========================================================= */
+
+export function canAccessRoute(
+  user:
+    | ServerUser
+    | null
+    | undefined,
   pathname: string
 ) {
-  /*
-   * ルールは長いパスを優先。
-   */
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
   const rule =
-    [...RULES]
-      .sort(
-        (
-          a,
-          b
-        ) =>
-          b.path.length -
-          a.path.length
-      )
-      .find(
-        (
-          item
-        ) =>
-          pathname ===
-            item.path ||
-          pathname.startsWith(
-            `${item.path}/`
-          )
-      );
+    findRouteAccessRule(
+      pathname
+    );
 
   /*
-   * まだルールを設定していない
-   * 補助ページはログイン済みなら通す。
+   * 保護対象として登録されていない
+   * ルートは、この関数では許可する。
    *
-   * 最終完成時には全ページを登録する。
+   * ログイン必須かどうかはAuthGuard側で確認。
    */
   if (
     !rule
@@ -361,10 +244,40 @@ export function canAccessServerRoute(
     return true;
   }
 
+  return rule.roles.includes(
+    user.role
+  );
+}
+
+/* =========================================================
+   Require route access
+   ========================================================= */
+
+export function assertRouteAccess(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  pathname: string
+) {
   if (
-    !user.role
+    !user ||
+    !user.active
   ) {
-    return false;
+    throw new Error(
+      "認証が必要です。"
+    );
+  }
+
+  const rule =
+    findRouteAccessRule(
+      pathname
+    );
+
+  if (
+    !rule
+  ) {
+    return true;
   }
 
   if (
@@ -372,11 +285,70 @@ export function canAccessServerRoute(
       user.role
     )
   ) {
-    return false;
+    throw new Error(
+      "この画面を利用する権限がありません。"
+    );
   }
 
-  return serverHasPermission(
-    user,
-    rule.permission
+  return true;
+}
+
+/* =========================================================
+   Role-specific route
+   ========================================================= */
+
+export function getRoleHomePath(
+  role: UserRole
+) {
+  switch (
+    role
+  ) {
+    case "本部管理者":
+      return "/dashboard/head-office";
+
+    case "校舎管理者":
+      return "/dashboard/school";
+
+    case "講師":
+      return "/dashboard/teacher";
+
+    case "生徒":
+      return "/dashboard/student";
+
+    default:
+      return "/login";
+  }
+}
+
+/* =========================================================
+   Public routes
+   ========================================================= */
+
+export function isPublicRoute(
+  pathname: string
+) {
+  return (
+    pathname ===
+      "/login" ||
+    pathname.startsWith(
+      "/login/"
+    ) ||
+    pathname ===
+      "/onboarding" ||
+    pathname.startsWith(
+      "/onboarding/"
+    )
+  );
+}
+
+/* =========================================================
+   Authentication required
+   ========================================================= */
+
+export function requiresAuthentication(
+  pathname: string
+) {
+  return !isPublicRoute(
+    pathname
   );
 }
