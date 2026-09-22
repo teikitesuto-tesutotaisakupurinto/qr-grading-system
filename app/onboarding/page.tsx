@@ -10,11 +10,9 @@ import {
 } from "next/navigation";
 
 import {
-  addDoc,
   collection,
   doc,
   serverTimestamp,
-  setDoc,
   writeBatch,
 } from "firebase/firestore";
 
@@ -25,7 +23,12 @@ import {
 
 import {
   getAppUser,
+  getDashboardPath,
 } from "@/lib/auth";
+
+/* =========================================================
+   Page
+   ========================================================= */
 
 export default function OnboardingPage() {
   const router =
@@ -56,18 +59,34 @@ export default function OnboardingPage() {
     setError,
   ] = useState("");
 
+  /* =======================================================
+     Check existing account
+     ======================================================= */
+
   useEffect(() => {
-    let cancelled = false;
+    let cancelled =
+      false;
 
     async function check() {
       try {
         const firebaseUser =
           auth.currentUser;
 
-        if (!firebaseUser) {
-          router.replace(
-            "/login"
-          );
+        /*
+         * Firebase Authenticationに
+         * ログインしていない。
+         */
+        if (
+          !firebaseUser
+        ) {
+          if (
+            !cancelled
+          ) {
+            router.replace(
+              "/login"
+            );
+          }
+
           return;
         }
 
@@ -77,30 +96,79 @@ export default function OnboardingPage() {
           );
 
         /*
-         * 既に正式ユーザーなら
+         * Firestore側のusers/{uid}が
+         * まだ存在しない場合。
+         *
+         * この場合はオンボーディングを
+         * そのまま表示する。
+         */
+        if (
+          !appUser
+        ) {
+          if (
+            !cancelled
+          ) {
+            setLoading(
+              false
+            );
+          }
+
+          return;
+        }
+
+        /*
+         * 既に正式なユーザーなら
          * オンボーディング不要。
          */
         if (
           appUser.organizationId &&
           appUser.role
         ) {
-          router.replace(
-            "/dashboard"
-          );
+          if (
+            !cancelled
+          ) {
+            router.replace(
+              getDashboardPath(
+                appUser.role
+              )
+            );
+          }
 
           return;
         }
-      } catch (err) {
-        if (!cancelled) {
+
+        /*
+         * users/{uid}は存在するが
+         * 組織情報が未設定の場合は
+         * オンボーディングを表示。
+         */
+        if (
+          !cancelled
+        ) {
+          setLoading(
+            false
+          );
+        }
+      } catch (
+        err
+      ) {
+        console.error(
+          "Onboarding check error:",
+          err
+        );
+
+        if (
+          !cancelled
+        ) {
           setError(
             err instanceof Error
               ? err.message
               : "アカウント情報を確認できません。"
           );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
+
+          setLoading(
+            false
+          );
         }
       }
     }
@@ -108,51 +176,102 @@ export default function OnboardingPage() {
     void check();
 
     return () => {
-      cancelled = true;
+      cancelled =
+        true;
     };
-  }, [router]);
+  }, [
+    router,
+  ]);
+
+  /* =======================================================
+     Create organization
+     ======================================================= */
 
   async function createOrganization() {
-    if (saving) {
+    if (
+      saving
+    ) {
       return;
     }
 
     const firebaseUser =
       auth.currentUser;
 
-    if (!firebaseUser) {
+    if (
+      !firebaseUser
+    ) {
       router.replace(
         "/login"
       );
+
       return;
     }
 
     const trimmedName =
       schoolName.trim();
 
-    const trimmedCode =
+    const trimmedSchoolName =
       schoolCode.trim();
 
-    if (!trimmedName) {
+    /*
+     * Validation
+     */
+    if (
+      !trimmedName
+    ) {
       setError(
         "塾・組織名を入力してください。"
       );
+
       return;
     }
 
-    if (!trimmedCode) {
+    if (
+      !trimmedSchoolName
+    ) {
       setError(
         "最初の校舎名を入力してください。"
       );
+
       return;
     }
 
     try {
-      setSaving(true);
+      setSaving(
+        true
+      );
+
       setError("");
 
       /*
-       * organizations
+       * すでにユーザーが作成されているか
+       * 最終確認。
+       */
+      const existingUser =
+        await getAppUser(
+          firebaseUser
+        );
+
+      /*
+       * すでに正式ユーザーなら
+       * 二重に組織を作らない。
+       */
+      if (
+        existingUser &&
+        existingUser.organizationId &&
+        existingUser.role
+      ) {
+        router.replace(
+          getDashboardPath(
+            existingUser.role
+          )
+        );
+
+        return;
+      }
+
+      /*
+       * organizations/{organizationId}
        */
       const organizationRef =
         doc(
@@ -163,7 +282,7 @@ export default function OnboardingPage() {
         );
 
       /*
-       * schools
+       * schools/{schoolId}
        */
       const schoolRef =
         doc(
@@ -184,11 +303,14 @@ export default function OnboardingPage() {
         );
 
       const batch =
-        writeBatch(db);
+        writeBatch(
+          db
+        );
 
-      /*
-       * 組織
-       */
+      /* =================================================
+         Organization
+         ================================================= */
+
       batch.set(
         organizationRef,
         {
@@ -201,6 +323,9 @@ export default function OnboardingPage() {
           logoUrl:
             "",
 
+          active:
+            true,
+
           createdAt:
             serverTimestamp(),
 
@@ -209,9 +334,10 @@ export default function OnboardingPage() {
         }
       );
 
-      /*
-       * 最初の校舎
-       */
+      /* =================================================
+         First school
+         ================================================= */
+
       batch.set(
         schoolRef,
         {
@@ -219,12 +345,16 @@ export default function OnboardingPage() {
             organizationRef.id,
 
           name:
-            trimmedCode,
+            trimmedSchoolName,
 
           logoUrl:
             "",
 
-          settings: {},
+          settings:
+            {},
+
+          active:
+            true,
 
           createdAt:
             serverTimestamp(),
@@ -234,13 +364,16 @@ export default function OnboardingPage() {
         }
       );
 
-      /*
-       * ログインした本人を
-       * 本部管理者にする。
-       */
+      /* =================================================
+         First user
+         ================================================= */
+
       batch.set(
         userRef,
         {
+          uid:
+            firebaseUser.uid,
+
           organizationId:
             organizationRef.id,
 
@@ -259,8 +392,15 @@ export default function OnboardingPage() {
               schoolRef.id,
             ],
 
+          studentId:
+            null,
+
           active:
             true,
+
+          photoURL:
+            firebaseUser.photoURL ??
+            null,
 
           createdAt:
             serverTimestamp(),
@@ -270,13 +410,24 @@ export default function OnboardingPage() {
         }
       );
 
+      /*
+       * 3つをまとめて登録。
+       */
       await batch.commit();
 
+      /*
+       * 本部管理者ホームへ。
+       */
       router.replace(
-        "/dashboard"
+        getDashboardPath(
+          "本部管理者"
+        )
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
+        "Create organization error:",
         err
       );
 
@@ -286,13 +437,70 @@ export default function OnboardingPage() {
           : "組織の登録に失敗しました。"
       );
     } finally {
-      setSaving(false);
+      setSaving(
+        false
+      );
     }
   }
 
-  if (loading) {
-    return null;
+  /* =======================================================
+     Loading
+     ======================================================= */
+
+  if (
+    loading
+  ) {
+    return (
+      <main
+        style={{
+          minHeight:
+            "100vh",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          background:
+            "#f7f7f7",
+        }}
+      >
+        <div
+          style={{
+            textAlign:
+              "center",
+          }}
+        >
+          <strong>
+            テストシステム
+          </strong>
+
+          <p
+            style={{
+              margin:
+                "8px 0 0",
+
+              color:
+                "#777",
+
+              fontSize:
+                12,
+            }}
+          >
+            アカウント情報を確認しています...
+          </p>
+        </div>
+      </main>
+    );
   }
+
+  /* =======================================================
+     Render
+     ======================================================= */
 
   return (
     <main
@@ -340,26 +548,64 @@ export default function OnboardingPage() {
             "0 10px 30px rgba(0,0,0,.06)",
         }}
       >
-        <h1
-          style={{
-            marginTop: 0,
-          }}
-        >
-          組織を登録
-        </h1>
+        {/* =================================================
+            Header
+            ================================================= */}
 
-        <p
-          style={{
-            color:
-              "#666",
+        <header>
+          <div
+            style={{
+              fontSize:
+                11,
 
-            lineHeight:
-              1.7,
-          }}
-        >
-          最初に塾・組織と校舎を登録します。
-          あなたは本部管理者として登録されます。
-        </p>
+              color:
+                "#777",
+
+              letterSpacing:
+                ".08em",
+            }}
+          >
+            TEST SYSTEM
+          </div>
+
+          <h1
+            style={{
+              margin:
+                "6px 0 0",
+            }}
+          >
+            テストシステム
+          </h1>
+
+          <h2
+            style={{
+              margin:
+                "20px 0 0",
+
+              fontSize:
+                20,
+            }}
+          >
+            組織を登録
+          </h2>
+
+          <p
+            style={{
+              color:
+                "#666",
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            最初に塾・組織と校舎を登録します。
+            登録したアカウントは本部管理者として設定されます。
+          </p>
+        </header>
+
+        {/* =================================================
+            Organization
+            ================================================= */}
 
         <label
           style={{
@@ -370,7 +616,23 @@ export default function OnboardingPage() {
               24,
           }}
         >
-          塾・組織名
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                7,
+
+              fontSize:
+                12,
+
+              fontWeight:
+                600,
+            }}
+          >
+            塾・組織名
+          </span>
 
           <input
             value={
@@ -384,15 +646,13 @@ export default function OnboardingPage() {
               )
             }
             placeholder="○○塾"
+            disabled={
+              saving
+            }
+            autoComplete="organization"
             style={{
-              display:
-                "block",
-
               width:
                 "100%",
-
-              marginTop:
-                8,
 
               padding:
                 "12px",
@@ -406,6 +666,10 @@ export default function OnboardingPage() {
           />
         </label>
 
+        {/* =================================================
+            School
+            ================================================= */}
+
         <label
           style={{
             display:
@@ -415,7 +679,23 @@ export default function OnboardingPage() {
               20,
           }}
         >
-          最初の校舎名
+          <span
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                7,
+
+              fontSize:
+                12,
+
+              fontWeight:
+                600,
+            }}
+          >
+            最初の校舎名
+          </span>
 
           <input
             value={
@@ -429,15 +709,12 @@ export default function OnboardingPage() {
               )
             }
             placeholder="本校"
+            disabled={
+              saving
+            }
             style={{
-              display:
-                "block",
-
               width:
                 "100%",
-
-              marginTop:
-                8,
 
               padding:
                 "12px",
@@ -451,8 +728,13 @@ export default function OnboardingPage() {
           />
         </label>
 
+        {/* =================================================
+            Error
+            ================================================= */}
+
         {error && (
           <div
+            role="alert"
             style={{
               marginTop:
                 20,
@@ -474,11 +756,20 @@ export default function OnboardingPage() {
 
               lineHeight:
                 1.6,
+
+              fontSize:
+                12,
             }}
           >
-            {error}
+            {
+              error
+            }
           </div>
         )}
+
+        {/* =================================================
+            Submit
+            ================================================= */}
 
         <button
           type="button"
