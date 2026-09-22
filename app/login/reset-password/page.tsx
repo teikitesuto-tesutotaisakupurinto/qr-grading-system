@@ -142,6 +142,9 @@ export default function ResetPasswordPage() {
 
           padding:
             30,
+
+          boxShadow:
+            "0 8px 30px rgba(0,0,0,.04)",
         }}
       >
         {/* =================================================
@@ -164,9 +167,12 @@ export default function ResetPasswordPage() {
 
               color:
                 "#777",
+
+              letterSpacing:
+                ".08em",
             }}
           >
-            テストシステム
+            TEST SYSTEM
           </div>
 
           <h1
@@ -205,8 +211,8 @@ export default function ResetPasswordPage() {
 
         {error && (
           <div
-            role="alert"
             className="errorMessage"
+            role="alert"
             style={{
               marginBottom:
                 16,
@@ -219,7 +225,7 @@ export default function ResetPasswordPage() {
         )}
 
         {/* =================================================
-            Completed
+            Complete
             ================================================= */}
 
         {completed ? (
@@ -233,6 +239,9 @@ export default function ResetPasswordPage() {
 
               background:
                 "#e8f5e9",
+
+              color:
+                "#276336",
 
               fontSize:
                 12,
@@ -318,10 +327,6 @@ export default function ResetPasswordPage() {
                 disabled={
                   loading
                 }
-                style={{
-                  width:
-                    "100%",
-                }}
               />
             </label>
 
