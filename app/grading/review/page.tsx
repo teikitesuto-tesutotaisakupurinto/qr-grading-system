@@ -6,16 +6,10 @@ import {
   useState,
 } from "react";
 
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-} from "firebase/firestore";
+import Link from "next/link";
 
 import {
   auth,
-  db,
 } from "@/lib/firebase";
 
 import {
@@ -23,10 +17,16 @@ import {
 } from "@/lib/auth";
 
 import {
-  getGradingResult,
+  getAnswerWithUrl,
+} from "@/lib/answers";
+
+import {
   getFirstReview,
+  getGradingResult,
   saveFirstReview,
-  type GradingResult,
+  calculateTotalScore,
+  calculateTotalMaxScore,
+  type SaveReviewInput,
 } from "@/lib/grading";
 
 import {
@@ -37,61 +37,36 @@ import {
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
+import type {
+  Answer,
+  GradingResult,
+  Student,
+  Test,
+  UserRole,
+} from "@/lib/types";
+
 /* =========================================================
    Types
    ========================================================= */
 
-type AnswerRecord = {
-  id: string;
+type ReviewRow =
+  GradingResult & {
+    originalScore: number;
 
-  testId: string;
+    originalMark:
+      GradingResult["mark"];
 
-  subjectId: string;
+    changed: boolean;
+  };
 
-  studentId: string | null;
+type AnswerListItem =
+  Answer & {
+    studentName: string;
 
-  studentNumber: string;
+    testName: string;
 
-  fileName: string;
-
-  fileKey: string;
-
-  status: string;
-
-  reviewRequired: boolean;
-
-  totalScore: number;
-
-  totalMaxScore: number;
-
-  createdAt?: unknown;
-};
-
-type StudentRecord = {
-  id: string;
-
-  name: string;
-
-  studentNumber: string;
-
-  schoolId: string;
-};
-
-type TestRecord = {
-  id: string;
-
-  name: string;
-
-  testId: string;
-
-  subject: string;
-};
-
-type ReviewRow = GradingResult & {
-  originalScore: number;
-
-  changed: boolean;
-};
+    subjectName: string;
+  };
 
 /* =========================================================
    Page
@@ -99,37 +74,19 @@ type ReviewRow = GradingResult & {
 
 export default function GradingReviewPage() {
   const [
+    userRole,
+    setUserRole,
+  ] =
+    useState<UserRole | null>(
+      null
+    );
+
+  const [
     answers,
     setAnswers,
   ] =
-    useState<AnswerRecord[]>(
+    useState<AnswerListItem[]>(
       []
-    );
-
-  const [
-    students,
-    setStudents,
-  ] =
-    useState<
-      Map<
-        string,
-        StudentRecord
-      >
-    >(
-      new Map()
-    );
-
-  const [
-    tests,
-    setTests,
-  ] =
-    useState<
-      Map<
-        string,
-        TestRecord
-      >
-    >(
-      new Map()
     );
 
   const [
@@ -138,9 +95,7 @@ export default function GradingReviewPage() {
   ] =
     useState<
       string | null
-    >(
-      null
-    );
+    >(null);
 
   const [
     results,
@@ -169,18 +124,6 @@ export default function GradingReviewPage() {
     useState("");
 
   const [
-    statusFilter,
-    setStatusFilter,
-  ] =
-    useState<
-      | "all"
-      | "review"
-      | "confirmed"
-    >(
-      "all"
-    );
-
-  const [
     loading,
     setLoading,
   ] =
@@ -199,76 +142,96 @@ export default function GradingReviewPage() {
     useState(false);
 
   const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  const [
     message,
     setMessage,
   ] =
     useState("");
 
   const [
-    error,
-    setError,
+    imageUrl,
+    setImageUrl,
   ] =
-    useState("");
+    useState<
+      string | null
+    >(null);
+
+  const [
+    imageLoading,
+    setImageLoading,
+  ] =
+    useState(false);
 
   /* =======================================================
      Initial load
      ======================================================= */
 
   useEffect(() => {
-    void loadPage();
+    void loadAnswers();
   }, []);
 
-  async function loadPage() {
+  async function loadAnswers() {
     try {
       setLoading(true);
 
       setError("");
 
-      const appUser =
+      const user =
         await getAppUser(
           auth.currentUser
         );
 
-      if (
-        !appUser
-      ) {
+      if (!user) {
         throw new Error(
           "ログインしてください。"
         );
       }
 
       if (
-        appUser.role ===
+        user.role ===
         "生徒"
       ) {
         throw new Error(
-          "採点確認は職員のみ利用できます。"
+          "一次確認は職員のみ利用できます。"
         );
       }
+
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織が設定されていません。"
+        );
+      }
+
+      setUserRole(
+        user.role
+      );
 
       const scopeUser:
         FirestoreUser =
         {
           uid:
-            appUser.uid,
+            user.uid,
 
           organizationId:
-            appUser.organizationId,
+            user.organizationId,
 
           role:
-            appUser.role,
+            user.role,
 
           schoolIds:
-            appUser.schoolIds,
+            user.schoolIds,
 
           studentId:
-            appUser.studentId,
+            user.studentId,
         };
 
-      /*
-       * 答案・生徒・テストを
-       * 同時取得。
-       */
       const [
         answerDocuments,
         studentDocuments,
@@ -294,196 +257,54 @@ export default function GradingReviewPage() {
           ),
         ]);
 
-      /*
-       * 生徒Map
-       */
-      const studentMap =
-        new Map<
-          string,
-          StudentRecord
-        >();
-
-      for (
-        const document of
-          studentDocuments
-      ) {
-        const data =
-          document.data;
-
-        studentMap.set(
-          document.id,
-          {
-            id:
-              document.id,
-
-            name:
-              stringValue(
-                data.name
-              ),
-
-            studentNumber:
-              stringValue(
-                data.studentNumber
-              ),
-
-            schoolId:
-              stringValue(
-                data.schoolId
-              ),
-          }
+      const students =
+        studentDocuments.map(
+          (
+            item
+          ) =>
+            normalizeStudent(
+              item.id,
+              item.data
+            )
         );
-      }
 
-      /*
-       * テストMap
-       */
-      const testMap =
-        new Map<
-          string,
-          TestRecord
-        >();
-
-      for (
-        const document of
-          testDocuments
-      ) {
-        const data =
-          document.data;
-
-        testMap.set(
-          document.id,
-          {
-            id:
-              document.id,
-
-            name:
-              stringValue(
-                data.name
-              ),
-
-            testId:
-              stringValue(
-                data.testId
-              ),
-
-            subject:
-              stringValue(
-                data.subject
-              ),
-          }
+      const tests =
+        testDocuments.map(
+          (
+            item
+          ) =>
+            normalizeTest(
+              item.id,
+              item.data
+            )
         );
-      }
 
-      /*
-       * 答案
-       */
       const loadedAnswers =
         answerDocuments
           .map(
             (
-              document
-            ) => {
-              const data =
-                document.data;
-
-              return {
-                id:
-                  document.id,
-
-                testId:
-                  stringValue(
-                    data.testId
-                  ),
-
-                subjectId:
-                  stringValue(
-                    data.subjectId
-                  ),
-
-                studentId:
-                  typeof data.studentId ===
-                  "string"
-                    ? data.studentId
-                    : null,
-
-                studentNumber:
-                  stringValue(
-                    data.studentNumber
-                  ),
-
-                fileName:
-                  stringValue(
-                    data.fileName
-                  ),
-
-                fileKey:
-                  stringValue(
-                    data.fileKey
-                  ),
-
-                status:
-                  stringValue(
-                    data.status
-                  ),
-
-                reviewRequired:
-                  data.reviewRequired ===
-                  true,
-
-                totalScore:
-                  safeNumber(
-                    data.totalScore
-                  ),
-
-                totalMaxScore:
-                  safeNumber(
-                    data.totalMaxScore
-                  ),
-
-                createdAt:
-                  data.createdAt,
-              };
-            }
+              item
+            ) =>
+              normalizeAnswer(
+                item.id,
+                item.data,
+                students,
+                tests
+              )
           )
           .filter(
             (
               answer
             ) =>
-              isFirstReviewTarget(
-                answer
-              )
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              String(
-                b.createdAt ??
-                  ""
-              ).localeCompare(
-                String(
-                  a.createdAt ??
-                    ""
-                )
-              )
+              answer.status ===
+                "first_review" ||
+              answer.reviewRequired
           );
 
       setAnswers(
         loadedAnswers
       );
 
-      setStudents(
-        studentMap
-      );
-
-      setTests(
-        testMap
-      );
-
-      /*
-       * 選択状態
-       */
       setSelectedAnswerId(
         (
           current
@@ -511,14 +332,14 @@ export default function GradingReviewPage() {
       error
     ) {
       console.error(
-        "grading review load error:",
+        "First review load error:",
         error
       );
 
       setError(
         error instanceof Error
           ? error.message
-          : "採点確認データを取得できませんでした。"
+          : "一次確認対象の答案を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -540,25 +361,7 @@ export default function GradingReviewPage() {
     null;
 
   /* =======================================================
-     Selected student / test
-     ======================================================= */
-
-  const selectedStudent =
-    selectedAnswer?.studentId
-      ? students.get(
-          selectedAnswer.studentId
-        )
-      : null;
-
-  const selectedTest =
-    selectedAnswer
-      ? tests.get(
-          selectedAnswer.testId
-        )
-      : null;
-
-  /* =======================================================
-     Detail load
+     Load selected answer
      ======================================================= */
 
   useEffect(() => {
@@ -568,6 +371,7 @@ export default function GradingReviewPage() {
       setResults([]);
       setInternalNote("");
       setPublicAnnotation("");
+      setImageUrl(null);
       return;
     }
 
@@ -579,7 +383,7 @@ export default function GradingReviewPage() {
   ]);
 
   async function loadDetail(
-    answer: AnswerRecord
+    answer: AnswerListItem
   ) {
     try {
       setDetailLoading(
@@ -587,6 +391,7 @@ export default function GradingReviewPage() {
       );
 
       setError("");
+
       setMessage("");
 
       const [
@@ -604,16 +409,19 @@ export default function GradingReviewPage() {
         ]);
 
       /*
-       * 一次確認済みなら一次確認結果を優先。
+       * 一次確認済みのデータがあれば
+       * それを優先。
+       *
        * なければ自動採点結果。
        */
       const source =
-        firstReview?.results?.length
+        firstReview?.results
+          ?.length
           ? firstReview.results
           : grading?.results ??
             [];
 
-      const reviewRows =
+      const rows =
         source.map(
           (
             result
@@ -623,13 +431,16 @@ export default function GradingReviewPage() {
             originalScore:
               result.score,
 
+            originalMark:
+              result.mark,
+
             changed:
               false,
           })
         );
 
       setResults(
-        reviewRows
+        rows
       );
 
       setInternalNote(
@@ -643,11 +454,19 @@ export default function GradingReviewPage() {
           grading?.publicAnnotation ??
           ""
       );
+
+      /*
+       * 答案画像は選択時だけ
+       * Supabaseから署名URL取得。
+       */
+      void loadImage(
+        answer.id
+      );
     } catch (
       error
     ) {
       console.error(
-        "grading detail error:",
+        "First review detail error:",
         error
       );
 
@@ -664,7 +483,69 @@ export default function GradingReviewPage() {
   }
 
   /* =======================================================
-     Search/filter
+     Image
+     ======================================================= */
+
+  async function loadImage(
+    answerId: string
+  ) {
+    try {
+      setImageLoading(
+        true
+      );
+
+      setImageUrl(
+        null
+      );
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user ||
+        !user.organizationId
+      ) {
+        return;
+      }
+
+      const answer =
+        await getAnswerWithUrl(
+          answerId
+        );
+
+      if (
+        !answer
+      ) {
+        return;
+      }
+
+      /*
+       * getAnswerWithUrlは
+       * answers側の権限確認を行う。
+       */
+      setImageUrl(
+        answer.signedUrl
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Answer image error:",
+        error
+      );
+
+      setImageUrl(
+        null
+      );
+    } finally {
+      setImageLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Search
      ======================================================= */
 
   const filteredAnswers =
@@ -674,94 +555,48 @@ export default function GradingReviewPage() {
           .trim()
           .toLowerCase();
 
+      if (
+        !keyword
+      ) {
+        return answers;
+      }
+
       return answers.filter(
         (
           answer
-        ) => {
-          const student =
-            answer.studentId
-              ? students.get(
-                  answer.studentId
-                )
-              : null;
-
-          const test =
-            tests.get(
-              answer.testId
-            );
-
-          const matchesKeyword =
-            !keyword ||
-            answer.studentNumber
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            (
-              student?.name ??
-              ""
+        ) =>
+          answer.studentName
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          (
+            answer.studentNumber ??
+            ""
+          )
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          answer.testName
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          answer.subjectName
+            .toLowerCase()
+            .includes(
+              keyword
             )
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            (
-              test?.name ??
-              ""
-            )
-              .toLowerCase()
-              .includes(
-                keyword
-              );
-
-          const matchesStatus =
-            statusFilter ===
-            "all"
-              ? true
-              : statusFilter ===
-                "review"
-              ? answer.status ===
-                  "first_review" ||
-                answer.reviewRequired
-              : answer.status ===
-                "confirmed";
-
-          return (
-            matchesKeyword &&
-            matchesStatus
-          );
-        }
       );
     }, [
       answers,
-      students,
-      tests,
       search,
-      statusFilter,
     ]);
 
   /* =======================================================
      Statistics
      ======================================================= */
-
-  const reviewCount =
-    answers.filter(
-      (
-        answer
-      ) =>
-        answer.status ===
-          "first_review" ||
-        answer.reviewRequired
-    ).length;
-
-  const confirmedCount =
-    answers.filter(
-      (
-        answer
-      ) =>
-        answer.status ===
-        "confirmed"
-    ).length;
 
   const changedCount =
     results.filter(
@@ -771,48 +606,40 @@ export default function GradingReviewPage() {
         result.changed
     ).length;
 
-  const currentTotal =
-    results.reduce(
-      (
-        total,
-        result
-      ) =>
-        total +
-        safeNumber(
-          result.score
-        ),
-      0
+  const totalScore =
+    calculateTotalScore(
+      results
     );
 
-  const currentMax =
-    results.reduce(
+  const totalMaxScore =
+    calculateTotalMaxScore(
+      results
+    );
+
+  const manualPendingCount =
+    results.filter(
       (
-        total,
         result
       ) =>
-        total +
-        safeNumber(
-          result.maxScore
-        ),
-      0
-    );
+        result.reviewRequired
+    ).length;
 
   /* =======================================================
-     Score update
+     Update score
      ======================================================= */
 
   function updateScore(
     index: number,
     value: string
   ) {
-    const score =
+    const parsed =
       Number(
         value
       );
 
     if (
       !Number.isFinite(
-        score
+        parsed
       )
     ) {
       return;
@@ -834,32 +661,25 @@ export default function GradingReviewPage() {
               return result;
             }
 
-            const maxScore =
-              Math.max(
-                0,
-                safeNumber(
-                  result.maxScore
-                )
-              );
-
-            const nextScore =
+            const score =
               Math.min(
-                maxScore,
                 Math.max(
                   0,
-                  score
-                )
+                  parsed
+                ),
+                result.maxScore
               );
 
             return {
               ...result,
 
-              score:
-                nextScore,
+              score,
 
               changed:
-                nextScore !==
-                result.originalScore,
+                score !==
+                  result.originalScore ||
+                result.mark !==
+                  result.originalMark,
             };
           }
         )
@@ -869,7 +689,7 @@ export default function GradingReviewPage() {
   }
 
   /* =======================================================
-     Mark update
+     Update mark
      ======================================================= */
 
   function updateMark(
@@ -893,7 +713,10 @@ export default function GradingReviewPage() {
                   mark,
 
                   changed:
-                    true,
+                    mark !==
+                      result.originalMark ||
+                    result.score !==
+                      result.originalScore,
                 }
               : result
         )
@@ -903,7 +726,7 @@ export default function GradingReviewPage() {
   }
 
   /* =======================================================
-     Reason
+     Update reason
      ======================================================= */
 
   function updateReason(
@@ -937,10 +760,75 @@ export default function GradingReviewPage() {
   }
 
   /* =======================================================
+     Complete manual grading
+     ======================================================= */
+
+  function completeManualGrading(
+    index: number
+  ) {
+    setResults(
+      (
+        current
+      ) =>
+        current.map(
+          (
+            result,
+            resultIndex
+          ) => {
+            if (
+              resultIndex !==
+              index
+            ) {
+              return result;
+            }
+
+            const score =
+              Math.min(
+                Math.max(
+                  0,
+                  result.score
+                ),
+                result.maxScore
+              );
+
+            const mark =
+              score ===
+              result.maxScore
+                ? "○"
+                : score >
+                    0
+                  ? "△"
+                  : "×";
+
+            return {
+              ...result,
+
+              score,
+
+              mark,
+
+              reviewRequired:
+                false,
+
+              reason:
+                result.reason ||
+                "手動採点完了",
+
+              changed:
+                true,
+            };
+          }
+        )
+    );
+
+    setMessage("");
+  }
+
+  /* =======================================================
      Save
      ======================================================= */
 
-  async function saveReview() {
+  async function handleSave() {
     if (
       !selectedAnswer
     ) {
@@ -954,9 +842,12 @@ export default function GradingReviewPage() {
     }
 
     try {
-      setSaving(true);
+      setSaving(
+        true
+      );
 
       setError("");
+
       setMessage("");
 
       const user =
@@ -975,96 +866,101 @@ export default function GradingReviewPage() {
         "生徒"
       ) {
         throw new Error(
-          "採点確認権限がありません。"
+          "一次確認権限がありません。"
         );
       }
 
       if (
-        results.length ===
-        0
+        !selectedAnswer.studentNumber
       ) {
         throw new Error(
-          "採点結果がありません。"
+          "生徒番号が答案に紐付いていません。"
         );
       }
 
-      await saveFirstReview({
-        answerId:
-          selectedAnswer.id,
+      /*
+       * 手動採点が残っている場合でも
+       * 保存自体は可能。
+       *
+       * ただし二次確認へは進めない。
+       */
+      const input:
+        SaveReviewInput =
+        {
+          answerId:
+            selectedAnswer.id,
 
-        testId:
-          selectedAnswer.testId,
+          testId:
+            selectedAnswer.testId,
 
-        subjectId:
-          selectedAnswer.subjectId,
+          subjectId:
+            selectedAnswer.subjectId,
 
-        studentNumber:
-          selectedAnswer.studentNumber,
+          studentNumber:
+            selectedAnswer.studentNumber,
 
-        reviewerId:
-          user.uid,
+          reviewerId:
+            user.uid,
 
-        results:
-          results.map(
-            (
-              result
-            ) => ({
-              questionId:
-                result.questionId,
+          results:
+            results.map(
+              (
+                result
+              ) => ({
+                questionId:
+                  result.questionId,
 
-              questionNumber:
-                result.questionNumber,
+                questionNumber:
+                  result.questionNumber,
 
-              mark:
-                result.mark,
+                answerText:
+                  result.answerText,
 
-              score:
-                safeNumber(
-                  result.score
-                ),
+                mark:
+                  result.mark,
 
-              maxScore:
-                safeNumber(
-                  result.maxScore
-                ),
+                score:
+                  result.score,
 
-              answerText:
-                result.answerText,
+                maxScore:
+                  result.maxScore,
 
-              confidence:
-                safeNumber(
-                  result.confidence
-                ),
+                confidence:
+                  result.confidence,
 
-              reviewRequired:
-                result.reviewRequired,
+                reviewRequired:
+                  result.reviewRequired,
 
-              reason:
-                result.reason,
+                reason:
+                  result.reason,
 
-              rubric:
-                result.rubric,
-            })
-          ),
+                rubric:
+                  result.rubric,
+              })
+            ),
 
-        internalNote,
+          internalNote,
 
-        publicAnnotation,
-      });
+          publicAnnotation,
+        };
 
-      setMessage(
-        "一次確認を保存しました。"
+      await saveFirstReview(
+        input
       );
 
-      /*
-       * 最新状態を再取得。
-       */
-      await loadPage();
+      setMessage(
+        manualPendingCount >
+          0
+          ? "一次確認を保存しました。手動採点が残っているため、二次確認にはまだ進めません。"
+          : "一次確認を保存しました。"
+      );
+
+      await loadAnswers();
     } catch (
       error
     ) {
       console.error(
-        "save first review error:",
+        "First review save error:",
         error
       );
 
@@ -1074,12 +970,14 @@ export default function GradingReviewPage() {
           : "一次確認を保存できませんでした。"
       );
     } finally {
-      setSaving(false);
+      setSaving(
+        false
+      );
     }
   }
 
   /* =======================================================
-     Render
+     Loading
      ======================================================= */
 
   if (
@@ -1093,87 +991,89 @@ export default function GradingReviewPage() {
           </h1>
 
           <p>
-            採点結果を読み込んでいます...
+            確認対象の答案を読み込んでいます...
           </p>
         </section>
       </main>
     );
   }
 
+  /* =======================================================
+     Render
+     ======================================================= */
+
   return (
     <main className="page">
       <section className="content">
-        <header
-          className="pageHeader"
-          style={{
-            marginBottom:
-              20,
-          }}
-        >
+
+        {/* ==================================================
+            Header
+            ================================================== */}
+
+        <header className="pageHeader">
           <div>
             <h1>
               一次確認
             </h1>
 
             <p className="muted">
-              自動採点結果を確認し、必要な問題だけ採点を修正します。
+              自動採点結果と手動採点対象を確認・修正します。
             </p>
+          </div>
+
+          <div
+            style={{
+              display:
+                "flex",
+
+              gap:
+                8,
+            }}
+          >
+            <Link
+              href="/grading"
+              className="button"
+            >
+              採点管理
+            </Link>
+
+            <Link
+              href="/grading/second-review"
+              className="button"
+            >
+              二次確認
+            </Link>
           </div>
         </header>
 
+        {/* ==================================================
+            Messages
+            ================================================== */}
+
         {error && (
-          <div className="errorMessage">
-            {error}
+          <div
+            className="errorMessage"
+            role="alert"
+          >
+            {
+              error
+            }
           </div>
         )}
 
         {message && (
-          <div className="successMessage">
-            {message}
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {
+              message
+            }
           </div>
         )}
 
         {/* ==================================================
-            Summary
-            ================================================== */}
-
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(3, minmax(0, 1fr))",
-
-            gap:
-              12,
-
-            marginBottom:
-              20,
-          }}
-        >
-          <SummaryCard
-            label="確認待ち"
-            value={
-              reviewCount
-            }
-          />
-
-          <SummaryCard
-            label="確定済み"
-            value={
-              confirmedCount
-            }
-          />
-
-          <SummaryCard
-            label="現在の得点"
-            value={`${currentTotal} / ${currentMax}`}
-          />
-        </div>
-
-        {/* ==================================================
-            Main layout
+            Main
             ================================================== */}
 
         <div
@@ -1191,6 +1091,7 @@ export default function GradingReviewPage() {
               "start",
           }}
         >
+
           {/* ================================================
               Answer list
               ================================================ */}
@@ -1198,12 +1099,6 @@ export default function GradingReviewPage() {
           <section className="card">
             <div
               style={{
-                display:
-                  "flex",
-
-                gap:
-                  8,
-
                 marginBottom:
                   12,
               }}
@@ -1222,240 +1117,37 @@ export default function GradingReviewPage() {
                 }
                 placeholder="生徒番号・氏名・テスト名"
                 style={{
-                  flex:
-                    1,
-
-                  minWidth:
-                    0,
+                  width:
+                    "100%",
                 }}
               />
-
-              <select
-                value={
-                  statusFilter
-                }
-                onChange={(
-                  event
-                ) =>
-                  setStatusFilter(
-                    event
-                      .target
-                      .value as
-                      | "all"
-                      | "review"
-                      | "confirmed"
-                  )
-                }
-              >
-                <option value="all">
-                  すべて
-                </option>
-
-                <option value="review">
-                  確認待ち
-                </option>
-
-                <option value="confirmed">
-                  確定済み
-                </option>
-              </select>
             </div>
 
             <div
               style={{
-                maxHeight:
-                  "calc(100vh - 250px)",
+                marginBottom:
+                  12,
 
-                overflowY:
-                  "auto",
+                fontSize:
+                  12,
+
+                color:
+                  "#666",
               }}
             >
-              {filteredAnswers.length ===
-                0 && (
-                <div
-                  style={{
-                    padding:
-                      30,
-
-                    textAlign:
-                      "center",
-
-                    color:
-                      "#777",
-                  }}
-                >
-                  確認対象の答案がありません。
-                </div>
-              )}
-
-              {filteredAnswers.map(
-                (
-                  answer
-                ) => {
-                  const student =
-                    answer.studentId
-                      ? students.get(
-                          answer.studentId
-                        )
-                      : null;
-
-                  const test =
-                    tests.get(
-                      answer.testId
-                    );
-
-                  const active =
-                    selectedAnswerId ===
-                    answer.id;
-
-                  return (
-                    <button
-                      key={
-                        answer.id
-                      }
-                      type="button"
-                      onClick={() =>
-                        setSelectedAnswerId(
-                          answer.id
-                        )
-                      }
-                      style={{
-                        display:
-                          "block",
-
-                        width:
-                          "100%",
-
-                        padding:
-                          14,
-
-                        marginBottom:
-                          8,
-
-                        textAlign:
-                          "left",
-
-                        border:
-                          active
-                            ? "2px solid #111"
-                            : "1px solid #ddd",
-
-                        borderRadius:
-                          8,
-
-                        background:
-                          active
-                            ? "#f7f7f7"
-                            : "#fff",
-
-                        cursor:
-                          "pointer",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display:
-                            "flex",
-
-                          justifyContent:
-                            "space-between",
-
-                          gap:
-                            10,
-                        }}
-                      >
-                        <strong>
-                          {
-                            student?.name ??
-                            "生徒未紐付け"
-                          }
-                        </strong>
-
-                        <span
-                          style={{
-                            fontSize:
-                              11,
-                          }}
-                        >
-                          {
-                            getStatusLabel(
-                              answer.status
-                            )
-                          }
-                        </span>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop:
-                            5,
-
-                          fontSize:
-                            12,
-
-                          color:
-                            "#666",
-                        }}
-                      >
-                        生徒番号：
-                        {
-                          answer.studentNumber ||
-                          "未登録"
-                        }
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop:
-                            4,
-
-                          fontSize:
-                            12,
-
-                          color:
-                            "#666",
-                        }}
-                      >
-                        {
-                          test?.name ??
-                          "テスト未設定"
-                        }
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop:
-                            8,
-
-                          fontWeight:
-                            700,
-                        }}
-                      >
-                        {
-                          answer.totalScore
-                        }
-                        {" / "}
-                        {
-                          answer.totalMaxScore
-                        }
-                      </div>
-                    </button>
-                  );
-                }
-              )}
+              確認対象：
+              {
+                filteredAnswers.length
+              }
+              件
             </div>
-          </section>
 
-          {/* ================================================
-              Detail
-              ================================================ */}
-
-          <section className="card">
-            {!selectedAnswer ? (
+            {filteredAnswers.length ===
+              0 && (
               <div
                 style={{
                   padding:
-                    60,
+                    35,
 
                   textAlign:
                     "center",
@@ -1464,10 +1156,172 @@ export default function GradingReviewPage() {
                     "#777",
                 }}
               >
-                左側から確認する答案を選択してください。
+                <strong>
+                  一次確認対象の答案はありません。
+                </strong>
+
+                <p
+                  style={{
+                    fontSize:
+                      12,
+                  }}
+                >
+                  自動採点後に確認が必要な答案、または手動採点対象の答案がここに表示されます。
+                </p>
+              </div>
+            )}
+
+            {filteredAnswers.map(
+              (
+                answer
+              ) => {
+                const active =
+                  answer.id ===
+                  selectedAnswerId;
+
+                return (
+                  <button
+                    key={
+                      answer.id
+                    }
+                    type="button"
+                    onClick={() =>
+                      setSelectedAnswerId(
+                        answer.id
+                      )
+                    }
+                    style={{
+                      display:
+                        "block",
+
+                      width:
+                        "100%",
+
+                      marginBottom:
+                        8,
+
+                      padding:
+                        14,
+
+                      textAlign:
+                        "left",
+
+                      border:
+                        active
+                          ? "2px solid #111"
+                          : "1px solid #ddd",
+
+                      borderRadius:
+                        8,
+
+                      background:
+                        active
+                          ? "#f7f7f7"
+                          : "#fff",
+
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display:
+                          "flex",
+
+                        justifyContent:
+                          "space-between",
+
+                        gap:
+                          8,
+                      }}
+                    >
+                      <strong>
+                        {
+                          answer.studentName ||
+                          "生徒未紐付け"
+                        }
+                      </strong>
+
+                      <span
+                        style={{
+                          fontSize:
+                            11,
+                        }}
+                      >
+                        {
+                          getStatusLabel(
+                            answer.status
+                          )
+                        }
+                      </span>
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          5,
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      {
+                        answer.studentNumber ||
+                        "生徒番号未設定"
+                      }
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          3,
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      {
+                        answer.testName
+                      }
+                      {" / "}
+                      {
+                        answer.subjectName ||
+                        "—"
+                      }
+                    </div>
+                  </button>
+                );
+              }
+            )}
+          </section>
+
+          {/* ================================================
+              Review detail
+              ================================================ */}
+
+          <section className="card">
+            {!selectedAnswer ? (
+              <EmptyDetail />
+            ) : detailLoading ? (
+              <div
+                style={{
+                  padding:
+                    60,
+
+                  textAlign:
+                    "center",
+                }}
+              >
+                採点結果を読み込んでいます...
               </div>
             ) : (
               <>
+                {/* ==========================================
+                    Header
+                    ========================================== */}
+
                 <header
                   style={{
                     display:
@@ -1476,11 +1330,11 @@ export default function GradingReviewPage() {
                     justifyContent:
                       "space-between",
 
-                    gap:
-                      20,
-
                     alignItems:
                       "flex-start",
+
+                    gap:
+                      20,
 
                     paddingBottom:
                       18,
@@ -1497,41 +1351,41 @@ export default function GradingReviewPage() {
                       }}
                     >
                       {
-                        selectedStudent?.name ??
+                        selectedAnswer.studentName ||
                         "生徒未紐付け"
                       }
                     </h2>
 
-                    <p
+                    <div
+                      className="muted"
                       style={{
-                        margin:
-                          "6px 0 0",
-
-                        color:
-                          "#666",
+                        marginTop:
+                          5,
                       }}
                     >
                       生徒番号：
                       {
                         selectedAnswer.studentNumber ||
-                        "未登録"
+                        "未設定"
                       }
-                    </p>
+                    </div>
 
-                    <p
+                    <div
+                      className="muted"
                       style={{
-                        margin:
-                          "4px 0 0",
-
-                        color:
-                          "#666",
+                        marginTop:
+                          3,
                       }}
                     >
                       {
-                        selectedTest?.name ??
-                        "テスト未設定"
+                        selectedAnswer.testName
                       }
-                    </p>
+                      {" / "}
+                      {
+                        selectedAnswer.subjectName ||
+                        "—"
+                      }
+                    </div>
                   </div>
 
                   <div
@@ -1541,12 +1395,10 @@ export default function GradingReviewPage() {
                     }}
                   >
                     <div
+                      className="muted"
                       style={{
                         fontSize:
-                          12,
-
-                        color:
-                          "#777",
+                          11,
                       }}
                     >
                       現在の得点
@@ -1559,8 +1411,9 @@ export default function GradingReviewPage() {
                       }}
                     >
                       {
-                        currentTotal
+                        totalScore
                       }
+
                       <span
                         style={{
                           fontSize:
@@ -1572,110 +1425,296 @@ export default function GradingReviewPage() {
                       >
                         {" / "}
                         {
-                          currentMax
+                          totalMaxScore
                         }
                       </span>
                     </strong>
                   </div>
                 </header>
 
-                {detailLoading ? (
+                {/* ==========================================
+                    Answer image
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      18,
+                  }}
+                >
+                  <h3>
+                    答案
+                  </h3>
+
                   <div
                     style={{
-                      padding:
-                        50,
+                      minHeight:
+                        300,
 
-                      textAlign:
+                      display:
+                        "flex",
+
+                      alignItems:
                         "center",
+
+                      justifyContent:
+                        "center",
+
+                      background:
+                        "#f5f5f5",
+
+                      borderRadius:
+                        8,
+
+                      overflow:
+                        "hidden",
                     }}
                   >
-                    採点結果を読み込んでいます...
-                  </div>
-                ) : (
-                  <>
-                    {/* ======================================
-                        Results
-                        ====================================== */}
+                    {imageLoading ? (
+                      <span>
+                        答案画像を読み込んでいます...
+                      </span>
+                    ) : imageUrl ? (
+                      selectedAnswer.contentType ===
+                      "application/pdf" ? (
+                        <iframe
+                          src={
+                            imageUrl
+                          }
+                          title="答案"
+                          style={{
+                            width:
+                              "100%",
 
+                            height:
+                              500,
+
+                            border:
+                              0,
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={
+                            imageUrl
+                          }
+                          alt="答案"
+                          style={{
+                            maxWidth:
+                              "100%",
+
+                            maxHeight:
+                              550,
+
+                            objectFit:
+                              "contain",
+                          }}
+                        />
+                      )
+                    ) : (
+                      <span className="muted">
+                        答案画像を表示できません。
+                      </span>
+                    )}
+                  </div>
+                </section>
+
+                {/* ==========================================
+                    Results
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      22,
+                  }}
+                >
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      alignItems:
+                        "center",
+
+                      marginBottom:
+                        10,
+                    }}
+                  >
+                    <div>
+                      <h3
+                        style={{
+                          margin:
+                            0,
+                        }}
+                      >
+                        採点結果
+                      </h3>
+
+                      {manualPendingCount >
+                        0 && (
+                        <p
+                          style={{
+                            margin:
+                              "5px 0 0",
+
+                            color:
+                              "#9a6500",
+
+                            fontSize:
+                              12,
+                          }}
+                        >
+                          手動採点待ち：
+                          {
+                            manualPendingCount
+                          }
+                          問
+                        </p>
+                      )}
+                    </div>
+
+                    <span
+                      className="muted"
+                      style={{
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      変更：
+                      {
+                        changedCount
+                      }
+                      問
+                    </span>
+                  </div>
+
+                  {results.length ===
+                  0 ? (
+                    <div
+                      style={{
+                        padding:
+                          35,
+
+                        textAlign:
+                          "center",
+
+                        color:
+                          "#777",
+
+                        border:
+                          "1px solid #eee",
+
+                        borderRadius:
+                          8,
+                      }}
+                    >
+                      採点結果がありません。
+                    </div>
+                  ) : (
                     <div
                       style={{
                         overflowX:
                           "auto",
-
-                        marginTop:
-                          20,
                       }}
                     >
-                      {results.length ===
-                        0 ? (
-                        <div
-                          style={{
-                            padding:
-                              40,
+                      <table className="dataTable">
+                        <thead>
+                          <tr>
+                            <th>
+                              問題
+                            </th>
 
-                            textAlign:
-                              "center",
+                            <th>
+                              採点方式
+                            </th>
 
-                            color:
-                              "#777",
-                          }}
-                        >
-                          自動採点結果がありません。
-                        </div>
-                      ) : (
-                        <table className="dataTable">
-                          <thead>
-                            <tr>
-                              <th>
-                                問題
-                              </th>
+                            <th>
+                              解答
+                            </th>
 
-                              <th>
-                                解答
-                              </th>
+                            <th>
+                              判定
+                            </th>
 
-                              <th>
-                                自動判定
-                              </th>
+                            <th>
+                              得点
+                            </th>
 
-                              <th>
-                                得点
-                              </th>
+                            <th>
+                              確信度
+                            </th>
 
-                              <th>
-                                確信度
-                              </th>
+                            <th>
+                              理由
+                            </th>
 
-                              <th>
-                                変更理由
-                              </th>
-                            </tr>
-                          </thead>
+                            <th>
+                              操作
+                            </th>
+                          </tr>
+                        </thead>
 
-                          <tbody>
-                            {results.map(
-                              (
-                                result,
-                                index
-                              ) => (
+                        <tbody>
+                          {results.map(
+                            (
+                              result,
+                              index
+                            ) => {
+                              const isManual =
+                                result.reviewRequired;
+
+                              return (
                                 <tr
                                   key={`${result.questionId}-${index}`}
+                                  style={{
+                                    background:
+                                      isManual
+                                        ? "#fffaf0"
+                                        : result.changed
+                                          ? "#f5f9ff"
+                                          : undefined,
+                                  }}
                                 >
-                                  <td
-                                    style={{
-                                      whiteSpace:
-                                        "nowrap",
-                                    }}
-                                  >
-                                    {
-                                      result.questionNumber
-                                    }
+                                  <td>
+                                    <strong>
+                                      {
+                                        result.questionNumber
+                                      }
+                                    </strong>
+                                  </td>
+
+                                  <td>
+                                    <span
+                                      style={{
+                                        fontSize:
+                                          11,
+
+                                        padding:
+                                          "3px 7px",
+
+                                        borderRadius:
+                                          999,
+
+                                        background:
+                                          isManual
+                                            ? "#fff0cf"
+                                            : "#e9f1ff",
+                                      }}
+                                    >
+                                      {isManual
+                                        ? "手動"
+                                        : "自動"}
+                                    </span>
                                   </td>
 
                                   <td
                                     style={{
                                       minWidth:
-                                        180,
+                                        160,
                                     }}
                                   >
                                     {
@@ -1724,12 +1763,14 @@ export default function GradingReviewPage() {
                                           "center",
 
                                         gap:
-                                          5,
+                                          4,
                                       }}
                                     >
                                       <input
                                         type="number"
-                                        min="0"
+                                        min={
+                                          0
+                                        }
                                         max={
                                           result.maxScore
                                         }
@@ -1748,7 +1789,7 @@ export default function GradingReviewPage() {
                                         }
                                         style={{
                                           width:
-                                            80,
+                                            70,
                                         }}
                                       />
 
@@ -1783,171 +1824,215 @@ export default function GradingReviewPage() {
                                             .value
                                         )
                                       }
-                                      placeholder="必要な場合のみ"
+                                      placeholder="理由"
                                       style={{
-                                        minWidth:
-                                          180,
+                                        width:
+                                          160,
                                       }}
                                     />
                                   </td>
+
+                                  <td>
+                                    {isManual ? (
+                                      <button
+                                        type="button"
+                                        className="button"
+                                        onClick={() =>
+                                          completeManualGrading(
+                                            index
+                                          )
+                                        }
+                                      >
+                                        採点完了
+                                      </button>
+                                    ) : (
+                                      <span
+                                        className="muted"
+                                        style={{
+                                          fontSize:
+                                            11,
+                                        }}
+                                      >
+                                        自動採点
+                                      </span>
+                                    )}
+                                  </td>
                                 </tr>
-                              )
-                            )}
-                          </tbody>
-                        </table>
-                      )}
+                              );
+                            }
+                          )}
+                        </tbody>
+                      </table>
                     </div>
+                  )}
+                </section>
 
-                    {/* ======================================
-                        Notes
-                        ====================================== */}
+                {/* ==========================================
+                    Notes
+                    ========================================== */}
 
-                    <div
+                <section
+                  style={{
+                    display:
+                      "grid",
+
+                    gridTemplateColumns:
+                      "1fr 1fr",
+
+                    gap:
+                      14,
+
+                    marginTop:
+                      20,
+                  }}
+                >
+                  <label>
+                    <strong>
+                      内部メモ
+                    </strong>
+
+                    <textarea
+                      value={
+                        internalNote
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setInternalNote(
+                          event
+                            .target
+                            .value
+                        )
+                      }
+                      rows={
+                        5
+                      }
                       style={{
                         display:
-                          "grid",
+                          "block",
 
-                        gridTemplateColumns:
-                          "1fr 1fr",
-
-                        gap:
-                          16,
+                        width:
+                          "100%",
 
                         marginTop:
-                          20,
+                          6,
                       }}
-                    >
-                      <label>
-                        <strong>
-                          内部メモ
-                        </strong>
+                    />
+                  </label>
 
-                        <textarea
-                          value={
-                            internalNote
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            setInternalNote(
-                              event
-                                .target
-                                .value
-                            )
-                          }
-                          rows={
-                            5
-                          }
-                          style={{
-                            display:
-                              "block",
+                  <label>
+                    <strong>
+                      生徒公開コメント
+                    </strong>
 
-                            width:
-                              "100%",
-
-                            marginTop:
-                              7,
-                          }}
-                        />
-                      </label>
-
-                      <label>
-                        <strong>
-                          生徒公開コメント
-                        </strong>
-
-                        <textarea
-                          value={
-                            publicAnnotation
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            setPublicAnnotation(
-                              event
-                                .target
-                                .value
-                            )
-                          }
-                          rows={
-                            5
-                          }
-                          style={{
-                            display:
-                              "block",
-
-                            width:
-                              "100%",
-
-                            marginTop:
-                              7,
-                          }}
-                        />
-                      </label>
-                    </div>
-
-                    {/* ======================================
-                        Actions
-                        ====================================== */}
-
-                    <div
+                    <textarea
+                      value={
+                        publicAnnotation
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setPublicAnnotation(
+                          event
+                            .target
+                            .value
+                        )
+                      }
+                      rows={
+                        5
+                      }
                       style={{
                         display:
-                          "flex",
+                          "block",
 
-                        justifyContent:
-                          "space-between",
-
-                        alignItems:
-                          "center",
-
-                        gap:
-                          12,
+                        width:
+                          "100%",
 
                         marginTop:
-                          20,
-
-                        paddingTop:
-                          18,
-
-                        borderTop:
-                          "1px solid #eee",
+                          6,
                       }}
+                    />
+                  </label>
+                </section>
+
+                {/* ==========================================
+                    Footer
+                    ========================================== */}
+
+                <footer
+                  style={{
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "space-between",
+
+                    alignItems:
+                      "center",
+
+                    gap:
+                      10,
+
+                    marginTop:
+                      20,
+
+                    paddingTop:
+                      18,
+
+                    borderTop:
+                      "1px solid #eee",
+                  }}
+                >
+                  <div
+                    className="muted"
+                    style={{
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {manualPendingCount >
+                    0
+                      ? "手動採点を完了してから二次確認へ進みます。"
+                      : "一次確認を保存すると二次確認へ進めます。"}
+                  </div>
+
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      gap:
+                        8,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={
+                        saving ||
+                        results.length ===
+                          0
+                      }
+                      onClick={
+                        handleSave
+                      }
                     >
-                      <div
-                        style={{
-                          color:
-                            "#666",
+                      {saving
+                        ? "保存中..."
+                        : "一次確認を保存"}
+                    </button>
 
-                          fontSize:
-                            13,
-                        }}
+                    {manualPendingCount ===
+                      0 && (
+                      <Link
+                        href="/grading/second-review"
+                        className="button"
                       >
-                        {changedCount >
-                        0
-                          ? `${changedCount}問を変更しています。`
-                          : "変更はありません。"}
-                      </div>
-
-                      <button
-                        type="button"
-                        className="primaryButton"
-                        disabled={
-                          saving ||
-                          results.length ===
-                            0
-                        }
-                        onClick={
-                          saveReview
-                        }
-                      >
-                        {saving
-                          ? "保存中..."
-                          : "一次確認を保存"}
-                      </button>
-                    </div>
-                  </>
-                )}
+                        二次確認へ
+                      </Link>
+                    )}
+                  </div>
+                </footer>
               </>
             )}
           </section>
@@ -1958,51 +2043,350 @@ export default function GradingReviewPage() {
 }
 
 /* =========================================================
-   Helpers
+   Normalize answer
    ========================================================= */
 
-function isFirstReviewTarget(
-  answer: AnswerRecord
+function normalizeAnswer(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): AnswerListItem {
+  const studentId =
+    nullableString(
+      data.studentId
+    );
+
+  const testId =
+    stringValue(
+      data.testId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const test =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+          testId ||
+        item.testId ===
+          testId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId,
+
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
+
+    studentId,
+
+    studentNumber:
+      nullableString(
+        data.studentNumber
+      ),
+
+    fileKey:
+      stringValue(
+        data.fileKey
+      ),
+
+    fileName:
+      stringValue(
+        data.fileName
+      ),
+
+    contentType:
+      stringValue(
+        data.contentType
+      ),
+
+    size:
+      safeNumber(
+        data.size
+      ),
+
+    status:
+      normalizeAnswerStatus(
+        data.status
+      ),
+
+    reviewRequired:
+      data.reviewRequired ===
+      true,
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    totalMaxScore:
+      safeNumber(
+        data.totalMaxScore
+      ),
+
+    qrText:
+      stringValue(
+        data.qrText
+      ),
+
+    qrConfidence:
+      safeNumber(
+        data.qrConfidence
+      ),
+
+    ocrConfidence:
+      safeNumber(
+        data.ocrConfidence
+      ),
+
+    processingError:
+      stringValue(
+        data.processingError
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    processedAt:
+      data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
+
+    studentName:
+      student?.name ??
+      "",
+
+    testName:
+      test?.name ??
+      "テスト未設定",
+
+    subjectName:
+      stringValue(
+        data.subjectName
+      ),
+  };
+}
+
+/* =========================================================
+   Student
+   ========================================================= */
+
+function normalizeStudent(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Student {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ),
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Test
+   ========================================================= */
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Status
+   ========================================================= */
+
+function normalizeAnswerStatus(
+  value: unknown
 ) {
-  if (
-    answer.status ===
-    "first_review"
+  switch (
+    value
   ) {
-    return true;
-  }
+    case "uploaded":
+    case "processing":
+    case "graded":
+    case "first_review":
+    case "second_review":
+    case "confirmed":
+    case "published":
+    case "error":
+      return value;
 
-  if (
-    answer.reviewRequired
-  ) {
-    return true;
+    default:
+      return "uploaded" as const;
   }
-
-  return false;
 }
 
 function getStatusLabel(
-  status: string
+  status: Answer["status"]
 ) {
   switch (
     status
   ) {
     case "uploaded":
-      return "アップロード済み";
+      return "受付済み";
 
     case "processing":
       return "処理中";
 
     case "graded":
-      return "自動採点済み";
+      return "採点済み";
 
     case "first_review":
-      return "一次確認待ち";
+      return "一次確認";
 
     case "second_review":
       return "二次確認";
 
     case "confirmed":
-      return "確定済み";
+      return "確定";
 
     case "published":
       return "公開済み";
@@ -2011,9 +2395,56 @@ function getStatusLabel(
       return "エラー";
 
     default:
-      return status ||
-        "未設定";
+      return "未設定";
   }
+}
+
+/* =========================================================
+   Confidence
+   ========================================================= */
+
+function formatConfidence(
+  value: number
+) {
+  if (
+    !Number.isFinite(
+      value
+    ) ||
+    value <= 0
+  ) {
+    return "—";
+  }
+
+  const percentage =
+    value <= 1
+      ? value * 100
+      : value;
+
+  return `${percentage.toFixed(
+    0
+  )}%`;
+}
+
+/* =========================================================
+   Primitive
+   ========================================================= */
+
+function stringValue(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : "";
+}
+
+function nullableString(
+  value: unknown
+) {
+  return typeof value ===
+    "string"
+    ? value
+    : null;
 }
 
 function safeNumber(
@@ -2031,84 +2462,39 @@ function safeNumber(
     : 0;
 }
 
-function stringValue(
-  value: unknown
-) {
-  return typeof value ===
-    "string"
-    ? value
-    : "";
-}
-
-function formatConfidence(
-  value: number
-) {
-  if (
-    !Number.isFinite(
-      value
-    )
-  ) {
-    return "—";
-  }
-
-  /*
-   * 0〜1なら割合として表示。
-   * 0〜100ならそのまま％。
-   */
-  const percentage =
-    value <= 1
-      ? value * 100
-      : value;
-
-  return `${percentage.toFixed(
-    0
-  )}%`;
-}
-
 /* =========================================================
-   Summary card
+   Empty
    ========================================================= */
 
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: string | number;
-}) {
+function EmptyDetail() {
   return (
-    <div className="card">
-      <div
-        style={{
-          color:
-            "#777",
+    <div
+      style={{
+        minHeight:
+          500,
 
-          fontSize:
-            12,
-        }}
-      >
-        {
-          label
-        }
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+      }}
+    >
+      <div>
+        <strong>
+          答案を選択してください
+        </strong>
+
+        <p className="muted">
+          左側から一次確認する答案を選択してください。
+        </p>
       </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            5,
-
-          fontSize:
-            25,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
     </div>
   );
 }
