@@ -9,6 +9,10 @@ import {
 import Link from "next/link";
 
 import {
+  useSearchParams,
+} from "next/navigation";
+
+import {
   auth,
 } from "@/lib/firebase";
 
@@ -21,26 +25,22 @@ import {
 } from "@/lib/answers";
 
 import {
-  getFirstReview,
-  getSecondReview,
-  saveSecondReview,
-  returnToFirstReview,
-  hasDisagreement,
-  calculateTotalScore,
-  calculateTotalMaxScore,
-  type SaveReviewInput,
-} from "@/lib/grading";
-
-import {
-  answersQueries,
   getScopedDocs,
+  answersQueries,
   studentsQueries,
   testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
+import {
+  getFirstReview,
+  getSecondReview,
+  saveSecondReview,
+} from "@/lib/grading";
+
 import type {
   Answer,
+  GradingMark,
   GradingResult,
   Student,
   Test,
@@ -51,23 +51,15 @@ import type {
    Types
    ========================================================= */
 
-type AnswerListItem =
+type ReviewRow =
   Answer & {
     studentName: string;
-
     testName: string;
-
     subjectName: string;
   };
 
-type ReviewRow =
+type EditableResult =
   GradingResult & {
-    firstScore: number;
-
-    firstMark:
-      | GradingResult["mark"]
-      | null;
-
     changed: boolean;
   };
 
@@ -76,9 +68,17 @@ type ReviewRow =
    ========================================================= */
 
 export default function SecondReviewPage() {
+  const searchParams =
+    useSearchParams();
+
+  const requestedAnswerId =
+    searchParams.get(
+      "answerId"
+    );
+
   const [
-    userRole,
-    setUserRole,
+    role,
+    setRole,
   ] =
     useState<UserRole | null>(
       null
@@ -88,25 +88,35 @@ export default function SecondReviewPage() {
     answers,
     setAnswers,
   ] =
-    useState<AnswerListItem[]>(
+    useState<ReviewRow[]>(
       []
     );
 
   const [
-    selectedAnswerId,
-    setSelectedAnswerId,
+    selectedId,
+    setSelectedId,
   ] =
     useState<
       string | null
-    >(null);
+    >(
+      requestedAnswerId
+    );
 
   const [
     results,
     setResults,
   ] =
-    useState<ReviewRow[]>(
+    useState<EditableResult[]>(
       []
     );
+
+  const [
+    imageUrl,
+    setImageUrl,
+  ] =
+    useState<
+      string | null
+    >(null);
 
   const [
     internalNote,
@@ -145,12 +155,6 @@ export default function SecondReviewPage() {
     useState(false);
 
   const [
-    returning,
-    setReturning,
-  ] =
-    useState(false);
-
-  const [
     error,
     setError,
   ] =
@@ -162,29 +166,15 @@ export default function SecondReviewPage() {
   ] =
     useState("");
 
-  const [
-    imageUrl,
-    setImageUrl,
-  ] =
-    useState<
-      string | null
-    >(null);
-
-  const [
-    imageLoading,
-    setImageLoading,
-  ] =
-    useState(false);
-
   /* =======================================================
-     Load
+     Initial load
      ======================================================= */
 
   useEffect(() => {
-    void loadAnswers();
+    void loadPage();
   }, []);
 
-  async function loadAnswers() {
+  async function loadPage() {
     try {
       setLoading(true);
 
@@ -208,7 +198,7 @@ export default function SecondReviewPage() {
         "生徒"
       ) {
         throw new Error(
-          "二次確認は職員のみ利用できます。"
+          "二次確認を利用する権限がありません。"
         );
       }
 
@@ -220,7 +210,7 @@ export default function SecondReviewPage() {
         );
       }
 
-      setUserRole(
+      setRole(
         user.role
       );
 
@@ -291,14 +281,7 @@ export default function SecondReviewPage() {
         );
 
       /*
-       * 二次確認対象は、
-       *
-       * status = second_review
-       *
-       * の答案。
-       *
-       * first_reviewのままの答案は
-       * 二次確認画面には出さない。
+       * 二次確認対象は second_review のみ。
        */
       const loaded =
         answerDocuments
@@ -319,13 +302,25 @@ export default function SecondReviewPage() {
             ) =>
               answer.status ===
               "second_review"
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
+              )
           );
 
       setAnswers(
         loaded
       );
 
-      setSelectedAnswerId(
+      setSelectedId(
         (
           current
         ) => {
@@ -359,7 +354,7 @@ export default function SecondReviewPage() {
       setError(
         error instanceof Error
           ? error.message
-          : "二次確認対象の答案を取得できませんでした。"
+          : "二次確認対象を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -367,218 +362,7 @@ export default function SecondReviewPage() {
   }
 
   /* =======================================================
-     Selected
-     ======================================================= */
-
-  const selectedAnswer =
-    answers.find(
-      (
-        answer
-      ) =>
-        answer.id ===
-        selectedAnswerId
-    ) ??
-    null;
-
-  /* =======================================================
-     Detail
-     ======================================================= */
-
-  useEffect(() => {
-    if (
-      !selectedAnswer
-    ) {
-      setResults([]);
-      setInternalNote("");
-      setPublicAnnotation("");
-      setImageUrl(null);
-      return;
-    }
-
-    void loadDetail(
-      selectedAnswer
-    );
-  }, [
-    selectedAnswerId,
-  ]);
-
-  async function loadDetail(
-    answer: AnswerListItem
-  ) {
-    try {
-      setDetailLoading(
-        true
-      );
-
-      setError("");
-
-      setMessage("");
-
-      const [
-        firstReview,
-        secondReview,
-      ] =
-        await Promise.all([
-          getFirstReview(
-            answer.id
-          ),
-
-          getSecondReview(
-            answer.id
-          ),
-        ]);
-
-      /*
-       * 二次確認済みなら
-       * 二次確認結果を表示。
-       *
-       * 未作成なら一次確認結果。
-       */
-      const source =
-        secondReview?.results
-          ?.length
-          ? secondReview.results
-          : firstReview?.results ??
-            [];
-
-      const firstResults =
-        firstReview?.results ??
-        [];
-
-      const rows =
-        source.map(
-          (
-            result
-          ): ReviewRow => {
-            const first =
-              firstResults.find(
-                (
-                  item
-                ) =>
-                  item.questionId ===
-                  result.questionId
-              );
-
-            return {
-              ...result,
-
-              firstScore:
-                first?.score ??
-                result.score,
-
-              firstMark:
-                first?.mark ??
-                null,
-
-              changed:
-                first
-                  ? first.score !==
-                      result.score ||
-                    first.mark !==
-                      result.mark
-                  : false,
-            };
-          }
-        );
-
-      setResults(
-        rows
-      );
-
-      setInternalNote(
-        secondReview?.internalNote ??
-          firstReview?.internalNote ??
-          ""
-      );
-
-      setPublicAnnotation(
-        secondReview?.publicAnnotation ??
-          firstReview?.publicAnnotation ??
-          ""
-      );
-
-      void loadImage(
-        answer.id
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Second review detail error:",
-        error
-      );
-
-      setResults([]);
-
-      setError(
-        "二次確認データを取得できませんでした。"
-      );
-    } finally {
-      setDetailLoading(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Image
-     ======================================================= */
-
-  async function loadImage(
-    answerId: string
-  ) {
-    try {
-      setImageLoading(
-        true
-      );
-
-      setImageUrl(
-        null
-      );
-
-      const user =
-        await getAppUser();
-
-      if (
-        !user
-      ) {
-        return;
-      }
-
-      const answer =
-        await getAnswerWithUrl(
-          answerId
-        );
-
-      if (
-        !answer
-      ) {
-        return;
-      }
-
-      setImageUrl(
-        answer.signedUrl
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Second review image error:",
-        error
-      );
-
-      setImageUrl(
-        null
-      );
-    } finally {
-      setImageLoading(
-        false
-      );
-    }
-  }
-
-  /* =======================================================
-     Search
+     Filter
      ======================================================= */
 
   const filtered =
@@ -628,125 +412,153 @@ export default function SecondReviewPage() {
     ]);
 
   /* =======================================================
-     Statistics
+     Selected
      ======================================================= */
 
-  const changedCount =
-    results.filter(
+  const selected =
+    answers.find(
       (
-        result
+        answer
       ) =>
-        result.changed
-    ).length;
-
-  const totalScore =
-    calculateTotalScore(
-      results
-    );
-
-  const totalMaxScore =
-    calculateTotalMaxScore(
-      results
-    );
-
-  const hasDisagreements =
-    useMemo(
-      () => {
-        const first =
-          results.map(
-            (
-              result
-            ) => ({
-              ...result,
-
-              score:
-                result.firstScore,
-
-              mark:
-                result.firstMark ??
-                result.mark,
-            })
-          );
-
-        return hasDisagreement(
-          first,
-          results
-        );
-      },
-      [
-        results,
-      ]
-    );
+        answer.id ===
+        selectedId
+    ) ??
+    null;
 
   /* =======================================================
-     Update score
+     Load detail
      ======================================================= */
 
-  function updateScore(
-    index: number,
-    value: string
-  ) {
-    const parsed =
-      Number(
-        value
+  useEffect(() => {
+    if (
+      !selected
+    ) {
+      setResults([]);
+
+      setImageUrl(
+        null
       );
 
-    if (
-      !Number.isFinite(
-        parsed
-      )
-    ) {
+      setInternalNote("");
+
+      setPublicAnnotation("");
+
       return;
     }
 
-    setResults(
-      (
-        current
-      ) =>
-        current.map(
-          (
-            result,
-            resultIndex
-          ) => {
-            if (
-              resultIndex !==
-              index
-            ) {
-              return result;
-            }
-
-            const score =
-              Math.min(
-                Math.max(
-                  0,
-                  parsed
-                ),
-                result.maxScore
-              );
-
-            return {
-              ...result,
-
-              score,
-
-              changed:
-                score !==
-                result.firstScore,
-            };
-          }
-        )
+    void loadDetail(
+      selected
     );
+  }, [
+    selectedId,
+  ]);
 
-    setMessage("");
+  async function loadDetail(
+    answer: ReviewRow
+  ) {
+    try {
+      setDetailLoading(
+        true
+      );
+
+      setError("");
+
+      setMessage("");
+
+      const [
+        firstReview,
+        secondReview,
+        image,
+      ] =
+        await Promise.all([
+          getFirstReview(
+            answer.id
+          ),
+
+          getSecondReview(
+            answer.id
+          ),
+
+          getAnswerWithUrl(
+            answer.id
+          ),
+        ]);
+
+      if (
+        !firstReview
+      ) {
+        throw new Error(
+          "一次確認結果がありません。"
+        );
+      }
+
+      /*
+       * 二次確認で過去に保存した結果があれば
+       * それを優先。
+       *
+       * なければ一次確認結果を初期値にする。
+       */
+      const sourceResults =
+        secondReview?.results ??
+        firstReview.results;
+
+      const editable =
+        sourceResults.map(
+          (
+            result
+          ) => ({
+            ...result,
+
+            changed:
+              false,
+          })
+        );
+
+      setResults(
+        editable
+      );
+
+      setInternalNote(
+        secondReview?.internalNote ??
+          ""
+      );
+
+      setPublicAnnotation(
+        secondReview?.publicAnnotation ??
+          ""
+      );
+
+      setImageUrl(
+        image?.signedUrl ??
+        null
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Second review detail error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "二次確認データを取得できませんでした。"
+      );
+    } finally {
+      setDetailLoading(
+        false
+      );
+    }
   }
 
   /* =======================================================
-     Mark
+     Update result
      ======================================================= */
 
-  function updateMark(
-    index: number,
-    mark: GradingResult["mark"]
+  function updateResult(
+    questionId: string,
+    patch: Partial<EditableResult>
   ) {
     setResults(
       (
@@ -754,59 +566,19 @@ export default function SecondReviewPage() {
       ) =>
         current.map(
           (
-            result,
-            resultIndex
+            result
           ) =>
-            resultIndex ===
-            index
+            result.questionId ===
+            questionId
               ? {
                   ...result,
-
-                  mark,
-
-                  changed:
-                    mark !==
-                    result.firstMark,
-                }
-              : result
-        )
-    );
-
-    setMessage("");
-  }
-
-  /* =======================================================
-     Reason
-     ======================================================= */
-
-  function updateReason(
-    index: number,
-    reason: string
-  ) {
-    setResults(
-      (
-        current
-      ) =>
-        current.map(
-          (
-            result,
-            resultIndex
-          ) =>
-            resultIndex ===
-            index
-              ? {
-                  ...result,
-
-                  reason,
-
+                  ...patch,
                   changed:
                     true,
                 }
               : result
         )
     );
-
-    setMessage("");
   }
 
   /* =======================================================
@@ -815,21 +587,14 @@ export default function SecondReviewPage() {
 
   async function handleSave() {
     if (
-      !selectedAnswer
-    ) {
-      return;
-    }
-
-    if (
+      !selected ||
       saving
     ) {
       return;
     }
 
     try {
-      setSaving(
-        true
-      );
+      setSaving(true);
 
       setError("");
 
@@ -855,88 +620,92 @@ export default function SecondReviewPage() {
         );
       }
 
+      validateResults(
+        results
+      );
+
+      const result =
+        await saveSecondReview(
+          {
+            answerId:
+              selected.id,
+
+            testId:
+              selected.testId,
+
+            subjectId:
+              selected.subjectId,
+
+            studentNumber:
+              selected.studentNumber ??
+              "",
+
+            reviewerId:
+              user.uid,
+
+            results:
+              results.map(
+                (
+                  item
+                ) => ({
+                  questionId:
+                    item.questionId,
+
+                  questionNumber:
+                    item.questionNumber,
+
+                  answerText:
+                    item.answerText,
+
+                  mark:
+                    item.mark,
+
+                  score:
+                    item.score,
+
+                  maxScore:
+                    item.maxScore,
+
+                  confidence:
+                    item.confidence,
+
+                  reviewRequired:
+                    item.reviewRequired,
+
+                  reason:
+                    item.reason ??
+                    "",
+
+                  rubric:
+                    item.rubric ??
+                    "",
+                })
+              ),
+
+            internalNote,
+
+            publicAnnotation,
+          }
+        );
+
       if (
-        !selectedAnswer.studentNumber
+        result.disagreement
       ) {
-        throw new Error(
-          "生徒番号が答案に紐付いていません。"
+        setMessage(
+          "一次確認との採点差異があるため、一次確認へ戻しました。"
+        );
+      } else {
+        setMessage(
+          "二次確認が完了しました。最終確定待ちになりました。"
         );
       }
 
-      const input:
-        SaveReviewInput =
-        {
-          answerId:
-            selectedAnswer.id,
-
-          testId:
-            selectedAnswer.testId,
-
-          subjectId:
-            selectedAnswer.subjectId,
-
-          studentNumber:
-            selectedAnswer.studentNumber,
-
-          reviewerId:
-            user.uid,
-
-          results:
-            results.map(
-              (
-                result
-              ) => ({
-                questionId:
-                  result.questionId,
-
-                questionNumber:
-                  result.questionNumber,
-
-                answerText:
-                  result.answerText,
-
-                mark:
-                  result.mark,
-
-                score:
-                  result.score,
-
-                maxScore:
-                  result.maxScore,
-
-                confidence:
-                  result.confidence,
-
-                reviewRequired:
-                  false,
-
-                reason:
-                  result.reason,
-
-                rubric:
-                  result.rubric,
-              })
-            ),
-
-          internalNote,
-
-          publicAnnotation,
-        };
-
-      await saveSecondReview(
-        input
-      );
-
-      setMessage(
-        "二次確認を保存しました。"
-      );
-
-      await loadAnswers();
+      await loadPage();
     } catch (
       error
     ) {
       console.error(
-        "Second review save error:",
+        "Save second review error:",
         error
       );
 
@@ -946,66 +715,47 @@ export default function SecondReviewPage() {
           : "二次確認を保存できませんでした。"
       );
     } finally {
-      setSaving(
-        false
-      );
+      setSaving(false);
     }
   }
 
   /* =======================================================
-     Return
+     Summary
      ======================================================= */
 
-  async function handleReturn() {
-    if (
-      !selectedAnswer
-    ) {
-      return;
-    }
+  const totalScore =
+    results.reduce(
+      (
+        total,
+        result
+      ) =>
+        total +
+        safeNumber(
+          result.score
+        ),
+      0
+    );
 
-    if (
-      returning
-    ) {
-      return;
-    }
+  const totalMaxScore =
+    results.reduce(
+      (
+        total,
+        result
+      ) =>
+        total +
+        safeNumber(
+          result.maxScore
+        ),
+      0
+    );
 
-    try {
-      setReturning(
-        true
-      );
-
-      setError("");
-
-      setMessage("");
-
-      await returnToFirstReview(
-        selectedAnswer.id
-      );
-
-      setMessage(
-        "一次確認へ差し戻しました。"
-      );
-
-      await loadAnswers();
-    } catch (
-      error
-    ) {
-      console.error(
-        "Return to first review error:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "一次確認へ差し戻せませんでした。"
-      );
-    } finally {
-      setReturning(
-        false
-      );
-    }
-  }
+  const changedCount =
+    results.filter(
+      (
+        result
+      ) =>
+        result.changed
+    ).length;
 
   /* =======================================================
      Loading
@@ -1022,7 +772,7 @@ export default function SecondReviewPage() {
           </h1>
 
           <p>
-            二次確認対象の答案を読み込んでいます...
+            二次確認対象を読み込んでいます...
           </p>
         </section>
       </main>
@@ -1048,7 +798,7 @@ export default function SecondReviewPage() {
             </h1>
 
             <p className="muted">
-              一次確認済みの採点結果を再確認し、差異を確認します。
+              一次確認済みの答案を最終確認します。
             </p>
           </div>
 
@@ -1070,7 +820,7 @@ export default function SecondReviewPage() {
 
             <Link
               href="/grading/confirm"
-              className="button primary"
+              className="button"
             >
               採点確定
             </Link>
@@ -1113,10 +863,13 @@ export default function SecondReviewPage() {
               "grid",
 
             gridTemplateColumns:
-              "360px minmax(0, 1fr)",
+              "minmax(350px, .85fr) minmax(0, 1.55fr)",
 
             gap:
-              20,
+              18,
+
+            marginTop:
+              16,
 
             alignItems:
               "start",
@@ -1128,6 +881,10 @@ export default function SecondReviewPage() {
               ================================================ */}
 
           <section className="card">
+            <h2>
+              二次確認対象
+            </h2>
+
             <input
               value={
                 search
@@ -1145,151 +902,160 @@ export default function SecondReviewPage() {
                 width:
                   "100%",
 
-                marginBottom:
-                  12,
+                marginTop:
+                  10,
               }}
             />
 
             <div
-              className="muted"
               style={{
-                marginBottom:
-                  12,
-
-                fontSize:
+                marginTop:
                   12,
               }}
             >
-              二次確認対象：
-              {
-                filtered.length
-              }
-              件
+              {filtered.length ===
+              0 ? (
+                <EmptyList />
+              ) : (
+                filtered.map(
+                  (
+                    answer
+                  ) => (
+                    <button
+                      key={
+                        answer.id
+                      }
+                      type="button"
+                      onClick={() =>
+                        setSelectedId(
+                          answer.id
+                        )
+                      }
+                      style={{
+                        display:
+                          "block",
+
+                        width:
+                          "100%",
+
+                        marginBottom:
+                          8,
+
+                        padding:
+                          13,
+
+                        border:
+                          selectedId ===
+                          answer.id
+                            ? "2px solid #111"
+                            : "1px solid #ddd",
+
+                        borderRadius:
+                          8,
+
+                        background:
+                          selectedId ===
+                          answer.id
+                            ? "#f7f7f7"
+                            : "#fff",
+
+                        textAlign:
+                          "left",
+
+                        cursor:
+                          "pointer",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display:
+                            "flex",
+
+                          justifyContent:
+                            "space-between",
+
+                          gap:
+                            8,
+                        }}
+                      >
+                        <div>
+                          <strong>
+                            {
+                              answer.studentName ||
+                              "未紐付け"
+                            }
+                          </strong>
+
+                          <div
+                            className="muted"
+                            style={{
+                              marginTop:
+                                3,
+
+                              fontSize:
+                                11,
+                            }}
+                          >
+                            {
+                              answer.studentNumber ||
+                              "生徒番号なし"
+                            }
+                          </div>
+                        </div>
+
+                        <span
+                          style={{
+                            padding:
+                              "4px 8px",
+
+                            borderRadius:
+                              999,
+
+                            background:
+                              "#fff4d6",
+
+                            fontSize:
+                              10,
+                          }}
+                        >
+                          二次確認
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop:
+                            8,
+
+                          fontSize:
+                            12,
+                        }}
+                      >
+                        {
+                          answer.testName
+                        }
+                      </div>
+
+                      <div
+                        className="muted"
+                        style={{
+                          marginTop:
+                            3,
+
+                          fontSize:
+                            11,
+                        }}
+                      >
+                        {
+                          answer.subjectName ||
+                          "—"
+                        }
+                      </div>
+                    </button>
+                  )
+                )
+              )}
             </div>
-
-            {filtered.length ===
-              0 && (
-              <div
-                style={{
-                  padding:
-                    35,
-
-                  textAlign:
-                    "center",
-
-                  color:
-                    "#777",
-                }}
-              >
-                <strong>
-                  二次確認対象の答案はありません。
-                </strong>
-
-                <p
-                  style={{
-                    fontSize:
-                      12,
-                  }}
-                >
-                  一次確認を完了した答案がここに表示されます。
-                </p>
-              </div>
-            )}
-
-            {filtered.map(
-              (
-                answer
-              ) => (
-                <button
-                  key={
-                    answer.id
-                  }
-                  type="button"
-                  onClick={() =>
-                    setSelectedAnswerId(
-                      answer.id
-                    )
-                  }
-                  style={{
-                    display:
-                      "block",
-
-                    width:
-                      "100%",
-
-                    marginBottom:
-                      8,
-
-                    padding:
-                      14,
-
-                    textAlign:
-                      "left",
-
-                    border:
-                      selectedAnswerId ===
-                      answer.id
-                        ? "2px solid #111"
-                        : "1px solid #ddd",
-
-                    borderRadius:
-                      8,
-
-                    background:
-                      selectedAnswerId ===
-                      answer.id
-                        ? "#f7f7f7"
-                        : "#fff",
-
-                    cursor:
-                      "pointer",
-                  }}
-                >
-                  <strong>
-                    {
-                      answer.studentName ||
-                      "生徒未紐付け"
-                    }
-                  </strong>
-
-                  <div
-                    className="muted"
-                    style={{
-                      marginTop:
-                        4,
-
-                      fontSize:
-                        12,
-                    }}
-                  >
-                    {
-                      answer.studentNumber ||
-                      "生徒番号未設定"
-                    }
-                  </div>
-
-                  <div
-                    className="muted"
-                    style={{
-                      marginTop:
-                        3,
-
-                      fontSize:
-                        12,
-                    }}
-                  >
-                    {
-                      answer.testName
-                    }
-                    {" / "}
-                    {
-                      answer.subjectName ||
-                      "—"
-                    }
-                  </div>
-                </button>
-              )
-            )}
           </section>
 
           {/* ================================================
@@ -1297,15 +1063,21 @@ export default function SecondReviewPage() {
               ================================================ */}
 
           <section className="card">
-            {!selectedAnswer ? (
+            {!selected ? (
               <EmptyDetail />
             ) : detailLoading ? (
               <div
                 style={{
-                  padding:
-                    60,
+                  minHeight:
+                    650,
 
-                  textAlign:
+                  display:
+                    "flex",
+
+                  alignItems:
+                    "center",
+
+                  justifyContent:
                     "center",
                 }}
               >
@@ -1313,9 +1085,7 @@ export default function SecondReviewPage() {
               </div>
             ) : (
               <>
-                {/* ==========================================
-                    Header
-                    ========================================== */}
+                {/* Header */}
 
                 <header
                   style={{
@@ -1325,11 +1095,14 @@ export default function SecondReviewPage() {
                     justifyContent:
                       "space-between",
 
+                    alignItems:
+                      "flex-start",
+
                     gap:
                       20,
 
                     paddingBottom:
-                      18,
+                      16,
 
                     borderBottom:
                       "1px solid #eee",
@@ -1343,36 +1116,48 @@ export default function SecondReviewPage() {
                       }}
                     >
                       {
-                        selectedAnswer.studentName ||
+                        selected.studentName ||
                         "生徒未紐付け"
                       }
                     </h2>
 
-                    <p
+                    <div
                       className="muted"
                       style={{
-                        margin:
-                          "5px 0 0",
+                        marginTop:
+                          4,
+
+                        fontSize:
+                          12,
                       }}
                     >
                       {
-                        selectedAnswer.studentNumber ||
-                        "生徒番号未設定"
+                        selected.studentNumber ||
+                        "生徒番号なし"
+                      }
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          3,
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      {
+                        selected.testName
                       }
 
                       {" / "}
 
                       {
-                        selectedAnswer.testName
-                      }
-
-                      {" / "}
-
-                      {
-                        selectedAnswer.subjectName ||
+                        selected.subjectName ||
                         "—"
                       }
-                    </p>
+                    </div>
                   </div>
 
                   <div
@@ -1385,84 +1170,32 @@ export default function SecondReviewPage() {
                       className="muted"
                       style={{
                         fontSize:
-                          11,
+                          10,
                       }}
                     >
-                      二次確認得点
+                      二次確認合計
                     </div>
 
                     <strong
                       style={{
                         fontSize:
-                          28,
+                          24,
                       }}
                     >
                       {
                         totalScore
                       }
-
-                      <span
-                        style={{
-                          fontSize:
-                            14,
-
-                          fontWeight:
-                            400,
-                        }}
-                      >
-                        {" / "}
-                        {
-                          totalMaxScore
-                        }
-                      </span>
+                      {" / "}
+                      {
+                        totalMaxScore
+                      }
                     </strong>
                   </div>
                 </header>
 
-                {/* ==========================================
-                    Difference warning
-                    ========================================== */}
-
-                {hasDisagreements && (
-                  <div
-                    style={{
-                      marginTop:
-                        16,
-
-                      padding:
-                        14,
-
-                      border:
-                        "1px solid #e6b85c",
-
-                      borderRadius:
-                        8,
-
-                      background:
-                        "#fff9e8",
-                    }}
-                  >
-                    <strong>
-                      一次確認と現在の採点結果に差異があります。
-                    </strong>
-
-                    <p
-                      style={{
-                        margin:
-                          "5px 0 0",
-
-                        fontSize:
-                          12,
-                      }}
-                    >
-                      差異を確認し、二次確認結果を保存してください。
-                    </p>
-                  </div>
-                )}
-
-                {/* ==========================================
-                    Image
-                    ========================================== */}
+                {/* =================================================
+                    Answer image
+                    ================================================= */}
 
                 <section
                   style={{
@@ -1479,31 +1212,30 @@ export default function SecondReviewPage() {
                       minHeight:
                         280,
 
+                      maxHeight:
+                        500,
+
+                      overflow:
+                        "auto",
+
                       display:
                         "flex",
 
-                      alignItems:
-                        "center",
-
                       justifyContent:
                         "center",
+
+                      alignItems:
+                        "flex-start",
 
                       background:
                         "#f5f5f5",
 
                       borderRadius:
                         8,
-
-                      overflow:
-                        "hidden",
                     }}
                   >
-                    {imageLoading ? (
-                      <span>
-                        答案画像を読み込んでいます...
-                      </span>
-                    ) : imageUrl ? (
-                      selectedAnswer.contentType ===
+                    {imageUrl ? (
+                      selected.contentType ===
                       "application/pdf" ? (
                         <iframe
                           src={
@@ -1515,7 +1247,7 @@ export default function SecondReviewPage() {
                               "100%",
 
                             height:
-                              500,
+                              480,
 
                             border:
                               0,
@@ -1532,7 +1264,7 @@ export default function SecondReviewPage() {
                               "100%",
 
                             maxHeight:
-                              550,
+                              480,
 
                             objectFit:
                               "contain",
@@ -1540,258 +1272,154 @@ export default function SecondReviewPage() {
                         />
                       )
                     ) : (
-                      <span className="muted">
+                      <div
+                        style={{
+                          padding:
+                            45,
+
+                          color:
+                            "#777",
+                        }}
+                      >
                         答案画像を表示できません。
-                      </span>
+                      </div>
                     )}
                   </div>
                 </section>
 
-                {/* ==========================================
-                    Comparison table
-                    ========================================== */}
+                {/* =================================================
+                    Results
+                    ================================================= */}
 
                 <section
                   style={{
-                    marginTop:
-                      22,
-                  }}
-                >
-                  <h3>
-                    採点比較
-                  </h3>
-
-                  <div
-                    style={{
-                      overflowX:
-                        "auto",
-                    }}
-                  >
-                    <table className="dataTable">
-                      <thead>
-                        <tr>
-                          <th>
-                            問題
-                          </th>
-
-                          <th>
-                            解答
-                          </th>
-
-                          <th>
-                            一次確認
-                          </th>
-
-                          <th>
-                            二次確認
-                          </th>
-
-                          <th>
-                            得点
-                          </th>
-
-                          <th>
-                            理由
-                          </th>
-                        </tr>
-                      </thead>
-
-                      <tbody>
-                        {results.map(
-                          (
-                            result,
-                            index
-                          ) => {
-                            const difference =
-                              result.changed;
-
-                            return (
-                              <tr
-                                key={`${result.questionId}-${index}`}
-                                style={{
-                                  background:
-                                    difference
-                                      ? "#fff9e8"
-                                      : undefined,
-                                }}
-                              >
-                                <td>
-                                  <strong>
-                                    {
-                                      result.questionNumber
-                                    }
-                                  </strong>
-                                </td>
-
-                                <td
-                                  style={{
-                                    minWidth:
-                                      150,
-                                  }}
-                                >
-                                  {
-                                    result.answerText ||
-                                    "—"
-                                  }
-                                </td>
-
-                                <td>
-                                  <div>
-                                    <strong>
-                                      {
-                                        result.firstMark ??
-                                        "—"
-                                      }
-                                    </strong>
-                                  </div>
-
-                                  <div
-                                    className="muted"
-                                    style={{
-                                      fontSize:
-                                        11,
-                                    }}
-                                  >
-                                    {
-                                      result.firstScore
-                                    }
-                                    {" / "}
-                                    {
-                                      result.maxScore
-                                    }
-                                  </div>
-                                </td>
-
-                                <td>
-                                  <select
-                                    value={
-                                      result.mark
-                                    }
-                                    onChange={(
-                                      event
-                                    ) =>
-                                      updateMark(
-                                        index,
-                                        event
-                                          .target
-                                          .value as GradingResult["mark"]
-                                      )
-                                    }
-                                  >
-                                    <option value="○">
-                                      ○
-                                    </option>
-
-                                    <option value="△">
-                                      △
-                                    </option>
-
-                                    <option value="×">
-                                      ×
-                                    </option>
-                                  </select>
-                                </td>
-
-                                <td>
-                                  <div
-                                    style={{
-                                      display:
-                                        "flex",
-
-                                      alignItems:
-                                        "center",
-
-                                      gap:
-                                        4,
-                                    }}
-                                  >
-                                    <input
-                                      type="number"
-                                      min={
-                                        0
-                                      }
-                                      max={
-                                        result.maxScore
-                                      }
-                                      value={
-                                        result.score
-                                      }
-                                      onChange={(
-                                        event
-                                      ) =>
-                                        updateScore(
-                                          index,
-                                          event
-                                            .target
-                                            .value
-                                        )
-                                      }
-                                      style={{
-                                        width:
-                                          70,
-                                      }}
-                                    />
-
-                                    <span>
-                                      /
-                                      {
-                                        result.maxScore
-                                      }
-                                    </span>
-                                  </div>
-                                </td>
-
-                                <td>
-                                  <input
-                                    value={
-                                      result.reason ??
-                                      ""
-                                    }
-                                    onChange={(
-                                      event
-                                    ) =>
-                                      updateReason(
-                                        index,
-                                        event
-                                          .target
-                                          .value
-                                      )
-                                    }
-                                    placeholder="必要な場合"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          }
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-
-                {/* ==========================================
-                    Notes
-                    ========================================== */}
-
-                <section
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "1fr 1fr",
-
-                    gap:
-                      14,
-
                     marginTop:
                       20,
                   }}
                 >
-                  <label>
-                    <strong>
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      alignItems:
+                        "center",
+                    }}
+                  >
+                    <div>
+                      <h3
+                        style={{
+                          margin:
+                            0,
+                        }}
+                      >
+                        二次確認結果
+                      </h3>
+
+                      <p
+                        className="muted"
+                        style={{
+                          margin:
+                            "5px 0 0",
+
+                          fontSize:
+                            11,
+                        }}
+                      >
+                        一次確認結果と照合して確認してください。
+                      </p>
+                    </div>
+
+                    {changedCount >
+                      0 && (
+                      <span
+                        style={{
+                          padding:
+                            "4px 8px",
+
+                          borderRadius:
+                            999,
+
+                          background:
+                            "#f1f1f1",
+
+                          fontSize:
+                            10,
+                        }}
+                      >
+                        変更
+                        {
+                          changedCount
+                        }
+                        問
+                      </span>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop:
+                        12,
+                    }}
+                  >
+                    {results.map(
+                      (
+                        result
+                      ) => (
+                        <QuestionRow
+                          key={
+                            result.questionId
+                          }
+                          result={
+                            result
+                          }
+                          onChange={
+                            updateResult
+                          }
+                        />
+                      )
+                    )}
+                  </div>
+                </section>
+
+                {/* =================================================
+                    Notes
+                    ================================================= */}
+
+                <section
+                  style={{
+                    marginTop:
+                      20,
+                  }}
+                >
+                  <h3>
+                    確認メモ
+                  </h3>
+
+                  <label
+                    style={{
+                      display:
+                        "block",
+                    }}
+                  >
+                    <span
+                      className="muted"
+                      style={{
+                        display:
+                          "block",
+
+                        marginBottom:
+                          5,
+
+                        fontSize:
+                          11,
+                      }}
+                    >
                       内部メモ
-                    </strong>
+                    </span>
 
                     <textarea
                       value={
@@ -1801,31 +1429,44 @@ export default function SecondReviewPage() {
                         event
                       ) =>
                         setInternalNote(
-                          event
-                            .target
+                          event.target
                             .value
                         )
                       }
                       rows={
-                        4
+                        3
                       }
                       style={{
-                        display:
-                          "block",
-
                         width:
                           "100%",
-
-                        marginTop:
-                          6,
                       }}
                     />
                   </label>
 
-                  <label>
-                    <strong>
-                      生徒公開コメント
-                    </strong>
+                  <label
+                    style={{
+                      display:
+                        "block",
+
+                      marginTop:
+                        12,
+                    }}
+                  >
+                    <span
+                      className="muted"
+                      style={{
+                        display:
+                          "block",
+
+                        marginBottom:
+                          5,
+
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      生徒向けコメント
+                    </span>
 
                     <textarea
                       value={
@@ -1835,31 +1476,24 @@ export default function SecondReviewPage() {
                         event
                       ) =>
                         setPublicAnnotation(
-                          event
-                            .target
+                          event.target
                             .value
                         )
                       }
                       rows={
-                        4
+                        3
                       }
                       style={{
-                        display:
-                          "block",
-
                         width:
                           "100%",
-
-                        marginTop:
-                          6,
                       }}
                     />
                   </label>
                 </section>
 
-                {/* ==========================================
-                    Actions
-                    ========================================== */}
+                {/* =================================================
+                    Footer
+                    ================================================= */}
 
                 <footer
                   style={{
@@ -1885,57 +1519,47 @@ export default function SecondReviewPage() {
                       "1px solid #eee",
                   }}
                 >
+                  <div>
+                    <div
+                      className="muted"
+                      style={{
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      差異がある場合は一次確認へ戻ります。
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{
+                        marginTop:
+                          3,
+
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      差異がなければ採点確定待ちになります。
+                    </div>
+                  </div>
+
                   <button
                     type="button"
-                    className="button"
+                    className="button primary"
                     disabled={
-                      returning ||
-                      saving
+                      saving ||
+                      results.length ===
+                        0
                     }
                     onClick={
-                      handleReturn
+                      handleSave
                     }
                   >
-                    {returning
-                      ? "差し戻し中..."
-                      : "一次確認へ差し戻す"}
+                    {saving
+                      ? "保存中..."
+                      : "二次確認を保存"}
                   </button>
-
-                  <div
-                    style={{
-                      display:
-                        "flex",
-
-                      gap:
-                        8,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="button primary"
-                      disabled={
-                        saving ||
-                        results.length ===
-                          0
-                      }
-                      onClick={
-                        handleSave
-                      }
-                    >
-                      {saving
-                        ? "保存中..."
-                        : "二次確認を保存"}
-                    </button>
-
-                    {!hasDisagreements && (
-                      <Link
-                        href="/grading/confirm"
-                        className="button"
-                      >
-                        採点確定へ
-                      </Link>
-                    )}
-                  </div>
                 </footer>
               </>
             )}
@@ -1947,163 +1571,298 @@ export default function SecondReviewPage() {
 }
 
 /* =========================================================
-   Normalize answer
+   Question row
    ========================================================= */
 
-function normalizeAnswer(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >,
-  students: Student[],
-  tests: Test[]
-): AnswerListItem {
-  const studentId =
-    nullableString(
-      data.studentId
-    );
+function QuestionRow({
+  result,
+  onChange,
+}: {
+  result: EditableResult;
 
-  const testId =
-    stringValue(
-      data.testId
-    );
+  onChange: (
+    questionId: string,
+    patch: Partial<EditableResult>
+  ) => void;
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          14,
 
-  const student =
-    students.find(
-      (
-        item
-      ) =>
-        item.id ===
-        studentId
-    );
+        marginBottom:
+          10,
 
-  const test =
-    tests.find(
-      (
-        item
-      ) =>
-        item.id ===
-          testId ||
-        item.testId ===
-          testId
-    );
+        border:
+          result.changed
+            ? "2px solid #333"
+            : "1px solid #ddd",
 
-  return {
-    id,
+        borderRadius:
+          8,
+      }}
+    >
+      <div
+        style={{
+          display:
+            "flex",
 
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
+          justifyContent:
+            "space-between",
 
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
+          alignItems:
+            "center",
 
-    testId,
+          gap:
+            10,
+        }}
+      >
+        <strong>
+          問
+          {
+            result.questionNumber
+          }
+        </strong>
 
-    subjectId:
-      stringValue(
-        data.subjectId
-      ),
+        {result.changed && (
+          <span
+            style={{
+              fontSize:
+                10,
 
-    studentId,
+              padding:
+                "3px 7px",
 
-    studentNumber:
-      nullableString(
-        data.studentNumber
-      ),
+              borderRadius:
+                999,
 
-    fileKey:
-      stringValue(
-        data.fileKey
-      ),
+              background:
+                "#f1f1f1",
+            }}
+          >
+            変更あり
+          </span>
+        )}
+      </div>
 
-    fileName:
-      stringValue(
-        data.fileName
-      ),
+      <div
+        style={{
+          marginTop:
+            10,
 
-    contentType:
-      stringValue(
-        data.contentType
-      ),
+          padding:
+            10,
 
-    size:
-      safeNumber(
-        data.size
-      ),
+          background:
+            "#f7f7f7",
 
-    status:
-      normalizeStatus(
-        data.status
-      ),
+          borderRadius:
+            6,
 
-    reviewRequired:
-      data.reviewRequired ===
-      true,
+          fontSize:
+            12,
+        }}
+      >
+        <span
+          className="muted"
+          style={{
+            fontSize:
+              10,
+          }}
+        >
+          答案
+        </span>
 
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
+        <div
+          style={{
+            marginTop:
+              3,
 
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
+            wordBreak:
+              "break-word",
+          }}
+        >
+          {
+            result.answerText ||
+            "（答案テキストなし）"
+          }
+        </div>
+      </div>
 
-    qrText:
-      stringValue(
-        data.qrText
-      ),
+      <div
+        style={{
+          display:
+            "grid",
 
-    qrConfidence:
-      safeNumber(
-        data.qrConfidence
-      ),
+          gridTemplateColumns:
+            "100px 120px 1fr",
 
-    ocrConfidence:
-      safeNumber(
-        data.ocrConfidence
-      ),
+          gap:
+            10,
 
-    processingError:
-      stringValue(
-        data.processingError
-      ),
+          marginTop:
+            10,
+        }}
+      >
+        <label>
+          <span
+            className="muted"
+            style={{
+              display:
+                "block",
 
-    createdAt:
-      data.createdAt,
+              marginBottom:
+                4,
 
-    updatedAt:
-      data.updatedAt,
+              fontSize:
+                10,
+            }}
+          >
+            判定
+          </span>
 
-    processedAt:
-      data.processedAt,
+          <select
+            value={
+              result.mark
+            }
+            onChange={(
+              event
+            ) =>
+              onChange(
+                result.questionId,
+                {
+                  mark:
+                    event.target
+                      .value as GradingMark,
+                }
+              )
+            }
+          >
+            <option value="○">
+              ○
+            </option>
 
-    confirmedAt:
-      data.confirmedAt,
+            <option value="△">
+              △
+            </option>
 
-    studentName:
-      student?.name ??
-      "",
+            <option value="×">
+              ×
+            </option>
+          </select>
+        </label>
 
-    testName:
-      test?.name ??
-      "テスト未設定",
+        <label>
+          <span
+            className="muted"
+            style={{
+              display:
+                "block",
 
-    subjectName:
-      stringValue(
-        data.subjectName
-      ),
-  };
+              marginBottom:
+                4,
+
+              fontSize:
+                10,
+            }}
+          >
+            得点
+          </span>
+
+          <input
+            type="number"
+            min={
+              0
+            }
+            max={
+              result.maxScore
+            }
+            value={
+              result.score
+            }
+            onChange={(
+              event
+            ) =>
+              onChange(
+                result.questionId,
+                {
+                  score:
+                    clamp(
+                      Number(
+                        event.target
+                          .value
+                      ),
+                      0,
+                      result.maxScore
+                    ),
+                }
+              )
+            }
+          />
+        </label>
+
+        <label>
+          <span
+            className="muted"
+            style={{
+              display:
+                "block",
+
+              marginBottom:
+                4,
+
+              fontSize:
+                10,
+            }}
+          >
+            確認理由
+          </span>
+
+          <input
+            value={
+              result.reason ??
+              ""
+            }
+            onChange={(
+              event
+            ) =>
+              onChange(
+                result.questionId,
+                {
+                  reason:
+                    event.target
+                      .value,
+                }
+              )
+            }
+          />
+        </label>
+      </div>
+
+      {result.rubric && (
+        <div
+          className="muted"
+          style={{
+            marginTop:
+              10,
+
+            fontSize:
+              11,
+          }}
+        >
+          採点基準：
+          {
+            result.rubric
+          }
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* =========================================================
-   Student
+   Normalize
    ========================================================= */
 
 function normalizeStudent(
@@ -2157,10 +1916,6 @@ function normalizeStudent(
       data.updatedAt,
   };
 }
-
-/* =========================================================
-   Test
-   ========================================================= */
 
 function normalizeTest(
   id: string,
@@ -2243,11 +1998,163 @@ function normalizeTest(
   };
 }
 
+function normalizeAnswer(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): ReviewRow {
+  const studentId =
+    nullableString(
+      data.studentId
+    );
+
+  const testId =
+    stringValue(
+      data.testId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const test =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+          testId ||
+        item.testId ===
+          testId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId,
+
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
+
+    studentId,
+
+    studentNumber:
+      nullableString(
+        data.studentNumber
+      ),
+
+    fileKey:
+      stringValue(
+        data.fileKey
+      ),
+
+    fileName:
+      stringValue(
+        data.fileName
+      ),
+
+    contentType:
+      stringValue(
+        data.contentType
+      ),
+
+    size:
+      safeNumber(
+        data.size
+      ),
+
+    status:
+      normalizeAnswerStatus(
+        data.status
+      ),
+
+    reviewRequired:
+      data.reviewRequired ===
+      true,
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    totalMaxScore:
+      safeNumber(
+        data.totalMaxScore
+      ),
+
+    qrText:
+      stringValue(
+        data.qrText
+      ),
+
+    qrConfidence:
+      safeNumber(
+        data.qrConfidence
+      ),
+
+    ocrConfidence:
+      safeNumber(
+        data.ocrConfidence
+      ),
+
+    processingError:
+      stringValue(
+        data.processingError
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    processedAt:
+      data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
+
+    studentName:
+      student?.name ??
+      "",
+
+    testName:
+      test?.name ??
+      "テスト未設定",
+
+    subjectName:
+      stringValue(
+        data.subjectName
+      ),
+  };
+}
+
 /* =========================================================
    Status
    ========================================================= */
 
-function normalizeStatus(
+function normalizeAnswerStatus(
   value: unknown
 ): Answer["status"] {
   switch (
@@ -2269,7 +2176,196 @@ function normalizeStatus(
 }
 
 /* =========================================================
-   Helpers
+   Validation
+   ========================================================= */
+
+function validateResults(
+  results: EditableResult[]
+) {
+  for (
+    const result of
+      results
+  ) {
+    if (
+      !Number.isFinite(
+        result.score
+      )
+    ) {
+      throw new Error(
+        `問${result.questionNumber}の得点が不正です。`
+      );
+    }
+
+    if (
+      result.score <
+        0 ||
+      result.score >
+        result.maxScore
+    ) {
+      throw new Error(
+        `問${result.questionNumber}の得点が範囲外です。`
+      );
+    }
+  }
+}
+
+/* =========================================================
+   Clamp
+   ========================================================= */
+
+function clamp(
+  value: number,
+  min: number,
+  max: number
+) {
+  if (
+    !Number.isFinite(
+      value
+    )
+  ) {
+    return min;
+  }
+
+  return Math.min(
+    Math.max(
+      value,
+      min
+    ),
+    max
+  );
+}
+
+/* =========================================================
+   Time
+   ========================================================= */
+
+function getTime(
+  value: unknown
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
+
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyList() {
+  return (
+    <div
+      style={{
+        padding:
+          45,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        二次確認対象はありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        一次確認が完了した答案がここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+function EmptyDetail() {
+  return (
+    <div
+      style={{
+        minHeight:
+          650,
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <div>
+        <strong>
+          二次確認する答案を選択してください
+        </strong>
+
+        <p
+          style={{
+            marginTop:
+              6,
+
+            fontSize:
+              12,
+          }}
+        >
+          左側から答案を選択してください。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Primitive
    ========================================================= */
 
 function stringValue(
@@ -2295,7 +2391,8 @@ function safeNumber(
 ) {
   const number =
     Number(
-      value ?? 0
+      value ??
+        0
     );
 
   return Number.isFinite(
@@ -2303,54 +2400,4 @@ function safeNumber(
   )
     ? number
     : 0;
-}
-
-function getStatusLabel(
-  status: Answer["status"]
-) {
-  switch (
-    status
-  ) {
-    case "second_review":
-      return "二次確認";
-
-    case "confirmed":
-      return "確定";
-
-    default:
-      return status;
-  }
-}
-
-function EmptyDetail() {
-  return (
-    <div
-      style={{
-        minHeight:
-          500,
-
-        display:
-          "flex",
-
-        alignItems:
-          "center",
-
-        justifyContent:
-          "center",
-
-        textAlign:
-          "center",
-      }}
-    >
-      <div>
-        <strong>
-          答案を選択してください
-        </strong>
-
-        <p className="muted">
-          左側から二次確認する答案を選択してください。
-        </p>
-      </div>
-    </div>
-  );
 }
