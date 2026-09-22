@@ -9,15 +9,7 @@ import {
 import Link from "next/link";
 
 import {
-  collection,
-  getDocs,
-  query,
-  where,
-} from "firebase/firestore";
-
-import {
   auth,
-  db,
 } from "@/lib/firebase";
 
 import {
@@ -25,14 +17,17 @@ import {
 } from "@/lib/auth";
 
 import {
-  answersQueries,
   getScopedDocs,
+  answersQueries,
+  studentsQueries,
   testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
-  AnswerStatus,
+  Answer,
+  Student,
+  Test,
   UserRole,
 } from "@/lib/types";
 
@@ -40,81 +35,12 @@ import type {
    Types
    ========================================================= */
 
-type TestRecord = {
-  id: string;
-
-  testId: string;
-
-  name: string;
-
-  subject: string;
-
-  grade: string;
-
-  className: string;
-
-  schoolId: string;
-
-  examDate: string;
-
-  totalScore: number;
-
-  isRetest: boolean;
-
-  automaticGrading: boolean;
-};
-
-type AnswerRecord = {
-  id: string;
-
-  testId: string;
-
-  subjectId: string;
-
-  schoolId: string;
-
-  studentId:
-    | string
-    | null;
-
-  studentNumber:
-    | string
-    | null;
-
-  status: AnswerStatus;
-
-  reviewRequired: boolean;
-
-  totalScore: number;
-
-  totalMaxScore: number;
-
-  createdAt?: unknown;
-};
-
-type TestProgress = {
-  test: TestRecord;
-
-  totalAnswers: number;
-
-  uploaded: number;
-
-  processing: number;
-
-  graded: number;
-
-  firstReview: number;
-
-  secondReview: number;
-
-  confirmed: number;
-
-  published: number;
-
-  manualGrading: number;
-
-  automaticGrading: number;
-};
+type AnswerRow =
+  Answer & {
+    studentName: string;
+    testName: string;
+    subjectName: string;
+  };
 
 /* =========================================================
    Page
@@ -122,26 +48,18 @@ type TestProgress = {
 
 export default function GradingPage() {
   const [
-    userRole,
-    setUserRole,
+    role,
+    setRole,
   ] =
     useState<UserRole | null>(
       null
     );
 
   const [
-    tests,
-    setTests,
-  ] =
-    useState<TestRecord[]>(
-      []
-    );
-
-  const [
     answers,
     setAnswers,
   ] =
-    useState<AnswerRecord[]>(
+    useState<AnswerRow[]>(
       []
     );
 
@@ -168,22 +86,9 @@ export default function GradingPage() {
     setStatusFilter,
   ] =
     useState<
-      | "all"
-      | "waiting"
-      | "review"
-      | "completed"
+      "all" | Answer["status"]
     >(
       "all"
-    );
-
-  const [
-    selectedTestId,
-    setSelectedTestId,
-  ] =
-    useState<
-      string | null
-    >(
-      null
     );
 
   /* =======================================================
@@ -191,10 +96,10 @@ export default function GradingPage() {
      ======================================================= */
 
   useEffect(() => {
-    void loadGradingPage();
+    void loadPage();
   }, []);
 
-  async function loadGradingPage() {
+  async function loadPage() {
     try {
       setLoading(true);
 
@@ -218,13 +123,9 @@ export default function GradingPage() {
         "生徒"
       ) {
         throw new Error(
-          "この画面は職員のみ利用できます。"
+          "採点管理は職員のみ利用できます。"
         );
       }
-
-      setUserRole(
-        user.role
-      );
 
       if (
         !user.organizationId
@@ -233,6 +134,10 @@ export default function GradingPage() {
           "所属組織が設定されていません。"
         );
       }
+
+      setRole(
+        user.role
+      );
 
       const scopeUser:
         FirestoreUser =
@@ -253,208 +158,94 @@ export default function GradingPage() {
             user.studentId,
         };
 
-      /*
-       * テストと答案を実データから取得。
-       *
-       * ダミー件数は一切作らない。
-       */
       const [
-        testDocuments,
         answerDocuments,
+        studentDocuments,
+        testDocuments,
       ] =
         await Promise.all([
-          getScopedDocs(
-            testsQueries(
-              scopeUser
-            )
-          ),
-
           getScopedDocs(
             answersQueries(
               scopeUser
             )
           ),
+
+          getScopedDocs(
+            studentsQueries(
+              scopeUser
+            )
+          ),
+
+          getScopedDocs(
+            testsQueries(
+              scopeUser
+            )
+          ),
         ]);
 
-      const loadedTests =
-        testDocuments
-          .map(
-            (
-              document
-            ): TestRecord => {
-              const data =
-                document.data;
-
-              return {
-                id:
-                  document.id,
-
-                testId:
-                  stringValue(
-                    data.testId
-                  ) ||
-                  document.id,
-
-                name:
-                  stringValue(
-                    data.name
-                  ),
-
-                subject:
-                  stringValue(
-                    data.subject
-                  ),
-
-                grade:
-                  stringValue(
-                    data.grade
-                  ),
-
-                className:
-                  stringValue(
-                    data.className
-                  ),
-
-                schoolId:
-                  stringValue(
-                    data.schoolId
-                  ),
-
-                examDate:
-                  stringValue(
-                    data.examDate
-                  ),
-
-                totalScore:
-                  safeNumber(
-                    data.totalScore
-                  ),
-
-                isRetest:
-                  data.isRetest ===
-                  true,
-
-                automaticGrading:
-                  data.automaticGrading ===
-                  true,
-              };
-            }
-          )
-          /*
-           * 追試は通常採点管理から除外。
-           */
-          .filter(
-            (
-              test
-            ) =>
-              !test.isRetest
-          );
-
-      const loadedAnswers =
-        answerDocuments.map(
+      const students =
+        studentDocuments.map(
           (
-            document
-          ): AnswerRecord => {
-            const data =
-              document.data;
-
-            return {
-              id:
-                document.id,
-
-              testId:
-                stringValue(
-                  data.testId
-                ),
-
-              subjectId:
-                stringValue(
-                  data.subjectId
-                ),
-
-              schoolId:
-                stringValue(
-                  data.schoolId
-                ),
-
-              studentId:
-                nullableString(
-                  data.studentId
-                ),
-
-              studentNumber:
-                nullableString(
-                  data.studentNumber
-                ),
-
-              status:
-                normalizeStatus(
-                  data.status
-                ),
-
-              reviewRequired:
-                data.reviewRequired ===
-                true,
-
-              totalScore:
-                safeNumber(
-                  data.totalScore
-                ),
-
-              totalMaxScore:
-                safeNumber(
-                  data.totalMaxScore
-                ),
-
-              createdAt:
-                data.createdAt,
-            };
-          }
+            item
+          ) =>
+            normalizeStudent(
+              item.id,
+              item.data
+            )
         );
 
-      setTests(
-        loadedTests
-      );
+      const tests =
+        testDocuments.map(
+          (
+            item
+          ) =>
+            normalizeTest(
+              item.id,
+              item.data
+            )
+        );
+
+      const loaded =
+        answerDocuments
+          .map(
+            (
+              item
+            ) =>
+              normalizeAnswer(
+                item.id,
+                item.data,
+                students,
+                tests
+              )
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
+              )
+          );
 
       setAnswers(
-        loadedAnswers
-      );
-
-      setSelectedTestId(
-        (
-          current
-        ) => {
-          if (
-            current &&
-            loadedTests.some(
-              (
-                test
-              ) =>
-                test.id ===
-                current
-            )
-          ) {
-            return current;
-          }
-
-          return (
-            loadedTests[0]?.id ??
-            null
-          );
-        }
+        loaded
       );
     } catch (
       error
     ) {
       console.error(
-        "Grading page load error:",
+        "Grading page error:",
         error
       );
 
       setError(
         error instanceof Error
           ? error.message
-          : "採点管理データを取得できませんでした。"
+          : "採点データを取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -462,208 +253,96 @@ export default function GradingPage() {
   }
 
   /* =======================================================
-     Progress
-     ======================================================= */
-
-  const progressList =
-    useMemo<
-      TestProgress[]
-    >(
-      () =>
-        tests.map(
-          (
-            test
-          ) => {
-            const testAnswers =
-              answers.filter(
-                (
-                  answer
-                ) =>
-                  answer.testId ===
-                  test.id
-              );
-
-            return {
-              test,
-
-              totalAnswers:
-                testAnswers.length,
-
-              uploaded:
-                countStatus(
-                  testAnswers,
-                  "uploaded"
-                ),
-
-              processing:
-                countStatus(
-                  testAnswers,
-                  "processing"
-                ),
-
-              graded:
-                countStatus(
-                  testAnswers,
-                  "graded"
-                ),
-
-              firstReview:
-                countStatus(
-                  testAnswers,
-                  "first_review"
-                ),
-
-              secondReview:
-                countStatus(
-                  testAnswers,
-                  "second_review"
-                ),
-
-              confirmed:
-                countStatus(
-                  testAnswers,
-                  "confirmed"
-                ),
-
-              published:
-                countStatus(
-                  testAnswers,
-                  "published"
-                ),
-
-              manualGrading:
-                testAnswers.filter(
-                  (
-                    answer
-                  ) =>
-                    answer.reviewRequired
-                ).length,
-
-              automaticGrading:
-                testAnswers.filter(
-                  (
-                    answer
-                  ) =>
-                    !answer.reviewRequired &&
-                    (
-                      answer.status ===
-                        "graded" ||
-                      answer.status ===
-                        "confirmed" ||
-                      answer.status ===
-                        "published"
-                    )
-                ).length,
-            };
-          }
-        ),
-      [
-        tests,
-        answers,
-      ]
-    );
-
-  /* =======================================================
      Filter
      ======================================================= */
 
-  const filteredProgress =
+  const filtered =
     useMemo(() => {
       const keyword =
         search
           .trim()
           .toLowerCase();
 
-      return progressList.filter(
+      return answers.filter(
         (
-          progress
+          answer
         ) => {
-          const test =
-            progress.test;
+          const statusMatch =
+            statusFilter ===
+              "all" ||
+            answer.status ===
+              statusFilter;
 
-          const matchesSearch =
+          const searchMatch =
             !keyword ||
-            test.name
+            answer.studentName
               .toLowerCase()
               .includes(
                 keyword
               ) ||
-            test.subject
+            (
+              answer.studentNumber ??
+              ""
+            )
               .toLowerCase()
               .includes(
                 keyword
               ) ||
-            test.grade
+            answer.testName
               .toLowerCase()
               .includes(
                 keyword
               ) ||
-            test.className
+            answer.subjectName
               .toLowerCase()
               .includes(
                 keyword
               );
 
-          const matchesStatus =
-            statusFilter ===
-            "all"
-              ? true
-              : statusFilter ===
-                "waiting"
-              ? progress.uploaded >
-                  0 ||
-                progress.processing >
-                  0
-              : statusFilter ===
-                "review"
-              ? progress.firstReview >
-                  0 ||
-                progress.secondReview >
-                  0 ||
-                progress.manualGrading >
-                  0
-              : statusFilter ===
-                "completed"
-              ? progress.totalAnswers >
-                  0 &&
-                progress.confirmed ===
-                  progress.totalAnswers
-              : true;
-
           return (
-            matchesSearch &&
-            matchesStatus
+            statusMatch &&
+            searchMatch
           );
         }
       );
     }, [
-      progressList,
+      answers,
       search,
       statusFilter,
     ]);
 
   /* =======================================================
-     Selected
+     Statistics
      ======================================================= */
 
-  const selected =
-    progressList.find(
+  const uploaded =
+    answers.filter(
       (
-        item
+        answer
       ) =>
-        item.test.id ===
-        selectedTestId
-    ) ??
-    null;
+        answer.status ===
+        "uploaded"
+    ).length;
 
-  /* =======================================================
-     Overall statistics
-     ======================================================= */
+  const processing =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "processing"
+    ).length;
 
-  const totalAnswers =
-    answers.length;
+  const graded =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "graded"
+    ).length;
 
-  const totalFirstReview =
+  const firstReview =
     answers.filter(
       (
         answer
@@ -672,7 +351,7 @@ export default function GradingPage() {
         "first_review"
     ).length;
 
-  const totalSecondReview =
+  const secondReview =
     answers.filter(
       (
         answer
@@ -681,7 +360,7 @@ export default function GradingPage() {
         "second_review"
     ).length;
 
-  const totalConfirmed =
+  const confirmed =
     answers.filter(
       (
         answer
@@ -690,6 +369,15 @@ export default function GradingPage() {
           "confirmed" ||
         answer.status ===
           "published"
+    ).length;
+
+  const errors =
+    answers.filter(
+      (
+        answer
+      ) =>
+        answer.status ===
+        "error"
     ).length;
 
   /* =======================================================
@@ -707,7 +395,7 @@ export default function GradingPage() {
           </h1>
 
           <p>
-            実際の答案データを読み込んでいます...
+            採点状況を読み込んでいます...
           </p>
         </section>
       </main>
@@ -733,7 +421,7 @@ export default function GradingPage() {
             </h1>
 
             <p className="muted">
-              テストごとの答案受付・採点・確認・確定状況を管理します。
+              答案の処理状況を確認し、必要な確認画面へ進みます。
             </p>
           </div>
 
@@ -747,24 +435,17 @@ export default function GradingPage() {
             }}
           >
             <Link
+              href="/answers"
+              className="button"
+            >
+              答案管理
+            </Link>
+
+            <Link
               href="/grading/review"
               className="button"
             >
               一次確認
-            </Link>
-
-            <Link
-              href="/grading/second-review"
-              className="button"
-            >
-              二次確認
-            </Link>
-
-            <Link
-              href="/grading/confirm"
-              className="button primary"
-            >
-              採点確定
             </Link>
           </div>
         </header>
@@ -774,7 +455,10 @@ export default function GradingPage() {
             ================================================== */}
 
         {error && (
-          <div className="errorMessage">
+          <div
+            className="errorMessage"
+            role="alert"
+          >
             {
               error
             }
@@ -782,7 +466,110 @@ export default function GradingPage() {
         )}
 
         {/* ==================================================
-            Summary
+            Flow
+            ================================================== */}
+
+        <section
+          className="card"
+          style={{
+            marginBottom:
+              18,
+          }}
+        >
+          <h2>
+            採点フロー
+          </h2>
+
+          <div
+            style={{
+              display:
+                "grid",
+
+              gridTemplateColumns:
+                "repeat(5, minmax(0, 1fr))",
+
+              gap:
+                8,
+
+              marginTop:
+                14,
+            }}
+          >
+            <FlowStep
+              number="1"
+              label="答案受付"
+              count={
+                uploaded
+              }
+            />
+
+            <FlowStep
+              number="2"
+              label="採点処理"
+              count={
+                processing
+              }
+            />
+
+            <FlowStep
+              number="3"
+              label="一次確認"
+              count={
+                firstReview
+              }
+            />
+
+            <FlowStep
+              number="4"
+              label="二次確認"
+              count={
+                secondReview
+              }
+            />
+
+            <FlowStep
+              number="5"
+              label="確定"
+              count={
+                confirmed
+              }
+            />
+          </div>
+
+          {errors >
+            0 && (
+            <div
+              style={{
+                marginTop:
+                  12,
+
+                padding:
+                  11,
+
+                borderRadius:
+                  7,
+
+                background:
+                  "#fff1f1",
+
+                color:
+                  "#8a2222",
+
+                fontSize:
+                  12,
+              }}
+            >
+              処理エラー：
+              {
+                errors
+              }
+              件
+            </div>
+          )}
+        </section>
+
+        {/* ==================================================
+            Statistics
             ================================================== */}
 
         <div
@@ -794,66 +581,56 @@ export default function GradingPage() {
               "repeat(4, minmax(0, 1fr))",
 
             gap:
-              12,
+              10,
 
-            marginBottom:
-              20,
-          }}
-        >
-          <SummaryCard
-            label="答案"
-            value={
-              totalAnswers
-            }
-            description="現在登録されている答案"
-          />
-
-          <SummaryCard
-            label="一次確認"
-            value={
-              totalFirstReview
-            }
-            description="一次確認が必要な答案"
-          />
-
-          <SummaryCard
-            label="二次確認"
-            value={
-              totalSecondReview
-            }
-            description="二次確認が必要な答案"
-          />
-
-          <SummaryCard
-            label="確定済み"
-            value={
-              totalConfirmed
-            }
-            description="確定または公開済み"
-          />
-        </div>
-
-        {/* ==================================================
-            Filter
-            ================================================== */}
-
-        <section
-          className="card"
-          style={{
             marginBottom:
               16,
           }}
         >
+          <StatCard
+            label="答案総数"
+            value={
+              answers.length
+            }
+          />
+
+          <StatCard
+            label="採点済み"
+            value={
+              graded
+            }
+          />
+
+          <StatCard
+            label="一次確認待ち"
+            value={
+              firstReview
+            }
+          />
+
+          <StatCard
+            label="二次確認待ち"
+            value={
+              secondReview
+            }
+          />
+        </div>
+
+        {/* ==================================================
+            Filters
+            ================================================== */}
+
+        <section className="card">
           <div
             style={{
               display:
-                "flex",
+                "grid",
+
+              gridTemplateColumns:
+                "1fr 220px",
 
               gap:
                 10,
-
-              flexWrap:
-                "wrap",
             }}
           >
             <input
@@ -868,11 +645,7 @@ export default function GradingPage() {
                     .value
                 )
               }
-              placeholder="テスト名・教科・学年・クラスで検索"
-              style={{
-                flex:
-                  "1 1 280px",
-              }}
+              placeholder="生徒番号・氏名・テスト名・教科"
             />
 
             <select
@@ -883,13 +656,10 @@ export default function GradingPage() {
                 event
               ) =>
                 setStatusFilter(
-                  event
-                    .target
+                  event.target
                     .value as
                     | "all"
-                    | "waiting"
-                    | "review"
-                    | "completed"
+                    | Answer["status"]
                 )
               }
             >
@@ -897,428 +667,52 @@ export default function GradingPage() {
                 すべて
               </option>
 
-              <option value="waiting">
-                答案受付・処理中
+              <option value="uploaded">
+                受付済み
               </option>
 
-              <option value="review">
-                確認・手動採点待ち
+              <option value="processing">
+                処理中
               </option>
 
-              <option value="completed">
-                採点確定済み
+              <option value="graded">
+                採点済み
+              </option>
+
+              <option value="first_review">
+                一次確認待ち
+              </option>
+
+              <option value="second_review">
+                二次確認待ち
+              </option>
+
+              <option value="confirmed">
+                確定
+              </option>
+
+              <option value="published">
+                公開済み
+              </option>
+
+              <option value="error">
+                エラー
               </option>
             </select>
           </div>
         </section>
 
         {/* ==================================================
-            Test list
+            List
             ================================================== */}
 
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "minmax(360px, 1fr) minmax(420px, 1.4fr)",
-
-            gap:
-              20,
-
-            alignItems:
-              "start",
-          }}
-        >
-
-          {/* ================================================
-              Tests
-              ================================================ */}
-
-          <section className="card">
-            <div
-              style={{
-                display:
-                  "flex",
-
-                justifyContent:
-                  "space-between",
-
-                alignItems:
-                  "center",
-
-                marginBottom:
-                  14,
-              }}
-            >
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                テスト
-              </h2>
-
-              <span className="muted">
-                {
-                  filteredProgress.length
-                }
-                件
-              </span>
-            </div>
-
-            {filteredProgress.length ===
-              0 && (
-              <EmptyState
-                title="テストがありません"
-                message="登録された通常テストがここに表示されます。"
-              />
-            )}
-
-            {filteredProgress.map(
-              (
-                progress
-              ) => {
-                const active =
-                  progress.test.id ===
-                  selectedTestId;
-
-                return (
-                  <button
-                    key={
-                      progress.test.id
-                    }
-                    type="button"
-                    onClick={() =>
-                      setSelectedTestId(
-                        progress.test.id
-                      )
-                    }
-                    style={{
-                      display:
-                        "block",
-
-                      width:
-                        "100%",
-
-                      marginBottom:
-                        10,
-
-                      padding:
-                        16,
-
-                      textAlign:
-                        "left",
-
-                      border:
-                        active
-                          ? "2px solid #111"
-                          : "1px solid #ddd",
-
-                      borderRadius:
-                        10,
-
-                      background:
-                        active
-                          ? "#f7f7f7"
-                          : "#fff",
-
-                      cursor:
-                        "pointer",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display:
-                          "flex",
-
-                        justifyContent:
-                          "space-between",
-
-                        gap:
-                          12,
-                      }}
-                    >
-                      <strong>
-                        {
-                          progress.test.name
-                        }
-                      </strong>
-
-                      <span
-                        style={{
-                          fontSize:
-                            12,
-
-                          color:
-                            "#666",
-                        }}
-                      >
-                        {
-                          progress.test.subject
-                        }
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop:
-                          6,
-
-                        fontSize:
-                          12,
-
-                        color:
-                          "#666",
-                      }}
-                    >
-                      {
-                        progress.test.grade
-                      }
-
-                      {progress.test.className &&
-                        ` / ${progress.test.className}`}
-
-                      {progress.test.examDate &&
-                        ` / ${progress.test.examDate}`}
-                    </div>
-
-                    {/* ----------------------------------------
-                        実データ件数
-                        ---------------------------------------- */}
-
-                    <div
-                      style={{
-                        display:
-                          "grid",
-
-                        gridTemplateColumns:
-                          "repeat(3, 1fr)",
-
-                        gap:
-                          8,
-
-                        marginTop:
-                          14,
-                      }}
-                    >
-                      <MiniStat
-                        label="答案"
-                        value={
-                          progress.totalAnswers
-                        }
-                      />
-
-                      <MiniStat
-                        label="一次"
-                        value={
-                          progress.firstReview
-                        }
-                      />
-
-                      <MiniStat
-                        label="二次"
-                        value={
-                          progress.secondReview
-                        }
-                      />
-                    </div>
-                  </button>
-                );
-              }
-            )}
-          </section>
-
-          {/* ================================================
-              Detail
-              ================================================ */}
-
-          <section className="card">
-            {!selected ? (
-              <EmptyState
-                title="テストを選択してください"
-                message="左側から採点状況を確認するテストを選択してください。"
-              />
-            ) : (
-              <TestProgressDetail
-                progress={
-                  selected
-                }
-              />
-            )}
-          </section>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-/* =========================================================
-   Detail
-   ========================================================= */
-
-function TestProgressDetail({
-  progress,
-}: {
-  progress: TestProgress;
-}) {
-  const {
-    test,
-  } = progress;
-
-  const total =
-    progress.totalAnswers;
-
-  const confirmed =
-    progress.confirmed;
-
-  const percentage =
-    total === 0
-      ? 0
-      : Math.round(
-          (confirmed /
-            total) *
-            100
-        );
-
-  /*
-   * 実データに基づく現在ステップ。
-   */
-  const currentStep =
-    getCurrentStep(
-      progress
-    );
-
-  return (
-    <div>
-      <header
-        style={{
-          paddingBottom:
-            18,
-
-          borderBottom:
-            "1px solid #eee",
-        }}
-      >
-        <div
-          style={{
-            display:
-              "flex",
-
-            justifyContent:
-              "space-between",
-
-            gap:
-              20,
-          }}
-        >
-          <div>
-            <h2
-              style={{
-                margin:
-                  0,
-              }}
-            >
-              {
-                test.name
-              }
-            </h2>
-
-            <p
-              className="muted"
-              style={{
-                margin:
-                  "6px 0 0",
-              }}
-            >
-              {
-                test.subject
-              }
-
-              {" / "}
-
-              {
-                test.grade
-              }
-
-              {test.className &&
-                ` / ${test.className}`}
-            </p>
-          </div>
-
-          <div
-            style={{
-              textAlign:
-                "right",
-            }}
-          >
-            <strong
-              style={{
-                fontSize:
-                  28,
-              }}
-            >
-              {confirmed}
-            </strong>
-
-            <span
-              className="muted"
-            >
-              {" / "}
-              {total}
-            </span>
-
-            <div
-              className="muted"
-              style={{
-                fontSize:
-                  12,
-              }}
-            >
-              確定済み
-            </div>
-          </div>
-        </div>
-
-        {/* Progress */}
-
-        <div
+        <section
+          className="card"
           style={{
             marginTop:
-              18,
+              16,
           }}
         >
-          <div
-            style={{
-              height:
-                8,
-
-              borderRadius:
-                999,
-
-              background:
-                "#eee",
-
-              overflow:
-                "hidden",
-            }}
-          >
-            <div
-              style={{
-                width:
-                  `${percentage}%`,
-
-                height:
-                  "100%",
-
-                background:
-                  "#111",
-              }}
-            />
-          </div>
-
           <div
             style={{
               display:
@@ -1327,458 +721,249 @@ function TestProgressDetail({
               justifyContent:
                 "space-between",
 
-              marginTop:
-                6,
+              alignItems:
+                "center",
 
-              fontSize:
+              marginBottom:
                 12,
-
-              color:
-                "#666",
             }}
           >
-            <span>
-              現在：
-              {
-                currentStep
-              }
-            </span>
+            <div>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                答案一覧
+              </h2>
 
-            <span>
-              {
-                percentage
-              }
-              %
-            </span>
+              <p
+                className="muted"
+                style={{
+                  margin:
+                    "4px 0 0",
+
+                  fontSize:
+                    11,
+                }}
+              >
+                {
+                  filtered.length
+                }
+                件表示
+              </p>
+            </div>
           </div>
-        </div>
-      </header>
 
-      {/* ====================================================
-          Steps
-          ==================================================== */}
-
-      <div
-        style={{
-          marginTop:
-            20,
-        }}
-      >
-        <ProgressStep
-          number={1}
-          title="答案受付"
-          description="実際に登録された答案"
-          value={
-            progress.totalAnswers
-          }
-          total={
-            null
-          }
-          completed={
-            progress.totalAnswers >
-            0
-          }
-          href="/answers"
-        />
-
-        <ProgressStep
-          number={2}
-          title="自動・手動採点"
-          description="採点方式に応じた採点"
-          value={
-            progress.graded
-          }
-          total={
-            progress.totalAnswers
-          }
-          completed={
-            progress.totalAnswers >
-              0 &&
-            progress.graded +
-              progress.firstReview +
-              progress.secondReview +
-              progress.confirmed +
-              progress.published ===
-              progress.totalAnswers
-          }
-          href="/grading"
-        />
-
-        <ProgressStep
-          number={3}
-          title="一次確認"
-          description="自動採点結果と手動採点結果を確認"
-          value={
-            progress.firstReview
-          }
-          total={
-            progress.totalAnswers
-          }
-          completed={
-            progress.totalAnswers >
-              0 &&
-            progress.firstReview ===
-              0 &&
-            (
-              progress.secondReview >
-                0 ||
-              progress.confirmed >
-                0 ||
-              progress.published >
-                0
-            )
-          }
-          href="/grading/review"
-        />
-
-        <ProgressStep
-          number={4}
-          title="二次確認"
-          description="二次確認・差異確認"
-          value={
-            progress.secondReview
-          }
-          total={
-            progress.totalAnswers
-          }
-          completed={
-            progress.totalAnswers >
-              0 &&
-            progress.secondReview ===
-              0 &&
-            (
-              progress.confirmed >
-                0 ||
-              progress.published >
-                0
-            )
-          }
-          href="/grading/second-review"
-        />
-
-        <ProgressStep
-          number={5}
-          title="採点確定"
-          description="確定した答案を成績へ反映"
-          value={
-            progress.confirmed
-          }
-          total={
-            progress.totalAnswers
-          }
-          completed={
-            progress.totalAnswers >
-              0 &&
-            progress.confirmed ===
-              progress.totalAnswers
-          }
-          href="/grading/confirm"
-        />
-      </div>
-
-      {/* ====================================================
-          Grading method
-          ==================================================== */}
-
-      <div
-        style={{
-          marginTop:
-            24,
-
-          paddingTop:
-            20,
-
-          borderTop:
-            "1px solid #eee",
-        }}
-      >
-        <h3>
-          採点方式
-        </h3>
-
-        <p
-          className="muted"
-        >
-          テスト全体を一律に自動採点するのではなく、問題ごとの採点方式に従って処理します。
-        </p>
-
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "1fr 1fr",
-
-            gap:
-              10,
-          }}
-        >
-          <MethodCard
-            title="自動採点"
-            active={
-              test.automaticGrading
-            }
-            description={
-              test.automaticGrading
-                ? "自動採点対象の問題があります。"
-                : "自動採点対象として登録されていません。"
-            }
-          />
-
-          <MethodCard
-            title="手動採点"
-            active={
-              !test.automaticGrading
-            }
-            description={
-              test.automaticGrading
-                ? "手動採点問題を含めることができます。"
-                : "講師による手動採点を行います。"
-            }
-          />
-        </div>
-      </div>
-
-      {/* ====================================================
-          Actions
-          ==================================================== */}
-
-      <div
-        style={{
-          display:
-            "flex",
-
-          flexWrap:
-            "wrap",
-
-          gap:
-            8,
-
-          marginTop:
-            20,
-        }}
-      >
-        {progress.firstReview >
-          0 && (
-          <Link
-            href="/grading/review"
-            className="button primary"
-          >
-            一次確認を見る
-          </Link>
-        )}
-
-        {progress.secondReview >
-          0 && (
-          <Link
-            href="/grading/second-review"
-            className="button primary"
-          >
-            二次確認を見る
-          </Link>
-        )}
-
-        {progress.totalAnswers >
-            0 &&
-          progress.confirmed <
-            progress.totalAnswers && (
-            <Link
-              href="/grading/confirm"
-              className="button"
+          {filtered.length ===
+          0 ? (
+            <EmptyState />
+          ) : (
+            <div
+              style={{
+                overflowX:
+                  "auto",
+              }}
             >
-              採点確定へ
-            </Link>
-          )}
+              <table className="dataTable">
+                <thead>
+                  <tr>
+                    <th>
+                      生徒
+                    </th>
 
-        <Link
-          href="/answers"
-          className="button"
-        >
-          答案を見る
-        </Link>
-      </div>
-    </div>
+                    <th>
+                      テスト
+                    </th>
+
+                    <th>
+                      教科
+                    </th>
+
+                    <th>
+                      状態
+                    </th>
+
+                    <th>
+                      得点
+                    </th>
+
+                    <th>
+                      次の処理
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map(
+                    (
+                      answer
+                    ) => (
+                      <tr
+                        key={
+                          answer.id
+                        }
+                      >
+                        <td>
+                          <strong>
+                            {
+                              answer.studentName ||
+                              "未紐付け"
+                            }
+                          </strong>
+
+                          <div
+                            className="muted"
+                            style={{
+                              fontSize:
+                                11,
+                            }}
+                          >
+                            {
+                              answer.studentNumber ||
+                              "生徒番号なし"
+                            }
+                          </div>
+                        </td>
+
+                        <td>
+                          {
+                            answer.testName
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            answer.subjectName ||
+                            "—"
+                          }
+                        </td>
+
+                        <td>
+                          <StatusBadge
+                            status={
+                              answer.status
+                            }
+                          />
+                        </td>
+
+                        <td>
+                          {answer.totalMaxScore >
+                          0
+                            ? `${answer.totalScore} / ${answer.totalMaxScore}`
+                            : "—"}
+                        </td>
+
+                        <td>
+                          <NextAction
+                            answerId={
+                              answer.id
+                            }
+                            status={
+                              answer.status
+                            }
+                          />
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </section>
+    </main>
   );
 }
 
 /* =========================================================
-   Progress Step
+   Flow
    ========================================================= */
 
-function ProgressStep({
+function FlowStep({
   number,
-  title,
-  description,
-  value,
-  total,
-  completed,
-  href,
+  label,
+  count,
 }: {
-  number: number;
+  number: string;
 
-  title: string;
+  label: string;
 
-  description: string;
-
-  value: number;
-
-  total: number | null;
-
-  completed: boolean;
-
-  href: string;
+  count: number;
 }) {
   return (
     <div
       style={{
-        display:
-          "flex",
-
-        gap:
-          14,
-
         padding:
-          "14px 0",
+          12,
 
-        borderBottom:
-          "1px solid #eee",
+        border:
+          "1px solid #ddd",
+
+        borderRadius:
+          8,
+
+        textAlign:
+          "center",
       }}
     >
       <div
+        className="muted"
         style={{
-          width:
-            30,
+          fontSize:
+            10,
+        }}
+      >
+        STEP {number}
+      </div>
 
-          height:
-            30,
-
-          flex:
-            "0 0 30px",
-
+      <strong
+        style={{
           display:
-            "flex",
+            "block",
 
-          alignItems:
-            "center",
+          marginTop:
+            4,
+        }}
+      >
+        {
+          label
+        }
+      </strong>
 
-          justifyContent:
-            "center",
+      <strong
+        style={{
+          display:
+            "block",
 
-          borderRadius:
-            "50%",
-
-          background:
-            completed
-              ? "#111"
-              : "#eee",
-
-          color:
-            completed
-              ? "#fff"
-              : "#555",
+          marginTop:
+            6,
 
           fontSize:
-            12,
-
-          fontWeight:
-            700,
+            22,
         }}
       >
-        {number}
-      </div>
-
-      <div
-        style={{
-          flex:
-            1,
-        }}
-      >
-        <div
-          style={{
-            display:
-              "flex",
-
-            justifyContent:
-              "space-between",
-
-            gap:
-              10,
-          }}
-        >
-          <strong>
-            {
-              title
-            }
-          </strong>
-
-          <span
-            style={{
-              fontSize:
-                12,
-
-              color:
-                completed
-                  ? "#222"
-                  : "#777",
-            }}
-          >
-            {total ===
-            null
-              ? value
-              : `${value} / ${total}`}
-          </span>
-        </div>
-
-        <p
-          className="muted"
-          style={{
-            margin:
-              "4px 0 0",
-
-            fontSize:
-              12,
-          }}
-        >
-          {
-            description
-          }
-        </p>
-
-        <Link
-          href={href}
-          style={{
-            display:
-              "inline-block",
-
-            marginTop:
-              7,
-
-            fontSize:
-              12,
-          }}
-        >
-          画面を開く
-        </Link>
-      </div>
+        {
+          count
+        }
+      </strong>
     </div>
   );
 }
 
 /* =========================================================
-   Summary
+   Stat
    ========================================================= */
 
-function SummaryCard({
+function StatCard({
   label,
   value,
-  description,
 }: {
   label: string;
 
   value: number;
-
-  description: string;
 }) {
   return (
     <div className="card">
@@ -1786,7 +971,7 @@ function SummaryCard({
         className="muted"
         style={{
           fontSize:
-            12,
+            10,
         }}
       >
         {
@@ -1803,250 +988,560 @@ function SummaryCard({
             4,
 
           fontSize:
-            26,
+            22,
         }}
       >
         {
           value
         }
       </strong>
-
-      <div
-        className="muted"
-        style={{
-          marginTop:
-            3,
-
-          fontSize:
-            11,
-        }}
-      >
-        {
-          description
-        }
-      </div>
     </div>
   );
-}
-
-/* =========================================================
-   Mini statistic
-   ========================================================= */
-
-function MiniStat({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: number;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          "8px 10px",
-
-        background:
-          "#f7f7f7",
-
-        borderRadius:
-          6,
-      }}
-    >
-      <div
-        style={{
-          fontSize:
-            10,
-
-          color:
-            "#777",
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong>
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Method
-   ========================================================= */
-
-function MethodCard({
-  title,
-  active,
-  description,
-}: {
-  title: string;
-
-  active: boolean;
-
-  description: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          14,
-
-        border:
-          "1px solid #ddd",
-
-        borderRadius:
-          8,
-
-        background:
-          active
-            ? "#f7f7f7"
-            : "#fff",
-      }}
-    >
-      <strong>
-        {
-          title
-        }
-      </strong>
-
-      <p
-        className="muted"
-        style={{
-          margin:
-            "5px 0 0",
-
-          fontSize:
-            12,
-        }}
-      >
-        {
-          description
-        }
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState({
-  title,
-  message,
-}: {
-  title: string;
-
-  message: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          50,
-
-        textAlign:
-          "center",
-      }}
-    >
-      <strong>
-        {
-          title
-        }
-      </strong>
-
-      <p
-        className="muted"
-      >
-        {
-          message
-        }
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   Current step
-   ========================================================= */
-
-function getCurrentStep(
-  progress: TestProgress
-) {
-  if (
-    progress.totalAnswers ===
-    0
-  ) {
-    return "答案待ち";
-  }
-
-  if (
-    progress.uploaded >
-      0 ||
-    progress.processing >
-      0
-  ) {
-    return "答案受付・処理中";
-  }
-
-  if (
-    progress.manualGrading >
-      0
-  ) {
-    return "手動採点待ち";
-  }
-
-  if (
-    progress.firstReview >
-      0
-  ) {
-    return "一次確認";
-  }
-
-  if (
-    progress.secondReview >
-      0
-  ) {
-    return "二次確認";
-  }
-
-  if (
-    progress.confirmed <
-    progress.totalAnswers
-  ) {
-    return "採点確定";
-  }
-
-  return "完了";
 }
 
 /* =========================================================
    Status
    ========================================================= */
 
-function countStatus(
-  answers: AnswerRecord[],
-  status: AnswerStatus
-) {
-  return answers.filter(
-    (
-      answer
-    ) =>
-      answer.status ===
-      status
-  ).length;
+function StatusBadge({
+  status,
+}: {
+  status: Answer["status"];
+}) {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
+        background:
+          getStatusBackground(
+            status
+          ),
+
+        fontSize:
+          11,
+
+        whiteSpace:
+          "nowrap",
+      }}
+    >
+      {
+        getStatusLabel(
+          status
+        )
+      }
+    </span>
+  );
 }
+
+function getStatusBackground(
+  status: Answer["status"]
+) {
+  if (
+    status ===
+      "confirmed" ||
+    status ===
+      "published"
+  ) {
+    return "#e8f5e9";
+  }
+
+  if (
+    status ===
+    "error"
+  ) {
+    return "#fff1f1";
+  }
+
+  if (
+    status ===
+      "first_review" ||
+    status ===
+      "second_review"
+  ) {
+    return "#fff4d6";
+  }
+
+  return "#f1f1f1";
+}
+
+function getStatusLabel(
+  status: Answer["status"]
+) {
+  switch (
+    status
+  ) {
+    case "uploaded":
+      return "受付済み";
+
+    case "processing":
+      return "処理中";
+
+    case "graded":
+      return "採点済み";
+
+    case "first_review":
+      return "一次確認";
+
+    case "second_review":
+      return "二次確認";
+
+    case "confirmed":
+      return "確定";
+
+    case "published":
+      return "公開済み";
+
+    case "error":
+      return "エラー";
+
+    default:
+      return "未設定";
+  }
+}
+
+/* =========================================================
+   Next action
+   ========================================================= */
+
+function NextAction({
+  answerId,
+  status,
+}: {
+  answerId: string;
+
+  status: Answer["status"];
+}) {
+  switch (
+    status
+  ) {
+    case "uploaded":
+    case "processing":
+      return (
+        <Link
+          href={`/answers?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button"
+        >
+          答案確認
+        </Link>
+      );
+
+    case "graded":
+    case "first_review":
+      return (
+        <Link
+          href={`/grading/review?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button primary"
+        >
+          一次確認
+        </Link>
+      );
+
+    case "second_review":
+      return (
+        <Link
+          href={`/grading/second-review?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button primary"
+        >
+          二次確認
+        </Link>
+      );
+
+    case "confirmed":
+      return (
+        <Link
+          href={`/results/management?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button"
+        >
+          成績確認
+        </Link>
+      );
+
+    case "published":
+      return (
+        <Link
+          href={`/results/management?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button"
+        >
+          成績確認
+        </Link>
+      );
+
+    case "error":
+      return (
+        <Link
+          href={`/answers?answerId=${encodeURIComponent(
+            answerId
+          )}`}
+          className="button"
+        >
+          エラー確認
+        </Link>
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          55,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        答案はありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        登録された答案がここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   Normalize answer
+   ========================================================= */
+
+function normalizeAnswer(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): AnswerRow {
+  const studentId =
+    nullableString(
+      data.studentId
+    );
+
+  const testId =
+    stringValue(
+      data.testId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const test =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+          testId ||
+        item.testId ===
+          testId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId,
+
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
+
+    studentId,
+
+    studentNumber:
+      nullableString(
+        data.studentNumber
+      ),
+
+    fileKey:
+      stringValue(
+        data.fileKey
+      ),
+
+    fileName:
+      stringValue(
+        data.fileName
+      ),
+
+    contentType:
+      stringValue(
+        data.contentType
+      ),
+
+    size:
+      safeNumber(
+        data.size
+      ),
+
+    status:
+      normalizeStatus(
+        data.status
+      ),
+
+    reviewRequired:
+      data.reviewRequired ===
+      true,
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    totalMaxScore:
+      safeNumber(
+        data.totalMaxScore
+      ),
+
+    qrText:
+      stringValue(
+        data.qrText
+      ),
+
+    qrConfidence:
+      safeNumber(
+        data.qrConfidence
+      ),
+
+    ocrConfidence:
+      safeNumber(
+        data.ocrConfidence
+      ),
+
+    processingError:
+      stringValue(
+        data.processingError
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    processedAt:
+      data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
+
+    studentName:
+      student?.name ??
+      "",
+
+    testName:
+      test?.name ??
+      "テスト未設定",
+
+    subjectName:
+      stringValue(
+        data.subjectName
+      ),
+  };
+}
+
+/* =========================================================
+   Normalize student
+   ========================================================= */
+
+function normalizeStudent(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Student {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ),
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Normalize test
+   ========================================================= */
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Status
+   ========================================================= */
 
 function normalizeStatus(
   value: unknown
-): AnswerStatus {
+): Answer["status"] {
   switch (
     value
   ) {
@@ -2064,6 +1559,58 @@ function normalizeStatus(
       return "uploaded";
   }
 }
+
+/* =========================================================
+   Time
+   ========================================================= */
+
+function getTime(
+  value: unknown
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
+
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
+}
+
+/* =========================================================
+   Primitive
+   ========================================================= */
 
 function stringValue(
   value: unknown
@@ -2088,7 +1635,8 @@ function safeNumber(
 ) {
   const number =
     Number(
-      value ?? 0
+      value ??
+        0
     );
 
   return Number.isFinite(
