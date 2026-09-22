@@ -18,21 +18,22 @@ import {
 
 import {
   getScopedDocs,
-  gradeReportsQueries,
   resultsQueries,
+  gradeReportsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
   GradeReport,
   StudentResult,
+  UserRole,
 } from "@/lib/types";
 
 /* =========================================================
    Types
    ========================================================= */
 
-type ResultItem =
+type ResultRow =
   StudentResult & {
     percentage: number;
   };
@@ -43,38 +44,52 @@ type ResultItem =
 
 export default function StudentDashboardPage() {
   const [
+    role,
+    setRole,
+  ] =
+    useState<UserRole | null>(
+      null
+    );
+
+  const [
     studentName,
     setStudentName,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     studentNumber,
     setStudentNumber,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     results,
     setResults,
-  ] = useState<ResultItem[]>(
-    []
-  );
+  ] =
+    useState<ResultRow[]>(
+      []
+    );
 
   const [
     reports,
     setReports,
-  ] = useState<GradeReport[]>(
-    []
-  );
+  ] =
+    useState<GradeReport[]>(
+      []
+    );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   /* =======================================================
      Load
@@ -95,7 +110,9 @@ export default function StudentDashboardPage() {
           auth.currentUser
         );
 
-      if (!user) {
+      if (
+        !user
+      ) {
         throw new Error(
           "ログインしてください。"
         );
@@ -111,35 +128,43 @@ export default function StudentDashboardPage() {
       }
 
       if (
-        !user.organizationId ||
-        !user.studentId
+        !user.organizationId
       ) {
         throw new Error(
-          "生徒情報が設定されていません。"
+          "所属組織が設定されていません。"
         );
       }
 
-      setStudentName(
-        user.name
+      if (
+        !user.studentId
+      ) {
+        throw new Error(
+          "生徒情報がアカウントに紐付いていません。"
+        );
+      }
+
+      setRole(
+        user.role
       );
 
       const scopeUser:
-        FirestoreUser = {
-        uid:
-          user.uid,
+        FirestoreUser =
+        {
+          uid:
+            user.uid,
 
-        organizationId:
-          user.organizationId,
+          organizationId:
+            user.organizationId,
 
-        role:
-          user.role,
+          role:
+            user.role,
 
-        schoolIds:
-          user.schoolIds,
+          schoolIds:
+            user.schoolIds,
 
-        studentId:
-          user.studentId,
-      };
+          studentId:
+            user.studentId,
+        };
 
       const [
         resultDocuments,
@@ -170,26 +195,16 @@ export default function StudentDashboardPage() {
                 item.data
               )
           )
-          .filter(
-            (
-              result
-            ) =>
-              result.studentId ===
-              user.studentId
-          )
           .sort(
             (
               a,
               b
             ) =>
-              String(
-                b.createdAt ??
-                  ""
-              ).localeCompare(
-                String(
-                  a.createdAt ??
-                    ""
-                )
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
               )
           );
 
@@ -204,24 +219,18 @@ export default function StudentDashboardPage() {
                 item.data
               )
           )
-          .filter(
-            (
-              report
-            ) =>
-              report.studentId ===
-              user.studentId
-          )
           .sort(
             (
               a,
               b
             ) =>
-              String(
-                b.examDate
-              ).localeCompare(
-                String(
-                  a.examDate
-                )
+              getTime(
+                b.updatedAt ??
+                  b.createdAt
+              ) -
+              getTime(
+                a.updatedAt ??
+                  a.createdAt
               )
           );
 
@@ -233,13 +242,26 @@ export default function StudentDashboardPage() {
         loadedReports
       );
 
-      setStudentNumber(
+      const firstReport =
+        loadedReports[0];
+
+      if (
+        firstReport
+      ) {
+        setStudentName(
+          firstReport.studentName
+        );
+
+        setStudentNumber(
+          firstReport.studentNumber
+        );
+      } else if (
         loadedResults[0]
-          ?.studentNumber ??
-          loadedReports[0]
-            ?.studentNumber ??
-          ""
-      );
+      ) {
+        setStudentNumber(
+          loadedResults[0].studentNumber
+        );
+      }
     } catch (
       error
     ) {
@@ -251,7 +273,7 @@ export default function StudentDashboardPage() {
       setError(
         error instanceof Error
           ? error.message
-          : "ホーム情報を取得できませんでした。"
+          : "成績情報を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -263,16 +285,10 @@ export default function StudentDashboardPage() {
      ======================================================= */
 
   const averagePercentage =
-    useMemo(() => {
-      if (
-        results.length ===
-        0
-      ) {
-        return null;
-      }
-
-      return (
-        results.reduce(
+    results.length ===
+    0
+      ? null
+      : results.reduce(
           (
             total,
             result
@@ -281,33 +297,31 @@ export default function StudentDashboardPage() {
             result.percentage,
           0
         ) /
-        results.length
-      );
-    }, [
-      results,
-    ]);
+        results.length;
 
-  const latestResult =
-    results[0] ??
-    null;
+  const averageScore =
+    results.length ===
+    0
+      ? null
+      : results.reduce(
+          (
+            total,
+            result
+          ) =>
+            total +
+            result.score,
+          0
+        ) /
+        results.length;
+
+  const latestResults =
+    results.slice(
+      0,
+      8
+    );
 
   const latestReport =
     reports[0] ??
-    null;
-
-  const latestDeviation =
-    latestReport?.totalDeviation ??
-    latestResult?.deviationScore ??
-    null;
-
-  const latestRank =
-    latestReport?.totalRank ??
-    latestResult?.rank ??
-    null;
-
-  const latestPopulation =
-    latestReport?.totalPopulation ??
-    latestResult?.population ??
     null;
 
   /* =======================================================
@@ -322,14 +336,20 @@ export default function StudentDashboardPage() {
         <section className="content">
           <div
             style={{
-              padding:
-                60,
+              minHeight:
+                400,
 
-              textAlign:
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              justifyContent:
                 "center",
             }}
           >
-            ホームを読み込んでいます...
+            成績を読み込んでいます...
           </div>
         </section>
       </main>
@@ -372,7 +392,7 @@ export default function StudentDashboardPage() {
           >
             {studentName
               ? `${studentName}さん`
-              : "ホーム"}
+              : "生徒ホーム"}
           </h1>
 
           {studentNumber && (
@@ -381,6 +401,9 @@ export default function StudentDashboardPage() {
               style={{
                 margin:
                   "5px 0 0",
+
+                fontSize:
+                  12,
               }}
             >
               生徒番号：
@@ -389,7 +412,21 @@ export default function StudentDashboardPage() {
               }
             </p>
           )}
+
+          <p
+            className="muted"
+            style={{
+              margin:
+                "6px 0 0",
+            }}
+          >
+            あなたの確定済みの成績を確認できます。
+          </p>
         </header>
+
+        {/* ==================================================
+            Error
+            ================================================== */}
 
         {error && (
           <div
@@ -403,36 +440,57 @@ export default function StudentDashboardPage() {
         )}
 
         {/* ==================================================
-            Main links
+            Summary
             ================================================== */}
 
-        <div
-          style={{
-            display:
-              "grid",
+        <section>
+          <div
+            style={{
+              display:
+                "grid",
 
-            gridTemplateColumns:
-              "repeat(2, minmax(0, 1fr))",
+              gridTemplateColumns:
+                "repeat(3, minmax(0, 1fr))",
 
-            gap:
-              14,
-          }}
-        >
-          <DashboardLink
-            href="/results/student"
-            title="成績"
-            description="確定したテスト結果を確認"
-          />
+              gap:
+                12,
+            }}
+          >
+            <SummaryCard
+              label="成績件数"
+              value={
+                results.length
+              }
+            />
 
-          <DashboardLink
-            href="/reports/student"
-            title="成績表"
-            description="科目別成績・偏差値・順位・度数分布を確認"
-          />
-        </div>
+            <SummaryCard
+              label="平均得点率"
+              value={
+                averagePercentage ===
+                null
+                  ? "—"
+                  : `${averagePercentage.toFixed(
+                      1
+                    )}%`
+              }
+            />
+
+            <SummaryCard
+              label="平均点"
+              value={
+                averageScore ===
+                null
+                  ? "—"
+                  : averageScore.toFixed(
+                      1
+                    )
+              }
+            />
+          </div>
+        </section>
 
         {/* ==================================================
-            Latest result
+            Latest report
             ================================================== */}
 
         <section
@@ -464,7 +522,7 @@ export default function StudentDashboardPage() {
                     0,
                 }}
               >
-                最新の成績
+                最新の成績表
               </h2>
 
               <p
@@ -472,28 +530,32 @@ export default function StudentDashboardPage() {
                 style={{
                   margin:
                     "5px 0 0",
+
+                  fontSize:
+                    11,
                 }}
               >
-                確定済みの結果のみ表示しています。
+                確定済みの成績表です。
               </p>
             </div>
 
             <Link
-              href="/results/student"
+              href="/student/reports"
               className="button"
             >
-              成績一覧
+              成績表を見る
             </Link>
           </div>
 
-          {!latestResult &&
-          !latestReport ? (
-            <EmptyLatest />
+          {!latestReport ? (
+            <EmptyState
+              text="まだ成績表はありません。"
+            />
           ) : (
             <div
               style={{
                 marginTop:
-                  18,
+                  16,
               }}
             >
               <div
@@ -502,7 +564,7 @@ export default function StudentDashboardPage() {
                     "grid",
 
                   gridTemplateColumns:
-                    "repeat(4, minmax(0, 1fr))",
+                    "1fr 1fr",
 
                   gap:
                     10,
@@ -511,43 +573,29 @@ export default function StudentDashboardPage() {
                 <InfoCard
                   label="テスト"
                   value={
-                    latestReport?.testName ??
-                    latestResult?.testName ??
+                    latestReport.testName
+                  }
+                />
+
+                <InfoCard
+                  label="実施日"
+                  value={
+                    latestReport.examDate ||
                     "—"
                   }
                 />
 
                 <InfoCard
-                  label="得点"
-                  value={
-                    latestReport
-                      ? `${latestReport.totalScore} / ${latestReport.totalMaxScore}`
-                      : latestResult
-                        ? `${latestResult.score} / ${latestResult.maxScore}`
-                        : "—"
-                  }
-                />
-
-                <InfoCard
-                  label="偏差値"
-                  value={
-                    latestDeviation ===
-                    null
-                      ? "—"
-                      : latestDeviation.toFixed(
-                          1
-                        )
-                  }
+                  label="総合得点"
+                  value={`${latestReport.totalScore} / ${latestReport.totalMaxScore}`}
                 />
 
                 <InfoCard
                   label="順位"
-                  value={
-                    formatRank(
-                      latestRank,
-                      latestPopulation
-                    )
-                  }
+                  value={formatRank(
+                    latestReport.totalRank,
+                    latestReport.totalPopulation
+                  )}
                 />
               </div>
             </div>
@@ -555,7 +603,7 @@ export default function StudentDashboardPage() {
         </section>
 
         {/* ==================================================
-            History
+            Results
             ================================================== */}
 
         <section
@@ -575,6 +623,9 @@ export default function StudentDashboardPage() {
 
               alignItems:
                 "center",
+
+              gap:
+                12,
             }}
           >
             <div>
@@ -584,7 +635,7 @@ export default function StudentDashboardPage() {
                     0,
                 }}
               >
-                成績の推移
+                最近の成績
               </h2>
 
               <p
@@ -592,50 +643,28 @@ export default function StudentDashboardPage() {
                 style={{
                   margin:
                     "5px 0 0",
-                }}
-              >
-                過去の確定結果
-              </p>
-            </div>
 
-            {averagePercentage !==
-              null && (
-              <div
-                style={{
-                  textAlign:
-                    "right",
-                }}
-              >
-                <div
-                  className="muted"
-                  style={{
                     fontSize:
                       11,
                   }}
                 >
-                  平均得点率
-                </div>
+                  採点確定済みの結果のみ表示しています。
+                </p>
+            </div>
 
-                <strong
-                  style={{
-                    fontSize:
-                      22,
-                  }}
-                >
-                  {
-                    averagePercentage.toFixed(
-                      1
-                    )
-                  }
-                  %
-                </strong>
-              </div>
-            )}
+            <Link
+              href="/student/results"
+              className="button"
+            >
+              成績一覧
+            </Link>
           </div>
 
-          {results.length ===
+          {latestResults.length ===
           0 ? (
-            <EmptyHistory />
+            <EmptyState
+              text="確定済みの成績はありません。"
+            />
           ) : (
             <div
               style={{
@@ -676,77 +705,72 @@ export default function StudentDashboardPage() {
                 </thead>
 
                 <tbody>
-                  {results
-                    .slice(
-                      0,
-                      10
-                    )
-                    .map(
-                      (
-                        result
-                      ) => (
-                        <tr
-                          key={
-                            result.id
+                  {latestResults.map(
+                    (
+                      result
+                    ) => (
+                      <tr
+                        key={
+                          result.id
+                        }
+                      >
+                        <td>
+                          {
+                            result.testName
                           }
-                        >
-                          <td>
+                        </td>
+
+                        <td>
+                          {
+                            result.subject
+                          }
+                        </td>
+
+                        <td>
+                          <strong>
                             {
-                              result.testName
+                              result.score
                             }
-                          </td>
+                          </strong>
 
-                          <td>
-                            {
-                              result.subject
-                            }
-                          </td>
+                          {" / "}
 
-                          <td>
-                            <strong>
-                              {
-                                result.score
-                              }
-                            </strong>
+                          {
+                            result.maxScore
+                          }
+                        </td>
 
-                            {" / "}
+                        <td>
+                          {
+                            result.percentage.toFixed(
+                              1
+                            )
+                          }
+                          %
+                        </td>
 
-                            {
-                              result.maxScore
-                            }
-                          </td>
+                        <td>
+                          {
+                            result.deviationScore ===
+                            null
+                              ? "—"
+                              : result.deviationScore.toFixed(
+                                  1
+                                )
+                          }
+                        </td>
 
-                          <td>
-                            {
-                              result.percentage.toFixed(
-                                1
-                              )
-                            }
-                            %
-                          </td>
-
-                          <td>
-                            {
-                              result.deviationScore ===
-                              null
-                                ? "—"
-                                : result.deviationScore.toFixed(
-                                    1
-                                  )
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              formatRank(
-                                result.rank,
-                                result.population
-                              )
-                            }
-                          </td>
-                        </tr>
-                      )
-                    )}
+                        <td>
+                          {
+                            formatRank(
+                              result.rank,
+                              result.population
+                            )
+                          }
+                        </td>
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
@@ -754,171 +778,87 @@ export default function StudentDashboardPage() {
         </section>
 
         {/* ==================================================
-            Report history
+            Student menu
             ================================================== */}
 
         <section
-          className="card"
           style={{
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(2, minmax(0, 1fr))",
+
+            gap:
+              12,
+
             marginTop:
               18,
           }}
         >
-          <div
+          <Link
+            href="/student/results"
+            className="card"
             style={{
               display:
-                "flex",
+                "block",
 
-              justifyContent:
-                "space-between",
+              color:
+                "inherit",
 
-              alignItems:
-                "center",
+              textDecoration:
+                "none",
             }}
           >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                成績表
-              </h2>
+            <strong>
+              成績一覧
+            </strong>
 
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "5px 0 0",
-                }}
-              >
-                最新の成績表を確認できます。
-              </p>
-            </div>
-
-            <Link
-              href="/reports/student"
-              className="button"
-            >
-              成績表を見る
-            </Link>
-          </div>
-
-          {reports.length ===
-          0 ? (
-            <EmptyHistory />
-          ) : (
-            <div
+            <p
+              className="muted"
               style={{
-                marginTop:
-                  14,
+                margin:
+                  "5px 0 0",
+
+                fontSize:
+                  11,
               }}
             >
-              {reports
-                .slice(
-                  0,
-                  5
-                )
-                .map(
-                  (
-                    report
-                  ) => (
-                    <Link
-                      key={
-                        report.id
-                      }
-                      href={`/reports/student?testId=${encodeURIComponent(
-                        report.testId
-                      )}`}
-                      style={{
-                        display:
-                          "flex",
+              自分の確定済み成績を確認します。
+            </p>
+          </Link>
 
-                        justifyContent:
-                          "space-between",
+          <Link
+            href="/student/reports"
+            className="card"
+            style={{
+              display:
+                "block",
 
-                        alignItems:
-                          "center",
+              color:
+                "inherit",
 
-                        gap:
-                          12,
+              textDecoration:
+                "none",
+            }}
+          >
+            <strong>
+              成績表
+            </strong>
 
-                        padding:
-                          "12px 0",
+            <p
+              className="muted"
+              style={{
+                margin:
+                  "5px 0 0",
 
-                        borderBottom:
-                          "1px solid #eee",
-
-                        textDecoration:
-                          "none",
-
-                        color:
-                          "inherit",
-                      }}
-                    >
-                      <div>
-                        <strong>
-                          {
-                            report.testName
-                          }
-                        </strong>
-
-                        <div
-                          className="muted"
-                          style={{
-                            marginTop:
-                              3,
-
-                            fontSize:
-                              11,
-                          }}
-                        >
-                          {
-                            report.examDate ||
-                            "実施日未設定"
-                          }
-                        </div>
-                      </div>
-
-                      <div
-                        style={{
-                          textAlign:
-                            "right",
-                        }}
-                      >
-                        <strong>
-                          {
-                            report.totalScore
-                          }
-                          {" / "}
-                          {
-                            report.totalMaxScore
-                          }
-                        </strong>
-
-                        <div
-                          className="muted"
-                          style={{
-                            fontSize:
-                              11,
-                          }}
-                        >
-                          偏差値：
-                          {
-                            report.totalDeviation ===
-                            null
-                              ? "—"
-                              : report.totalDeviation.toFixed(
-                                  1
-                                )}
-                        </div>
-                      </div>
-                    </Link>
-                  )
-                )}
-            </div>
-          )}
+                fontSize:
+                  11,
+              }}
+            >
+              自分の成績表を確認します。
+            </p>
+          </Link>
         </section>
       </section>
     </main>
@@ -926,72 +866,55 @@ export default function StudentDashboardPage() {
 }
 
 /* =========================================================
-   Dashboard link
+   Summary
    ========================================================= */
 
-function DashboardLink({
-  href,
-  title,
-  description,
+function SummaryCard({
+  label,
+  value,
 }: {
-  href: string;
+  label: string;
 
-  title: string;
-
-  description: string;
+  value:
+    | string
+    | number;
 }) {
   return (
-    <Link
-      href={href}
-      className="card"
-      style={{
-        display:
-          "block",
-
-        textDecoration:
-          "none",
-
-        color:
-          "inherit",
-
-        padding:
-          20,
-      }}
-    >
-      <strong
-        style={{
-          fontSize:
-            18,
-        }}
-      >
-        {
-          title
-        }
-      </strong>
-
-      <p
+    <div className="card">
+      <div
         className="muted"
         style={{
-          margin:
-            "6px 0 0",
-
           fontSize:
-            12,
-
-          lineHeight:
-            1.6,
+            10,
         }}
       >
         {
-          description
+          label
         }
-      </p>
-    </Link>
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+
+          fontSize:
+            22,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
   );
 }
 
 /* =========================================================
-   Info card
+   Info
    ========================================================= */
 
 function InfoCard({
@@ -1036,11 +959,12 @@ function InfoCard({
             4,
 
           fontSize:
-            16,
+            14,
         }}
       >
         {
-          value
+          value ||
+          "—"
         }
       </strong>
     </div>
@@ -1051,7 +975,11 @@ function InfoCard({
    Empty
    ========================================================= */
 
-function EmptyLatest() {
+function EmptyState({
+  text,
+}: {
+  text: string;
+}) {
   return (
     <div
       style={{
@@ -1063,48 +991,20 @@ function EmptyLatest() {
 
         color:
           "#777",
-      }}
-    >
-      <strong>
-        まだ成績がありません。
-      </strong>
-
-      <p
-        style={{
-          fontSize:
-            12,
-        }}
-      >
-        採点確定した成績が登録されると、ここに表示されます。
-      </p>
-    </div>
-  );
-}
-
-function EmptyHistory() {
-  return (
-    <div
-      style={{
-        padding:
-          30,
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
 
         fontSize:
           12,
       }}
     >
-      確定済みの成績データはありません。
+      {
+        text
+      }
     </div>
   );
 }
 
 /* =========================================================
-   Normalize result
+   Normalize Result
    ========================================================= */
 
 function normalizeResult(
@@ -1113,7 +1013,7 @@ function normalizeResult(
     string,
     unknown
   >
-): ResultItem {
+): ResultRow {
   const score =
     safeNumber(
       data.score
@@ -1168,11 +1068,13 @@ function normalizeResult(
     maxScore,
 
     percentage:
-      maxScore > 0
-        ? (score /
-            maxScore) *
-          100
-        : 0,
+      nullableNumber(
+        data.percentage
+      ) ??
+      calculatePercentage(
+        score,
+        maxScore
+      ),
 
     average:
       nullableNumber(
@@ -1209,7 +1111,7 @@ function normalizeResult(
 }
 
 /* =========================================================
-   Normalize report
+   Normalize Report
    ========================================================= */
 
 function normalizeReport(
@@ -1288,9 +1190,7 @@ function normalizeReport(
       ),
 
     subjects:
-      normalizeSubjects(
-        data.subjects
-      ),
+      [],
 
     totalScore:
       safeNumber(
@@ -1331,79 +1231,7 @@ function normalizeReport(
 }
 
 /* =========================================================
-   Subjects
-   ========================================================= */
-
-function normalizeSubjects(
-  value: unknown
-): GradeReportSubject[] {
-  if (
-    !Array.isArray(
-      value
-    )
-  ) {
-    return [];
-  }
-
-  return value.map(
-    (
-      item
-    ) => {
-      const data =
-        item &&
-        typeof item ===
-          "object"
-          ? item as Record<
-              string,
-              unknown
-            >
-          : {};
-
-      return {
-        subject:
-          stringValue(
-            data.subject
-          ),
-
-        maxScore:
-          safeNumber(
-            data.maxScore
-          ),
-
-        score:
-          safeNumber(
-            data.score
-          ),
-
-        average:
-          nullableNumber(
-            data.average
-          ),
-
-        deviation:
-          nullableNumber(
-            data.deviation
-          ),
-
-        rank:
-          nullableNumber(
-            data.rank
-          ),
-
-        population:
-          nullableNumber(
-            data.population
-          ),
-
-        distribution:
-          [],
-      };
-    }
-  );
-}
-
-/* =========================================================
-   Formatting
+   Rank
    ========================================================= */
 
 function formatRank(
@@ -1432,6 +1260,76 @@ function formatRank(
   }
 
   return `${rank} / ${population}`;
+}
+
+/* =========================================================
+   Percentage
+   ========================================================= */
+
+function calculatePercentage(
+  score: number,
+  maxScore: number
+) {
+  if (
+    maxScore <=
+    0
+  ) {
+    return 0;
+  }
+
+  return (
+    score /
+    maxScore *
+    100
+  );
+}
+
+/* =========================================================
+   Time
+   ========================================================= */
+
+function getTime(
+  value: unknown
+) {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
+
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
 }
 
 /* =========================================================
