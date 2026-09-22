@@ -1672,3 +1672,211 @@ function safeNumber(
     ? number
     : 0;
 }
+/* =========================================================
+   Publish scores
+   ========================================================= */
+
+export async function publishScores(
+  testId: string,
+  subject?: string
+) {
+  const user =
+    await getAppUser();
+
+  if (
+    !user
+  ) {
+    throw new Error(
+      "ログインしてください。"
+    );
+  }
+
+  assertResultManager(
+    user.role
+  );
+
+  if (
+    !user.organizationId
+  ) {
+    throw new Error(
+      "所属組織が設定されていません。"
+    );
+  }
+
+  /*
+   * 対象テストの答案を取得。
+   */
+  const answerConstraints = [
+    where(
+      "organizationId",
+      "==",
+      user.organizationId
+    ),
+
+    where(
+      "testId",
+      "==",
+      testId
+    ),
+  ];
+
+  if (
+    subject
+  ) {
+    answerConstraints.push(
+      where(
+        "subjectId",
+        "==",
+        subject
+      )
+    );
+  }
+
+  const answerSnapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          "answers"
+        ),
+        ...answerConstraints
+      )
+    );
+
+  const answers =
+    answerSnapshot.docs.filter(
+      (
+        item
+      ) => {
+        const data =
+          item.data();
+
+        /*
+         * 本部以外は所属校舎のみ。
+         */
+        if (
+          user.role ===
+          "本部管理者"
+        ) {
+          return true;
+        }
+
+        return user.schoolIds.includes(
+          stringValue(
+            data.schoolId
+          )
+        );
+      }
+    );
+
+  if (
+    answers.length ===
+    0
+  ) {
+    throw new Error(
+      "対象となる答案がありません。"
+    );
+  }
+
+  /*
+   * 全員の採点が確定しているか確認。
+   */
+  const unconfirmed =
+    answers.filter(
+      (
+        item
+      ) =>
+        item.data().status !==
+        "confirmed"
+    );
+
+  if (
+    unconfirmed.length >
+    0
+  ) {
+    throw new Error(
+      `まだ採点が確定していない答案が${unconfirmed.length}件あります。全答案の採点を確定してください。`
+    );
+  }
+
+  /*
+   * 点数公開。
+   *
+   * 生徒本人が見られる状態にする。
+   */
+  const chunks =
+    chunk(
+      answers,
+      400
+    );
+
+  for (
+    const current of
+      chunks
+  ) {
+    const batch =
+      writeBatch(
+        db
+      );
+
+    for (
+      const item of
+        current
+    ) {
+      batch.update(
+        doc(
+          db,
+          "answers",
+          item.id
+        ),
+        {
+          status:
+            "published",
+
+          scorePublished:
+            true,
+
+          scorePublishedAt:
+            serverTimestamp(),
+
+          updatedAt:
+            serverTimestamp(),
+        }
+      );
+    }
+
+    await batch.commit();
+  }
+
+  /*
+   * 点数公開後に成績計算。
+   */
+  const calculation =
+    await recalculateTestStatistics(
+      testId,
+      subject
+    );
+
+  return {
+    testId,
+
+    subject:
+      subject ??
+      null,
+
+    published:
+      answers.length,
+
+    calculated:
+      calculation.count,
+
+    average:
+      calculation.average,
+
+    standardDeviation:
+      calculation.standardDeviation,
+
+    results:
+      calculation.results,
+  };
+}
