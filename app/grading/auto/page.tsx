@@ -1,451 +1,505 @@
 "use client";
 
 import {
-  Suspense,
   useEffect,
   useMemo,
   useState,
 } from "react";
 
-import {
-  useSearchParams,
-} from "next/navigation";
-
-import SchoolHeader from "@/components/SchoolHeader";
-import StepBar from "@/components/StepBar";
+import Link from "next/link";
 
 import {
   getAnswers,
   getGradingJob,
   startAutoGrading,
+  type Answer,
+  type GradingJob,
 } from "@/lib/answers";
 
-type ProcessingStatus =
-  | "待機中"
-  | "処理中"
-  | "完了"
-  | "要確認"
-  | "エラー";
+import {
+  getAppUser,
+} from "@/lib/auth";
 
-type ProcessingItem = {
-  name: string;
+import {
+  auth,
+} from "@/lib/firebase";
 
-  total: number;
+/* =========================================================
+   Types
+   ========================================================= */
 
-  processed: number;
-
-  status: ProcessingStatus;
-};
+type PageState =
+  | "loading"
+  | "ready"
+  | "processing"
+  | "completed"
+  | "error";
 
 /* =========================================================
    Page
    ========================================================= */
 
 export default function AutoGradingPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="page">
-          <SchoolHeader
-            title="自動採点"
-          />
-
-          <section className="content">
-            <StepBar
-              currentStep={4}
-            />
-
-            <section className="stepCard">
-              <p>
-                自動採点画面を読み込んでいます...
-              </p>
-            </section>
-          </section>
-        </main>
-      }
-    >
-      <AutoGradingContent />
-    </Suspense>
-  );
-}
-
-/* =========================================================
-   Auto grading content
-   ========================================================= */
-
-function AutoGradingContent() {
-  const searchParams =
-    useSearchParams();
-
-  const testId =
-    searchParams.get(
-      "testId"
-    ) ?? "";
-
-  const subjectId =
-    searchParams.get(
-      "subjectId"
-    ) ?? "";
-
   const [
-    jobId,
-    setJobId,
-  ] = useState<
-    string | null
-  >(null);
-
-  const [
-    total,
-    setTotal,
-  ] = useState<number>(
-    0
-  );
-
-  const [
-    processed,
-    setProcessed,
-  ] = useState<number>(
-    0
-  );
-
-  const [
-    succeeded,
-    setSucceeded,
-  ] = useState<number>(
-    0
-  );
-
-  const [
-    reviewCount,
-    setReviewCount,
-  ] = useState<number>(
-    0
-  );
-
-  const [
-    errorCount,
-    setErrorCount,
-  ] = useState<number>(
-    0
-  );
-
-  const [
-    running,
-    setRunning,
-  ] = useState(false);
-
-  const [
-    finished,
-    setFinished,
-  ] = useState(false);
-
-  const [
-    errorMessage,
-    setErrorMessage,
+    testId,
+    setTestId,
   ] = useState("");
+
+  const [
+    subjectId,
+    setSubjectId,
+  ] = useState("");
+
+  const [
+    answers,
+    setAnswers,
+  ] = useState<Answer[]>(
+    []
+  );
+
+  const [
+    selectedIds,
+    setSelectedIds,
+  ] = useState<
+    string[]
+  >([]);
+
+  const [
+    job,
+    setJob,
+  ] =
+    useState<GradingJob | null>(
+      null
+    );
+
+  const [
+    state,
+    setState,
+  ] =
+    useState<PageState>(
+      "ready"
+    );
+
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState("");
+
+  /* =======================================================
+     Load answers
+     ======================================================= */
+
+  async function loadAnswers() {
+    if (
+      !testId.trim() ||
+      !subjectId.trim()
+    ) {
+      setError(
+        "テストIDと教科を指定してください。"
+      );
+
+      return;
+    }
+
+    try {
+      setState(
+        "loading"
+      );
+
+      setError("");
+
+      setMessage("");
+
+      const user =
+        await getAppUser(
+          auth.currentUser
+        );
+
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "採点機能を利用する権限がありません。"
+        );
+      }
+
+      const loaded =
+        await getAnswers(
+          testId.trim(),
+          subjectId.trim()
+        );
+
+      setAnswers(
+        loaded
+      );
+
+      /*
+       * 初期状態では未処理答案だけ選択。
+       */
+      setSelectedIds(
+        loaded
+          .filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+                "uploaded" ||
+              answer.status ===
+                "error"
+          )
+          .map(
+            (
+              answer
+            ) =>
+              answer.id
+          )
+      );
+
+      setState(
+        "ready"
+      );
+
+      if (
+        loaded.length ===
+        0
+      ) {
+        setMessage(
+          "対象となる答案はありません。"
+        );
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Load answers error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "答案を取得できませんでした。"
+      );
+
+      setState(
+        "error"
+      );
+    }
+  }
+
+  /* =======================================================
+     Start
+     ======================================================= */
+
+  async function handleStart() {
+    if (
+      selectedIds.length ===
+      0
+    ) {
+      setError(
+        "自動採点する答案を選択してください。"
+      );
+
+      return;
+    }
+
+    try {
+      setState(
+        "processing"
+      );
+
+      setError("");
+
+      setMessage(
+        "自動採点を開始しています..."
+      );
+
+      const result =
+        await startAutoGrading(
+          testId.trim(),
+          subjectId.trim(),
+          selectedIds
+        );
+
+      const initialJob =
+        await getGradingJob(
+          result.jobId
+        );
+
+      setJob(
+        initialJob
+      );
+
+      /*
+       * ジョブ監視。
+       */
+      await monitorJob(
+        result.jobId
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Auto grading error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "自動採点を開始できませんでした。"
+      );
+
+      setState(
+        "error"
+      );
+    }
+  }
+
+  /* =======================================================
+     Monitor job
+     ======================================================= */
+
+  async function monitorJob(
+    jobId: string
+  ) {
+    let stopped =
+      false;
+
+    while (
+      !stopped
+    ) {
+      const currentJob =
+        await getGradingJob(
+          jobId
+        );
+
+      if (
+        !currentJob
+      ) {
+        throw new Error(
+          "採点ジョブが見つかりません。"
+        );
+      }
+
+      setJob(
+        currentJob
+      );
+
+      if (
+        currentJob.status ===
+          "completed" ||
+        currentJob.status ===
+          "completed_with_errors"
+      ) {
+        stopped =
+          true;
+
+        setState(
+          "completed"
+        );
+
+        setMessage(
+          currentJob.status ===
+            "completed"
+            ? "自動採点が完了しました。"
+            : "自動採点が完了しました。一部に確認が必要な答案があります。"
+        );
+
+        /*
+         * 最新状態を取得。
+         */
+        await loadAnswers();
+
+        return;
+      }
+
+      if (
+        currentJob.status ===
+        "failed"
+      ) {
+        throw new Error(
+          currentJob.errorMessage ||
+            "自動採点処理に失敗しました。"
+        );
+      }
+
+      await sleep(
+        2000
+      );
+    }
+  }
+
+  /* =======================================================
+     Selection
+     ======================================================= */
+
+  function toggleAnswer(
+    answerId: string
+  ) {
+    setSelectedIds(
+      (
+        current: string[]
+      ) =>
+        current.includes(
+          answerId
+        )
+          ? current.filter(
+              (
+                id
+              ) =>
+                id !==
+                answerId
+            )
+          : [
+              ...current,
+              answerId,
+            ]
+    );
+  }
+
+  function selectAll() {
+    setSelectedIds(
+      answers
+        .filter(
+          (
+            answer
+          ) =>
+            answer.status ===
+              "uploaded" ||
+            answer.status ===
+              "error"
+        )
+        .map(
+          (
+            answer
+          ) =>
+            answer.id
+        )
+    );
+  }
+
+  function clearSelection() {
+    setSelectedIds(
+      []
+    );
+  }
+
+  /* =======================================================
+     Statistics
+     ======================================================= */
+
+  const statistics =
+    useMemo(
+      () => {
+        const uploaded =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "uploaded"
+          ).length;
+
+        const processing =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "processing"
+          ).length;
+
+        const graded =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "graded"
+          ).length;
+
+        const review =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+                "first_review" ||
+              answer.status ===
+                "second_review"
+          ).length;
+
+        const confirmed =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "confirmed"
+          ).length;
+
+        const errors =
+          answers.filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "error"
+          ).length;
+
+        return {
+          uploaded,
+
+          processing,
+
+          graded,
+
+          review,
+
+          confirmed,
+
+          errors,
+        };
+      },
+      [
+        answers,
+      ]
+    );
 
   /* =======================================================
      Progress
      ======================================================= */
 
   const progress =
-    useMemo(() => {
-      if (
-        total <= 0
-      ) {
-        return 0;
-      }
-
-      return Math.min(
-        100,
-
-        Math.round(
-          (processed /
-            total) *
-            100
-        )
-      );
-    }, [
-      processed,
-      total,
-    ]);
-
-  /* =======================================================
-     Job polling
-     ======================================================= */
-
-  useEffect(() => {
-    if (!jobId) {
-      return;
-    }
-
-    let cancelled =
-      false;
-
-    const timer =
-      window.setInterval(
-        async () => {
-          try {
-            const job =
-              await getGradingJob(
-                jobId
-              );
-
-            if (
-              cancelled ||
-              !job
-            ) {
-              return;
-            }
-
-            setProcessed(
-              Number(
-                job.processed ??
-                  0
-              )
-            );
-
-            setSucceeded(
-              Number(
-                job.succeeded ??
-                  0
-              )
-            );
-
-            setReviewCount(
-              Number(
-                job.reviewRequired ??
-                  0
-              )
-            );
-
-            setErrorCount(
-              Number(
-                job.errors ??
-                  0
-              )
-            );
-
-            if (
-              job.status ===
-                "completed" ||
-              job.status ===
-                "completed_with_errors"
-            ) {
-              setRunning(
-                false
-              );
-
-              setFinished(
-                true
-              );
-
-              if (
-                job.status ===
-                "completed_with_errors"
-              ) {
-                setErrorMessage(
-                  "一部の答案でエラーが発生しました。"
-                );
-              }
-
-              window.clearInterval(
-                timer
-              );
-            }
-
-            if (
-              job.status ===
-              "failed"
-            ) {
-              setRunning(
-                false
-              );
-
-              setErrorMessage(
-                typeof job.errorMessage ===
-                  "string"
-                  ? job.errorMessage
-                  : "答案処理に失敗しました。"
-              );
-
-              window.clearInterval(
-                timer
-              );
-            }
-          } catch (
-            error
-          ) {
-            if (
-              !cancelled
-            ) {
-              setErrorMessage(
-                error instanceof Error
-                  ? error.message
-                  : "ジョブ状態を取得できません。"
-              );
-            }
-          }
-        },
-        2000
-      );
-
-    return () => {
-      cancelled =
-        true;
-
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    jobId,
-  ]);
-
-  /* =======================================================
-     Start processing
-     ======================================================= */
-
-  async function startProcessing() {
-    if (
-      !testId ||
-      !subjectId
-    ) {
-      setErrorMessage(
-        "testIdとsubjectIdが必要です。"
-      );
-
-      return;
-    }
-
-    setRunning(
-      true
-    );
-
-    setFinished(
-      false
-    );
-
-    setErrorMessage(
-      ""
-    );
-
-    setProcessed(
+    job &&
+    job.total >
       0
-    );
-
-    setSucceeded(
-      0
-    );
-
-    setReviewCount(
-      0
-    );
-
-    setErrorCount(
-      0
-    );
-
-    setJobId(
-      null
-    );
-
-    setTotal(
-      0
-    );
-
-    try {
-      const answers =
-        await getAnswers(
-          testId,
-          subjectId,
-          "uploaded"
-        );
-
-      if (
-        answers.length ===
-        0
-      ) {
-        setRunning(
-          false
-        );
-
-        setErrorMessage(
-          "未処理の答案がありません。"
-        );
-
-        return;
-      }
-
-      const result =
-        await startAutoGrading(
-          testId,
-          subjectId,
-          answers.map(
-            (
-              answer
-            ) =>
-              answer.id
+      ? Math.min(
+          100,
+          Math.round(
+            job.processed /
+              job.total *
+              100
           )
-        );
-
-      setJobId(
-        result.jobId
-      );
-
-      setTotal(
-        Number(
-          result.total
         )
-      );
-    } catch (
-      error
-    ) {
-      setRunning(
-        false
-      );
-
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "自動採点の開始に失敗しました。"
-      );
-    }
-  }
-
-  /* =======================================================
-     Processing items
-     ======================================================= */
-
-  const items:
-    ProcessingItem[] =
-    [
-      "QR認識",
-      "四隅マーカー検出",
-      "傾き・台形補正",
-      "答案位置合わせ",
-      "OCR",
-      "自動採点",
-    ].map(
-      (
-        name
-      ) => ({
-        name,
-
-        total,
-
-        processed,
-
-        status:
-          errorCount > 0
-            ? "要確認"
-            : finished
-            ? "完了"
-            : running
-            ? "処理中"
-            : "待機中",
-      })
-    );
+      : 0;
 
   /* =======================================================
      Render
@@ -453,28 +507,370 @@ function AutoGradingContent() {
 
   return (
     <main className="page">
-      <SchoolHeader
-        title="自動採点"
-      />
-
       <section className="content">
-        <StepBar
-          currentStep={4}
-        />
 
-        <div className="pageHeader">
+        {/* ==================================================
+            Header
+            ================================================== */}
+
+        <header className="pageHeader">
           <div>
+            <div
+              className="muted"
+              style={{
+                fontSize:
+                  11,
+              }}
+            >
+              採点
+            </div>
+
             <h1>
-              自動採点
+              自動採点処理
             </h1>
 
-            <p>
-              QR認識・画像補正・OCR・自動採点を処理します。
+            <p className="muted">
+              自動採点可能な答案だけを処理します。
+              手動採点が必要な問題は別途採点します。
             </p>
           </div>
-        </div>
 
-        <section className="stepCard">
+          <Link
+            href="/grading"
+            className="button"
+          >
+            採点へ戻る
+          </Link>
+        </header>
+
+        {/* ==================================================
+            Error
+            ================================================== */}
+
+        {error && (
+          <div
+            className="errorMessage"
+            role="alert"
+          >
+            {
+              error
+            }
+          </div>
+        )}
+
+        {message && (
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {
+              message
+            }
+          </div>
+        )}
+
+        {/* ==================================================
+            Test selection
+            ================================================== */}
+
+        <section className="card">
+          <h2>
+            対象を指定
+          </h2>
+
+          <div
+            style={{
+              display:
+                "grid",
+
+              gridTemplateColumns:
+                "1fr 1fr auto",
+
+              gap:
+                10,
+
+              alignItems:
+                "end",
+            }}
+          >
+            <label>
+              <span
+                style={{
+                  display:
+                    "block",
+
+                  marginBottom:
+                    6,
+
+                  fontSize:
+                    12,
+
+                  fontWeight:
+                    600,
+                }}
+              >
+                テストID
+              </span>
+
+              <input
+                value={
+                  testId
+                }
+                onChange={(
+                  event
+                ) =>
+                  setTestId(
+                    event.target
+                      .value
+                  )
+                }
+                placeholder="テストID"
+                disabled={
+                  state ===
+                  "processing"
+                }
+              />
+            </label>
+
+            <label>
+              <span
+                style={{
+                  display:
+                    "block",
+
+                  marginBottom:
+                    6,
+
+                  fontSize:
+                    12,
+
+                  fontWeight:
+                    600,
+                }}
+              >
+                教科ID
+              </span>
+
+              <input
+                value={
+                  subjectId
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSubjectId(
+                    event.target
+                      .value
+                  )
+                }
+                placeholder="教科ID"
+                disabled={
+                  state ===
+                  "processing"
+                }
+              />
+            </label>
+
+            <button
+              type="button"
+              className="button"
+              onClick={
+                loadAnswers
+              }
+              disabled={
+                state ===
+                "processing"
+              }
+            >
+              答案を読み込む
+            </button>
+          </div>
+        </section>
+
+        {/* ==================================================
+            Statistics
+            ================================================== */}
+
+        <section
+          style={{
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(6, minmax(0, 1fr))",
+
+            gap:
+              10,
+
+            marginTop:
+              16,
+          }}
+        >
+          <StatusCard
+            label="未処理"
+            value={
+              statistics.uploaded
+            }
+          />
+
+          <StatusCard
+            label="処理中"
+            value={
+              statistics.processing
+            }
+          />
+
+          <StatusCard
+            label="採点済み"
+            value={
+              statistics.graded
+            }
+          />
+
+          <StatusCard
+            label="確認待ち"
+            value={
+              statistics.review
+            }
+          />
+
+          <StatusCard
+            label="確定"
+            value={
+              statistics.confirmed
+            }
+          />
+
+          <StatusCard
+            label="エラー"
+            value={
+              statistics.errors
+            }
+          />
+        </section>
+
+        {/* ==================================================
+            Processing
+            ================================================== */}
+
+        {job && (
+          <section
+            className="card"
+            style={{
+              marginTop:
+                16,
+            }}
+          >
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                gap:
+                  10,
+              }}
+            >
+              <strong>
+                自動採点処理
+              </strong>
+
+              <span
+                className="muted"
+              >
+                {
+                  job.status
+                }
+              </span>
+            </div>
+
+            <div
+              style={{
+                marginTop:
+                  12,
+
+                height:
+                  10,
+
+                borderRadius:
+                  999,
+
+                background:
+                  "#eeeeee",
+
+                overflow:
+                  "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width:
+                    `${progress}%`,
+
+                  height:
+                    "100%",
+
+                  background:
+                    "#222",
+
+                  transition:
+                    "width .2s ease",
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop:
+                  8,
+
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                fontSize:
+                  11,
+
+                color:
+                  "#777",
+              }}
+            >
+              <span>
+                {
+                  job.processed
+                }
+                {" / "}
+                {
+                  job.total
+                }
+                件
+              </span>
+
+              <span>
+                {
+                  progress
+                }
+                %
+              </span>
+            </div>
+          </section>
+        )}
+
+        {/* ==================================================
+            Answer list
+            ================================================== */}
+
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
           <div
             style={{
               display:
@@ -486,318 +882,492 @@ function AutoGradingContent() {
               alignItems:
                 "center",
 
+              gap:
+                10,
+
               marginBottom:
-                18,
+                12,
             }}
           >
             <div>
-              <strong>
-                テスト：
-                {testId ||
-                  "未指定"}
-              </strong>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                答案
+              </h2>
 
-              <div>
-                教科：
-                {subjectId ||
-                  "未指定"}
-              </div>
+              <p
+                className="muted"
+                style={{
+                  margin:
+                    "4px 0 0",
+
+                  fontSize:
+                    11,
+                }}
+              >
+                自動処理する答案を選択してください。
+              </p>
             </div>
 
-            <div>
-              答案：
-              <strong>
-                {processed.toLocaleString()}
-                {" / "}
-                {total.toLocaleString()}
-              </strong>
-            </div>
-          </div>
-
-          <div
-            style={{
-              height:
-                14,
-
-              background:
-                "#eee",
-
-              borderRadius:
-                7,
-
-              overflow:
-                "hidden",
-            }}
-          >
             <div
               style={{
-                width:
-                  `${progress}%`,
+                display:
+                  "flex",
 
-                height:
-                  "100%",
-
-                background:
-                  "#222",
-
-                transition:
-                  "width .2s linear",
+                gap:
+                  7,
               }}
-            />
+            >
+              <button
+                type="button"
+                className="button"
+                onClick={
+                  selectAll
+                }
+              >
+                未処理を全選択
+              </button>
+
+              <button
+                type="button"
+                className="button"
+                onClick={
+                  clearSelection
+                }
+              >
+                選択解除
+              </button>
+            </div>
           </div>
+
+          {answers.length ===
+          0 ? (
+            <div
+              style={{
+                padding:
+                  50,
+
+                textAlign:
+                  "center",
+
+                color:
+                  "#777",
+
+                fontSize:
+                  12,
+              }}
+            >
+              答案がありません。
+            </div>
+          ) : (
+            <div
+              style={{
+                overflowX:
+                  "auto",
+              }}
+            >
+              <table className="dataTable">
+                <thead>
+                  <tr>
+                    <th>
+                      選択
+                    </th>
+
+                    <th>
+                      答案ID
+                    </th>
+
+                    <th>
+                      生徒番号
+                    </th>
+
+                    <th>
+                      ファイル
+                    </th>
+
+                    <th>
+                      状態
+                    </th>
+
+                    <th>
+                      確認
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {answers.map(
+                    (
+                      answer
+                    ) => {
+                      const selectable =
+                        answer.status ===
+                          "uploaded" ||
+                        answer.status ===
+                          "error";
+
+                      const selected =
+                        selectedIds.includes(
+                          answer.id
+                        );
+
+                      return (
+                        <tr
+                          key={
+                            answer.id
+                          }
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={
+                                selected
+                              }
+                              disabled={
+                                !selectable ||
+                                state ===
+                                  "processing"
+                              }
+                              onChange={() =>
+                                toggleAnswer(
+                                  answer.id
+                                )
+                              }
+                            />
+                          </td>
+
+                          <td>
+                            {
+                              answer.id
+                            }
+                          </td>
+
+                          <td>
+                            {
+                              answer.studentNumber ??
+                              "未紐付け"
+                            }
+                          </td>
+
+                          <td>
+                            {
+                              answer.fileName
+                            }
+                          </td>
+
+                          <td>
+                            <StatusBadge
+                              status={
+                                answer.status
+                              }
+                            />
+                          </td>
+
+                          <td>
+                            {answer.reviewRequired
+                              ? "必要"
+                              : "—"}
+                          </td>
+                        </tr>
+                      );
+                    }
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* =================================================
+              Start
+              ================================================= */}
 
           <div
             style={{
+              marginTop:
+                16,
+
               display:
                 "flex",
 
               justifyContent:
-                "space-between",
+                "flex-end",
 
-              marginTop:
-                8,
+              alignItems:
+                "center",
+
+              gap:
+                12,
             }}
           >
-            <span>
-              {progress}%
-            </span>
-
-            <span>
-              {finished
-                ? "処理完了"
-                : running
-                ? "処理中"
-                : "待機中"}
-            </span>
-          </div>
-
-          {errorMessage && (
-            <div
-              className="selectionPanel"
+            <span
+              className="muted"
               style={{
-                marginTop:
-                  16,
+                fontSize:
+                  11,
               }}
             >
-              {errorMessage}
-            </div>
-          )}
+              選択：
+              {
+                selectedIds.length
+              }
+              件
+            </span>
 
-          <div
-            className="actionBar"
-            style={{
-              marginTop:
-                20,
-            }}
-          >
             <button
               type="button"
-              className="primaryButton"
-              disabled={
-                running
-              }
+              className="button primary"
               onClick={
-                startProcessing
+                handleStart
+              }
+              disabled={
+                selectedIds.length ===
+                  0 ||
+                state ===
+                  "processing"
               }
             >
-              {running
-                ? "処理中..."
-                : finished
-                ? "再実行"
+              {state ===
+              "processing"
+                ? "自動採点中..."
                 : "自動採点を開始"}
             </button>
           </div>
         </section>
 
-        <section
-          className="listCard"
-          style={{
-            marginTop:
-              24,
-          }}
-        >
-          {items.map(
-            (
-              item
-            ) => {
-              const itemProgress =
-                item.total <=
-                0
-                  ? 0
-                  : Math.min(
-                      100,
-
-                      Math.round(
-                        (item.processed /
-                          item.total) *
-                          100
-                      )
-                    );
-
-              return (
-                <div
-                  key={
-                    item.name
-                  }
-                  style={{
-                    padding:
-                      "18px",
-
-                    borderBottom:
-                      "1px solid #eee",
-                  }}
-                >
-                  <div
-                    style={{
-                      display:
-                        "flex",
-
-                      justifyContent:
-                        "space-between",
-
-                      marginBottom:
-                        8,
-                    }}
-                  >
-                    <strong>
-                      {
-                        item.name
-                      }
-                    </strong>
-
-                    <span>
-                      {item.processed.toLocaleString()}
-                      {" / "}
-                      {item.total.toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      height:
-                        8,
-
-                      background:
-                        "#eee",
-
-                      borderRadius:
-                        4,
-
-                      overflow:
-                        "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width:
-                          `${itemProgress}%`,
-
-                        height:
-                          "100%",
-
-                        background:
-                          "#555",
-                      }}
-                    />
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop:
-                        6,
-
-                      color:
-                        "#777",
-
-                      fontSize:
-                        12,
-                    }}
-                  >
-                    {
-                      item.status
-                    }
-                  </div>
-                </div>
-              );
-            }
-          )}
-        </section>
+        {/* ==================================================
+            Important notice
+            ================================================== */}
 
         <section
+          className="card"
           style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(3, 1fr)",
-
-            gap:
-              12,
-
             marginTop:
-              24,
+              16,
+
+            background:
+              "#fafafa",
           }}
         >
-          <div className="selectionPanel">
-            <strong>
-              成功
-            </strong>
-
-            <p>
-              {succeeded}
-              枚
-            </p>
-          </div>
-
-          <div className="selectionPanel">
-            <strong>
-              要確認
-            </strong>
-
-            <p>
-              {reviewCount}
-              枚
-            </p>
-          </div>
-
-          <div className="selectionPanel">
-            <strong>
-              エラー
-            </strong>
-
-            <p>
-              {errorCount}
-              枚
-            </p>
-          </div>
-        </section>
-
-        {finished && (
-          <section
-            className="stepCard"
+          <strong
             style={{
-              marginTop:
-                24,
+              fontSize:
+                12,
             }}
           >
-            <h2>
-              自動採点完了
-            </h2>
+            採点方式について
+          </strong>
 
-            <p>
-              自動採点が完了しました。
-              要確認答案は一次確認で確認してください。
-            </p>
+          <p
+            className="muted"
+            style={{
+              margin:
+                "7px 0 0",
 
-            <a
-              href="/grading/first"
-              className="primaryButton"
-            >
-              一次確認へ
-            </a>
-          </section>
-        )}
+              fontSize:
+                11,
+
+              lineHeight:
+                1.7,
+            }}
+          >
+            この画面ですべての問題を自動採点するわけではありません。
+            テスト登録時に手動採点に設定された問題は、
+            自動採点後も手動採点の対象として残ります。
+          </p>
+
+          <Link
+            href="/grading"
+            className="button"
+            style={{
+              marginTop:
+                10,
+            }}
+          >
+            採点状況を確認
+          </Link>
+        </section>
       </section>
     </main>
+  );
+}
+
+/* =========================================================
+   Status card
+   ========================================================= */
+
+function StatusCard({
+  label,
+  value,
+}: {
+  label: string;
+
+  value: number;
+}) {
+  return (
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            3,
+
+          fontSize:
+            20,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
+  );
+}
+
+/* =========================================================
+   Status badge
+   ========================================================= */
+
+function StatusBadge({
+  status,
+}: {
+  status: string;
+}) {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
+        background:
+          getStatusBackground(
+            status
+          ),
+
+        fontSize:
+          10,
+
+        whiteSpace:
+          "nowrap",
+      }}
+    >
+      {
+        getStatusLabel(
+          status
+        )
+      }
+    </span>
+  );
+}
+
+/* =========================================================
+   Status label
+   ========================================================= */
+
+function getStatusLabel(
+  status: string
+) {
+  switch (
+    status
+  ) {
+    case "uploaded":
+      return "未処理";
+
+    case "processing":
+      return "処理中";
+
+    case "graded":
+      return "採点済み";
+
+    case "first_review":
+      return "一次確認";
+
+    case "second_review":
+      return "二次確認";
+
+    case "confirmed":
+      return "確定";
+
+    case "published":
+      return "公開済み";
+
+    case "error":
+      return "エラー";
+
+    default:
+      return status;
+  }
+}
+
+/* =========================================================
+   Status background
+   ========================================================= */
+
+function getStatusBackground(
+  status: string
+) {
+  switch (
+    status
+  ) {
+    case "error":
+      return "#fff0f0";
+
+    case "confirmed":
+      return "#e8f5e9";
+
+    case "graded":
+      return "#eef5ff";
+
+    case "first_review":
+    case "second_review":
+      return "#fff8e6";
+
+    case "processing":
+      return "#f0f0f0";
+
+    default:
+      return "#f5f5f5";
+  }
+}
+
+/* =========================================================
+   Sleep
+   ========================================================= */
+
+function sleep(
+  milliseconds: number
+) {
+  return new Promise<void>(
+    (
+      resolve
+    ) => {
+      setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
   );
 }
