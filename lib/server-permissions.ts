@@ -1,221 +1,756 @@
 import type {
+  AppUser,
   UserRole,
-} from "@/types";
-
-import type {
-  ServerUser,
-} from "./server-auth";
+} from "@/lib/types";
 
 /* =========================================================
-   Server permissions
+   Server User
    ========================================================= */
 
-export type ServerPermission =
-  | "dashboard.headOffice"
-  | "dashboard.school"
-  | "dashboard.teacher"
-  | "dashboard.student"
+export type ServerUser = {
+  uid: string;
 
-  | "students.view"
-  | "students.manage"
+  email:
+    | string
+    | null;
 
-  | "tests.view"
-  | "tests.manage"
+  name: string;
 
-  | "answers.view"
-  | "answers.upload"
+  role: UserRole;
 
-  | "grading.view"
-  | "grading.firstReview"
-  | "grading.secondReview"
-  | "grading.confirm"
+  organizationId:
+    | string
+    | null;
 
-  | "results.all"
-  | "results.self"
+  schoolIds: string[];
 
-  | "reports.all"
-  | "reports.self"
+  studentId:
+    | string
+    | null;
 
-  | "retests.view"
-  | "retests.manage"
-
-  | "qr.view"
-  | "qr.manage"
-
-  | "schools.manage"
-
-  | "users.manage"
-
-  | "settings.manage";
-
-/* =========================================================
-   Permissions
-   ========================================================= */
-
-const PERMISSIONS: Record<
-  UserRole,
-  readonly ServerPermission[]
-> = {
-  "本部管理者": [
-    "dashboard.headOffice",
-
-    "students.view",
-    "students.manage",
-
-    "tests.view",
-    "tests.manage",
-
-    "answers.view",
-    "answers.upload",
-
-    "grading.view",
-    "grading.firstReview",
-    "grading.secondReview",
-    "grading.confirm",
-
-    "results.all",
-
-    "reports.all",
-
-    "retests.view",
-    "retests.manage",
-
-    "qr.view",
-    "qr.manage",
-
-    "schools.manage",
-
-    "users.manage",
-
-    "settings.manage",
-  ],
-
-  "校舎管理者": [
-    "dashboard.school",
-
-    "students.view",
-    "students.manage",
-
-    "tests.view",
-    "tests.manage",
-
-    "answers.view",
-    "answers.upload",
-
-    "grading.view",
-    "grading.firstReview",
-    "grading.secondReview",
-    "grading.confirm",
-
-    "results.all",
-
-    "reports.all",
-
-    "retests.view",
-    "retests.manage",
-
-    "qr.view",
-    "qr.manage",
-
-    "users.manage",
-
-    "settings.manage",
-  ],
-
-  "講師": [
-    "dashboard.teacher",
-
-    "tests.view",
-
-    "answers.view",
-    "answers.upload",
-
-    "grading.view",
-    "grading.firstReview",
-    "grading.secondReview",
-    "grading.confirm",
-
-    "results.all",
-
-    "reports.all",
-
-    "retests.view",
-    "retests.manage",
-
-    "qr.view",
-    "qr.manage",
-  ],
-
-  "生徒": [
-    "dashboard.student",
-
-    "results.self",
-
-    "reports.self",
-  ],
+  active: boolean;
 };
 
 /* =========================================================
-   Has permission
+   Convert AppUser
    ========================================================= */
 
-export function serverHasPermission(
-  user: ServerUser,
-  permission: ServerPermission
+export function toServerUser(
+  user: AppUser
+): ServerUser {
+  return {
+    uid:
+      user.uid,
+
+    email:
+      user.email,
+
+    name:
+      user.name,
+
+    role:
+      user.role,
+
+    organizationId:
+      user.organizationId,
+
+    schoolIds:
+      user.schoolIds,
+
+    studentId:
+      user.studentId,
+
+    active:
+      user.active,
+  };
+}
+
+/* =========================================================
+   Organization
+   ========================================================= */
+
+export function canAccessOrganization(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  organizationId: string
 ) {
   if (
-    !user.role
+    !user ||
+    !user.active
   ) {
     return false;
   }
 
-  return PERMISSIONS[
-    user.role
-  ].includes(
-    permission
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return (
+      user.organizationId ===
+      organizationId
+    );
+  }
+
+  return (
+    user.organizationId ===
+    organizationId
   );
 }
 
 /* =========================================================
-   Require permission
+   School
    ========================================================= */
 
-export function requireServerPermission(
-  user: ServerUser,
-  permission: ServerPermission
+export function canAccessSchool(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  schoolId: string
 ) {
   if (
-    !serverHasPermission(
-      user,
-      permission
-    )
+    !user ||
+    !user.active ||
+    !schoolId
   ) {
-    throw new Error(
-      "FORBIDDEN"
-    );
+    return false;
   }
 
-  return user;
+  /*
+   * 本部管理者は所属組織内の
+   * すべての校舎にアクセスできる。
+   *
+   * 校舎管理者・講師は
+   * schoolIdsに含まれる校舎のみ。
+   */
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.schoolIds.includes(
+      schoolId
+    )
+  );
 }
 
 /* =========================================================
-   Role
+   Student
    ========================================================= */
 
-export function requireRole(
-  user: ServerUser,
-  roles: readonly UserRole[]
+export function canAccessStudent(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  studentId: string,
+  studentSchoolId?:
+    | string
+    | null
 ) {
   if (
-    !user.role ||
-    !roles.includes(
-      user.role
-    )
+    !user ||
+    !user.active ||
+    !studentId
   ) {
-    throw new Error(
-      "FORBIDDEN"
+    return false;
+  }
+
+  /*
+   * 本部管理者
+   */
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  /*
+   * 生徒本人
+   */
+  if (
+    user.role ===
+    "生徒"
+  ) {
+    return (
+      user.studentId ===
+      studentId
     );
   }
 
-  return user;
+  /*
+   * 校舎管理者・講師
+   */
+  if (
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  ) {
+    if (
+      !studentSchoolId
+    ) {
+      return false;
+    }
+
+    return user.schoolIds.includes(
+      studentSchoolId
+    );
+  }
+
+  return false;
+}
+
+/* =========================================================
+   User management
+   ========================================================= */
+
+export function canManageUsers(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者"
+  );
+}
+
+/* =========================================================
+   School management
+   ========================================================= */
+
+export function canManageSchools(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    Boolean(
+      user &&
+        user.active
+    ) &&
+    user!.role ===
+      "本部管理者"
+  );
+}
+
+/* =========================================================
+   Student management
+   ========================================================= */
+
+export function canManageStudents(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者"
+  );
+}
+
+/* =========================================================
+   Test management
+   ========================================================= */
+
+export function canManageTests(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Answer management
+   ========================================================= */
+
+export function canManageAnswers(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Grading
+   ========================================================= */
+
+export function canGrade(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Confirm grading
+   ========================================================= */
+
+export function canConfirmGrading(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Result management
+   ========================================================= */
+
+export function canManageResults(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Report management
+   ========================================================= */
+
+export function canManageReports(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Retest
+   ========================================================= */
+
+export function canManageRetests(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者" ||
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   QR stickers
+   ========================================================= */
+
+export function canManageQRStickers(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return (
+    user.role ===
+      "本部管理者" ||
+    user.role ===
+      "校舎管理者"
+  );
+}
+
+/* =========================================================
+   System settings
+   ========================================================= */
+
+export function canManageSettings(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    Boolean(
+      user &&
+        user.active
+    ) &&
+    user!.role ===
+      "本部管理者"
+  );
+}
+
+/* =========================================================
+   Head office
+   ========================================================= */
+
+export function isHeadOfficeAdmin(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    user?.active ===
+      true &&
+    user.role ===
+      "本部管理者"
+  );
+}
+
+/* =========================================================
+   School admin
+   ========================================================= */
+
+export function isSchoolAdmin(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    user?.active ===
+      true &&
+    user.role ===
+      "校舎管理者"
+  );
+}
+
+/* =========================================================
+   Teacher
+   ========================================================= */
+
+export function isTeacher(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    user?.active ===
+      true &&
+    user.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   Student
+   ========================================================= */
+
+export function isStudent(
+  user:
+    | ServerUser
+    | null
+    | undefined
+) {
+  return (
+    user?.active ===
+      true &&
+    user.role ===
+      "生徒"
+  );
+}
+
+/* =========================================================
+   Role comparison
+   ========================================================= */
+
+export function hasRole(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  roles: UserRole[]
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  return roles.includes(
+    user.role
+  );
+}
+
+/* =========================================================
+   School scope
+   ========================================================= */
+
+export function hasSchoolAccess(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  schoolIds: string[]
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    return false;
+  }
+
+  if (
+    user.role ===
+    "本部管理者"
+  ) {
+    return true;
+  }
+
+  if (
+    schoolIds.length ===
+    0
+  ) {
+    return false;
+  }
+
+  return schoolIds.some(
+    (
+      schoolId
+    ) =>
+      user.schoolIds.includes(
+        schoolId
+      )
+  );
+}
+
+/* =========================================================
+   Organization scope
+   ========================================================= */
+
+export function assertOrganizationAccess(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  organizationId: string
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    throw new Error(
+      "認証が必要です。"
+    );
+  }
+
+  if (
+    !user.organizationId
+  ) {
+    throw new Error(
+      "所属組織が設定されていません。"
+    );
+  }
+
+  if (
+    user.organizationId !==
+    organizationId
+  ) {
+    throw new Error(
+      "この組織にアクセスする権限がありません。"
+    );
+  }
+
+  return true;
+}
+
+/* =========================================================
+   School scope assertion
+   ========================================================= */
+
+export function assertSchoolAccess(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  schoolId: string
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    throw new Error(
+      "認証が必要です。"
+    );
+  }
+
+  if (
+    !canAccessSchool(
+      user,
+      schoolId
+    )
+  ) {
+    throw new Error(
+      "この校舎にアクセスする権限がありません。"
+    );
+  }
+
+  return true;
+}
+
+/* =========================================================
+   Student scope assertion
+   ========================================================= */
+
+export function assertStudentAccess(
+  user:
+    | ServerUser
+    | null
+    | undefined,
+  studentId: string,
+  studentSchoolId?:
+    | string
+    | null
+) {
+  if (
+    !user ||
+    !user.active
+  ) {
+    throw new Error(
+      "認証が必要です。"
+    );
+  }
+
+  if (
+    !canAccessStudent(
+      user,
+      studentId,
+      studentSchoolId
+    )
+  ) {
+    throw new Error(
+      "この生徒にアクセスする権限がありません。"
+    );
+  }
+
+  return true;
 }
