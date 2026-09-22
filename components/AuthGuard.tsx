@@ -3,6 +3,7 @@
 import {
   useEffect,
   useState,
+  type ReactNode,
 } from "react";
 
 import {
@@ -11,48 +12,190 @@ import {
 } from "next/navigation";
 
 import {
-  getAppUser,
-} from "@/lib/auth";
+  auth,
+} from "@/lib/firebase";
 
-import type {
-  AppUser,
-  UserRole,
-} from "@/lib/types";
+import {
+  getAppUser,
+  observeAuth,
+  getDashboardPath,
+  type AppUser,
+} from "@/lib/auth";
 
 /* =========================================================
    Props
    ========================================================= */
 
 type AuthGuardProps = {
-  children: React.ReactNode;
+  children: ReactNode;
 
   /*
-   * 指定した場合、その権限だけ許可。
+   * 画面側から必要な権限を指定できる。
    *
-   * 未指定ならログイン済みユーザーを許可。
+   * 指定しない場合は、
+   * URLの保護ルールだけを確認する。
    */
-  allowedRoles?:
-    | readonly UserRole[]
-    | undefined;
+  allowedRoles?: AppUser["role"][];
 
   /*
-   * 生徒用ページなど、
-   * 現在のユーザー自身のデータだけを扱うページ。
-   *
-   * 現状はUI/データ取得側で制御し、
-   * Guardではroleのみ確認。
+   * ログイン不要画面では使用しない。
+   * AuthGuard自体を使わない。
    */
-  requireStudent?: boolean;
+  redirectTo?: string;
 };
 
 /* =========================================================
-   Component
+   Protected route rules
+   ========================================================= */
+
+const PROTECTED_ROUTE_RULES: {
+  prefix: string;
+  roles: AppUser["role"][];
+}[] = [
+  {
+    prefix:
+      "/dashboard/head-office",
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/school",
+    roles: [
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/teacher",
+    roles: [
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/dashboard/student",
+    roles: [
+      "生徒",
+    ],
+  },
+
+  {
+    prefix:
+      "/schools",
+    roles: [
+      "本部管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/users",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/students",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/tests",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/answers",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/grading",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/retests",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/results/management",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/reports/management",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  {
+    prefix:
+      "/qr-stickers",
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+    ],
+  },
+
+  {
+    prefix:
+      "/settings",
+    roles: [
+      "本部管理者",
+    ],
+  },
+];
+
+/* =========================================================
+   Guard
    ========================================================= */
 
 export default function AuthGuard({
   children,
   allowedRoles,
-  requireStudent = false,
+  redirectTo,
 }: AuthGuardProps) {
   const router =
     useRouter();
@@ -69,8 +212,8 @@ export default function AuthGuard({
     );
 
   const [
-    loading,
-    setLoading,
+    checking,
+    setChecking,
   ] =
     useState(true);
 
@@ -80,168 +223,268 @@ export default function AuthGuard({
   ] =
     useState(false);
 
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
   /* =======================================================
-     Authentication
+     Auth observer
      ======================================================= */
 
   useEffect(() => {
     let mounted =
       true;
 
-    async function checkAuth() {
-      try {
-        setLoading(
-          true
-        );
+    const unsubscribe =
+      observeAuth(
+        async (
+          authenticatedUser
+        ) => {
+          if (
+            !mounted
+          ) {
+            return;
+          }
 
-        setDenied(
-          false
-        );
+          /*
+           * 未ログイン。
+           */
+          if (
+            !authenticatedUser
+          ) {
+            setUser(
+              null
+            );
 
-        /*
-         * auth.ts側でFirebase Authenticationの
-         * 現在ユーザーを取得する。
-         */
-        const appUser =
-          await getAppUser();
+            setDenied(
+              false
+            );
 
-        if (
-          !mounted
-        ) {
-          return;
-        }
+            setChecking(
+              false
+            );
 
-        /*
-         * 未ログイン。
-         */
-        if (
-          !appUser
-        ) {
-          setUser(
-            null
-          );
-
-          const next =
-            pathname &&
-            pathname !==
+            /*
+             * ログイン画面自体からは
+             * redirectしない。
+             */
+            if (
+              pathname !==
               "/login"
-              ? `?next=${encodeURIComponent(
-                  pathname
-                )}`
-              : "";
+            ) {
+              router.replace(
+                "/login"
+              );
+            }
 
-          router.replace(
-            `/login${next}`
+            return;
+          }
+
+          /*
+           * Firestoreのユーザー情報を
+           * 再取得して権限を確認。
+           */
+          try {
+            const freshUser =
+              await getAppUser(
+                auth.currentUser
+              );
+
+            if (
+              !mounted
+            ) {
+              return;
+            }
+
+            if (
+              !freshUser
+            ) {
+              setUser(
+                null
+              );
+
+              setChecking(
+                false
+              );
+
+              router.replace(
+                "/login"
+              );
+
+              return;
+            }
+
+            if (
+              freshUser.active ===
+              false
+            ) {
+              setUser(
+                null
+              );
+
+              setChecking(
+                false
+              );
+
+              setError(
+                "このアカウントは利用停止されています。"
+              );
+
+              router.replace(
+                "/login"
+              );
+
+              return;
+            }
+
+            setUser(
+              freshUser
+            );
+
+            /*
+             * URL単位の権限チェック。
+             */
+            const routeRule =
+              findRouteRule(
+                pathname
+              );
+
+            const roleAllowedByRoute =
+              !routeRule ||
+              routeRule.roles.includes(
+                freshUser.role
+              );
+
+            /*
+             * ページ側で明示された
+             * allowedRolesも確認。
+             */
+            const roleAllowedByPage =
+              !allowedRoles ||
+              allowedRoles.length ===
+                0 ||
+              allowedRoles.includes(
+                freshUser.role
+              );
+
+            if (
+              !roleAllowedByRoute ||
+              !roleAllowedByPage
+            ) {
+              if (
+                !mounted
+              ) {
+                return;
+              }
+
+              setDenied(
+                true
+              );
+
+              setChecking(
+                false
+              );
+
+              /*
+               * 権限のないURLを直接入力しても
+               * 本人のダッシュボードへ戻す。
+               */
+              const dashboard =
+                redirectTo ??
+                getDashboardPath(
+                  freshUser.role
+                );
+
+              if (
+                pathname !==
+                dashboard
+              ) {
+                router.replace(
+                  dashboard
+                );
+              }
+
+              return;
+            }
+
+            /*
+             * 権限OK。
+             */
+            setDenied(
+              false
+            );
+
+            setChecking(
+              false
+            );
+          } catch (
+            error
+          ) {
+            if (
+              !mounted
+            ) {
+              return;
+            }
+
+            console.error(
+              "AuthGuard user verification error:",
+              error
+            );
+
+            setError(
+              error instanceof Error
+                ? error.message
+                : "ユーザー権限を確認できませんでした。"
+            );
+
+            setChecking(
+              false
+            );
+          }
+        },
+
+        (
+          observerError
+        ) => {
+          if (
+            !mounted
+          ) {
+            return;
+          }
+
+          console.error(
+            "AuthGuard auth error:",
+            observerError
           );
 
-          return;
-        }
+          setError(
+            observerError.message ||
+              "認証情報を確認できませんでした。"
+          );
 
-        /*
-         * 無効化ユーザー。
-         */
-        if (
-          appUser.active ===
-          false
-        ) {
-          setUser(
-            null
+          setChecking(
+            false
           );
 
           router.replace(
             "/login"
           );
-
-          return;
         }
-
-        /*
-         * 権限指定があるページ。
-         */
-        if (
-          allowedRoles &&
-          allowedRoles.length >
-            0 &&
-          !allowedRoles.includes(
-            appUser.role
-          )
-        ) {
-          setUser(
-            appUser
-          );
-
-          setDenied(
-            true
-          );
-
-          return;
-        }
-
-        /*
-         * 生徒専用ページ。
-         */
-        if (
-          requireStudent &&
-          appUser.role !==
-            "生徒"
-        ) {
-          setUser(
-            appUser
-          );
-
-          setDenied(
-            true
-          );
-
-          return;
-        }
-
-        setUser(
-          appUser
-        );
-      } catch (
-        error
-      ) {
-        console.error(
-          "AuthGuard error:",
-          error
-        );
-
-        if (
-          !mounted
-        ) {
-          return;
-        }
-
-        setUser(
-          null
-        );
-
-        router.replace(
-          "/login"
-        );
-      } finally {
-        if (
-          mounted
-        ) {
-          setLoading(
-            false
-          );
-        }
-      }
-    }
-
-    void checkAuth();
+      );
 
     return () => {
       mounted =
         false;
+
+      unsubscribe();
     };
   }, [
     pathname,
     router,
     allowedRoles,
-    requireStudent,
+    redirectTo,
   ]);
 
   /* =======================================================
@@ -249,65 +492,38 @@ export default function AuthGuard({
      ======================================================= */
 
   if (
-    loading
+    checking
   ) {
     return (
-      <main
-        style={{
-          minHeight:
-            "100vh",
-
-          display:
-            "flex",
-
-          alignItems:
-            "center",
-
-          justifyContent:
-            "center",
-
-          padding:
-            24,
-        }}
-      >
-        <div
-          style={{
-            textAlign:
-              "center",
-          }}
-        >
-          <strong>
-            認証情報を確認しています
-          </strong>
-
-          <p
-            style={{
-              marginTop:
-                6,
-
-              color:
-                "#777",
-
-              fontSize:
-                13,
-            }}
-          >
-            しばらくお待ちください。
-          </p>
-        </div>
-      </main>
+      <AuthLoading />
     );
   }
 
   /* =======================================================
-     Unauthorized
+     Error
+     ======================================================= */
+
+  if (
+    error
+  ) {
+    return (
+      <AuthError
+        message={
+          error
+        }
+      />
+    );
+  }
+
+  /* =======================================================
+     Denied
      ======================================================= */
 
   if (
     denied
   ) {
     return (
-      <ForbiddenPage
+      <AccessDenied
         user={
           user
         }
@@ -316,35 +532,19 @@ export default function AuthGuard({
   }
 
   /* =======================================================
-     Not authenticated
+     No user
      ======================================================= */
 
   if (
     !user
   ) {
     return (
-      <main
-        style={{
-          minHeight:
-            "100vh",
-
-          display:
-            "flex",
-
-          alignItems:
-            "center",
-
-          justifyContent:
-            "center",
-        }}
-      >
-        認証情報を確認しています...
-      </main>
+      <AuthLoading />
     );
   }
 
   /* =======================================================
-     Authorized
+     Protected content
      ======================================================= */
 
   return (
@@ -355,27 +555,242 @@ export default function AuthGuard({
 }
 
 /* =========================================================
-   Forbidden
+   Find route rule
    ========================================================= */
 
-function ForbiddenPage({
+function findRouteRule(
+  pathname: string
+) {
+  /*
+   * より長いprefixを先に評価。
+   *
+   * 例:
+   * /results/management
+   * が
+   * /results
+   * のルールに負けないようにする。
+   */
+  const rules =
+    [...PROTECTED_ROUTE_RULES].sort(
+      (
+        a,
+        b
+      ) =>
+        b.prefix.length -
+        a.prefix.length
+    );
+
+  return rules.find(
+    (
+      rule
+    ) =>
+      pathname ===
+        rule.prefix ||
+      pathname.startsWith(
+        `${rule.prefix}/`
+      )
+  );
+}
+
+/* =========================================================
+   Loading UI
+   ========================================================= */
+
+function AuthLoading() {
+  return (
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        background:
+          "#f7f7f7",
+
+        padding:
+          20,
+      }}
+    >
+      <section
+        style={{
+          width:
+            "100%",
+
+          maxWidth:
+            420,
+
+          padding:
+            30,
+
+          background:
+            "#fff",
+
+          border:
+            "1px solid #e5e5e5",
+
+          borderRadius:
+            10,
+
+          textAlign:
+            "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize:
+              13,
+
+            fontWeight:
+              600,
+          }}
+        >
+          テストシステム
+        </div>
+
+        <div
+          style={{
+            marginTop:
+              12,
+
+            color:
+              "#666",
+
+            fontSize:
+              12,
+          }}
+        >
+          認証情報を確認しています...
+        </div>
+      </section>
+    </main>
+  );
+}
+
+/* =========================================================
+   Error UI
+   ========================================================= */
+
+function AuthError({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        background:
+          "#f7f7f7",
+
+        padding:
+          20,
+      }}
+    >
+      <section
+        style={{
+          width:
+            "100%",
+
+          maxWidth:
+            460,
+
+          padding:
+            30,
+
+          background:
+            "#fff",
+
+          border:
+            "1px solid #e5e5e5",
+
+          borderRadius:
+            10,
+        }}
+      >
+        <h1
+          style={{
+            margin:
+              0,
+
+            fontSize:
+              20,
+          }}
+        >
+          認証エラー
+        </h1>
+
+        <p
+          style={{
+            marginTop:
+              10,
+
+            color:
+              "#666",
+
+            fontSize:
+              13,
+          }}
+        >
+          {
+            message
+          }
+        </p>
+
+        <a
+          href="/login"
+          className="button"
+          style={{
+            display:
+              "inline-block",
+
+            marginTop:
+              12,
+
+            textDecoration:
+              "none",
+          }}
+        >
+          ログイン画面へ
+        </a>
+      </section>
+    </main>
+  );
+}
+
+/* =========================================================
+   Access denied
+   ========================================================= */
+
+function AccessDenied({
   user,
 }: {
   user:
     | AppUser
     | null;
 }) {
-  const router =
-    useRouter();
-
-  function goDashboard() {
-    router.replace(
-      getDashboardPath(
-        user?.role ??
-          null
-      )
+  const dashboard =
+    getDashboardPath(
+      user?.role
     );
-  }
 
   return (
     <main
@@ -392,11 +807,11 @@ function ForbiddenPage({
         justifyContent:
           "center",
 
-        padding:
-          24,
-
         background:
           "#f7f7f7",
+
+        padding:
+          20,
       }}
     >
       <section
@@ -405,67 +820,31 @@ function ForbiddenPage({
             "100%",
 
           maxWidth:
-            520,
+            460,
 
           padding:
-            32,
+            30,
 
           background:
             "#fff",
 
           border:
-            "1px solid #ddd",
+            "1px solid #e5e5e5",
 
           borderRadius:
-            12,
+            10,
 
           textAlign:
             "center",
         }}
       >
-        <div
-          style={{
-            width:
-              52,
-
-            height:
-              52,
-
-            margin:
-              "0 auto 16px",
-
-            display:
-              "flex",
-
-            alignItems:
-              "center",
-
-            justifyContent:
-              "center",
-
-            borderRadius:
-              "50%",
-
-            background:
-              "#f1f1f1",
-
-            fontSize:
-              22,
-
-            fontWeight:
-              700,
-          }}
-        >
-          !
-        </div>
-
         <h1
           style={{
             margin:
               0,
 
             fontSize:
-              22,
+              20,
           }}
         >
           この画面は利用できません
@@ -473,106 +852,41 @@ function ForbiddenPage({
 
         <p
           style={{
-            margin:
-              "10px 0 0",
+            marginTop:
+              10,
 
             color:
               "#666",
 
+            fontSize:
+              13,
+
             lineHeight:
               1.7,
-
-            fontSize:
-              13,
           }}
         >
-          現在のアカウントには、
-          この画面を利用する権限がありません。
+          現在のアカウントには、この画面を利用する権限がありません。
         </p>
 
-        {user?.role && (
-          <p
-            style={{
-              margin:
-                "8px 0 0",
-
-              color:
-                "#777",
-
-              fontSize:
-                12,
-            }}
-          >
-            現在の権限：
-            {
-              user.role
-            }
-          </p>
-        )}
-
-        <button
-          type="button"
-          onClick={
-            goDashboard
+        <a
+          href={
+            dashboard
           }
+          className="button"
           style={{
+            display:
+              "inline-block",
+
             marginTop:
-              22,
+              12,
 
-            padding:
-              "10px 18px",
-
-            border:
-              "1px solid #222",
-
-            borderRadius:
-              7,
-
-            background:
-              "#222",
-
-            color:
-              "#fff",
-
-            cursor:
-              "pointer",
-
-            fontSize:
-              13,
+            textDecoration:
+              "none",
           }}
         >
-          自分のホームへ戻る
-        </button>
+          ホームへ
+        </a>
       </section>
     </main>
   );
-}
-
-/* =========================================================
-   Dashboard
-   ========================================================= */
-
-function getDashboardPath(
-  role:
-    | UserRole
-    | null
-) {
-  switch (
-    role
-  ) {
-    case "本部管理者":
-      return "/dashboard/head-office";
-
-    case "校舎管理者":
-      return "/dashboard/school";
-
-    case "講師":
-      return "/dashboard/teacher";
-
-    case "生徒":
-      return "/dashboard/student";
-
-    default:
-      return "/login";
-  }
 }
