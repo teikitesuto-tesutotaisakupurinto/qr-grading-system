@@ -7,6 +7,7 @@ import {
 
 import {
   getAuth,
+  GoogleAuthProvider,
   type Auth,
 } from "firebase/auth";
 
@@ -58,6 +59,18 @@ export const auth: Auth =
   getAuth(app);
 
 /* =========================================================
+   Google Authentication
+   ========================================================= */
+
+export const googleProvider =
+  new GoogleAuthProvider();
+
+googleProvider.setCustomParameters({
+  prompt:
+    "select_account",
+});
+
+/* =========================================================
    Firestore
    ========================================================= */
 
@@ -65,7 +78,7 @@ export const db: Firestore =
   getFirestore(app);
 
 /* =========================================================
-   Configuration check
+   Firebase configuration validation
    ========================================================= */
 
 export function assertFirebaseConfig() {
@@ -121,5 +134,9 @@ export function assertFirebaseConfig() {
     );
   }
 }
+
+/* =========================================================
+   Default export
+   ========================================================= */
 
 export default app;
