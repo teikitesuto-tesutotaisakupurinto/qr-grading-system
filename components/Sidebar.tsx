@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type ReactNode,
 } from "react";
 
 import Link from "next/link";
@@ -31,8 +30,6 @@ import type {
    ========================================================= */
 
 type SidebarProps = {
-  children?: ReactNode;
-
   collapsed?: boolean;
 
   onCollapsedChange?: (
@@ -53,10 +50,14 @@ type MenuItem = {
 };
 
 /* =========================================================
-   Menu
+   Main menu
    ========================================================= */
 
 const MENU_ITEMS: MenuItem[] = [
+  /* =======================================================
+     Home
+     ======================================================= */
+
   {
     href:
       "/dashboard/head-office",
@@ -105,6 +106,10 @@ const MENU_ITEMS: MenuItem[] = [
     ],
   },
 
+  /* =======================================================
+     Management
+     ======================================================= */
+
   {
     href:
       "/schools",
@@ -113,7 +118,7 @@ const MENU_ITEMS: MenuItem[] = [
       "校舎管理",
 
     description:
-      "校舎・校舎情報",
+      "校舎・設定",
 
     roles: [
       "本部管理者",
@@ -128,7 +133,7 @@ const MENU_ITEMS: MenuItem[] = [
       "ユーザー管理",
 
     description:
-      "アカウント管理",
+      "アカウント",
 
     roles: [
       "本部管理者",
@@ -152,6 +157,10 @@ const MENU_ITEMS: MenuItem[] = [
     ],
   },
 
+  /* =======================================================
+     Test
+     ======================================================= */
+
   {
     href:
       "/tests",
@@ -169,6 +178,10 @@ const MENU_ITEMS: MenuItem[] = [
     ],
   },
 
+  /* =======================================================
+     Answers
+     ======================================================= */
+
   {
     href:
       "/answers",
@@ -177,7 +190,7 @@ const MENU_ITEMS: MenuItem[] = [
       "答案",
 
     description:
-      "答案画像・答案管理",
+      "答案登録・確認",
 
     roles: [
       "本部管理者",
@@ -185,6 +198,10 @@ const MENU_ITEMS: MenuItem[] = [
       "講師",
     ],
   },
+
+  /* =======================================================
+     Grading
+     ======================================================= */
 
   {
     href:
@@ -194,72 +211,18 @@ const MENU_ITEMS: MenuItem[] = [
       "採点",
 
     description:
-      "採点状況",
+      "採点・確認・確定",
 
     roles: [
       "本部管理者",
       "校舎管理者",
       "講師",
     ],
-
-    children: [
-      {
-        href:
-          "/grading/auto",
-
-        label:
-          "自動採点",
-
-        roles: [
-          "本部管理者",
-          "校舎管理者",
-          "講師",
-        ],
-      },
-
-      {
-        href:
-          "/grading/review",
-
-        label:
-          "一次確認",
-
-        roles: [
-          "本部管理者",
-          "校舎管理者",
-          "講師",
-        ],
-      },
-
-      {
-        href:
-          "/grading/second-review",
-
-        label:
-          "二次確認",
-
-        roles: [
-          "本部管理者",
-          "校舎管理者",
-          "講師",
-        ],
-      },
-
-      {
-        href:
-          "/grading/confirm",
-
-        label:
-          "採点確定",
-
-        roles: [
-          "本部管理者",
-          "校舎管理者",
-          "講師",
-        ],
-      },
-    ],
   },
+
+  /* =======================================================
+     Results
+     ======================================================= */
 
   {
     href:
@@ -269,7 +232,7 @@ const MENU_ITEMS: MenuItem[] = [
       "成績",
 
     description:
-      "成績・順位",
+      "点数公開・成績計算",
 
     roles: [
       "本部管理者",
@@ -277,6 +240,10 @@ const MENU_ITEMS: MenuItem[] = [
       "講師",
     ],
   },
+
+  /* =======================================================
+     Reports
+     ======================================================= */
 
   {
     href:
@@ -295,6 +262,10 @@ const MENU_ITEMS: MenuItem[] = [
     ],
   },
 
+  /* =======================================================
+     Retests
+     ======================================================= */
+
   {
     href:
       "/retests",
@@ -303,7 +274,7 @@ const MENU_ITEMS: MenuItem[] = [
       "追試",
 
     description:
-      "追試・手動採点",
+      "既存テストから追試作成",
 
     roles: [
       "本部管理者",
@@ -311,6 +282,10 @@ const MENU_ITEMS: MenuItem[] = [
       "講師",
     ],
   },
+
+  /* =======================================================
+     QR Stickers
+     ======================================================= */
 
   {
     href:
@@ -320,13 +295,21 @@ const MENU_ITEMS: MenuItem[] = [
       "QRシール",
 
     description:
-      "生徒QRシール",
+      "生徒QRシール発行・印刷",
 
+    /*
+     * 講師も印刷可能。
+     */
     roles: [
       "本部管理者",
       "校舎管理者",
+      "講師",
     ],
   },
+
+  /* =======================================================
+     Settings
+     ======================================================= */
 
   {
     href:
@@ -336,7 +319,7 @@ const MENU_ITEMS: MenuItem[] = [
       "システム設定",
 
     description:
-      "システム設定",
+      "システム全体の設定",
 
     roles: [
       "本部管理者",
@@ -370,20 +353,12 @@ export default function Sidebar({
   ] =
     useState(false);
 
-  const [
-    openGroups,
-    setOpenGroups,
-  ] =
-    useState<
-      Record<string, boolean>
-    >({});
-
   const collapsed =
     controlledCollapsed ??
     internalCollapsed;
 
   /* =======================================================
-     Auth
+     Load user
      ======================================================= */
 
   useEffect(() => {
@@ -392,11 +367,11 @@ export default function Sidebar({
 
     async function loadUser() {
       try {
-        const currentUser =
+        const firebaseUser =
           auth.currentUser;
 
         if (
-          !currentUser
+          !firebaseUser
         ) {
           if (
             mounted
@@ -411,7 +386,7 @@ export default function Sidebar({
 
         const appUser =
           await getAppUser(
-            currentUser
+            firebaseUser
           );
 
         if (
@@ -425,7 +400,7 @@ export default function Sidebar({
         error
       ) {
         console.error(
-          "Sidebar user load error:",
+          "Sidebar user error:",
           error
         );
 
@@ -460,9 +435,13 @@ export default function Sidebar({
           return [];
         }
 
-        return filterMenuByRole(
-          MENU_ITEMS,
-          user.role
+        return MENU_ITEMS.filter(
+          (
+            item
+          ) =>
+            item.roles.includes(
+              user.role
+            )
         );
       },
       [
@@ -471,54 +450,7 @@ export default function Sidebar({
     );
 
   /* =======================================================
-     Auto open current group
-     ======================================================= */
-
-  useEffect(() => {
-    const currentGroups:
-      Record<
-        string,
-        boolean
-      > = {};
-
-    visibleItems.forEach(
-      (
-        item
-      ) => {
-        if (
-          item.children?.some(
-            (
-              child
-            ) =>
-              isActivePath(
-                pathname,
-                child.href
-              )
-          )
-        ) {
-          currentGroups[
-            item.href
-          ] =
-            true;
-        }
-      }
-    );
-
-    setOpenGroups(
-      (
-        current
-      ) => ({
-        ...current,
-        ...currentGroups,
-      })
-    );
-  }, [
-    pathname,
-    visibleItems,
-  ]);
-
-  /* =======================================================
-     Toggle collapsed
+     Toggle
      ======================================================= */
 
   function toggleCollapsed() {
@@ -531,32 +463,12 @@ export default function Sidebar({
       onCollapsedChange(
         next
       );
-    } else {
-      setInternalCollapsed(
-        next
-      );
+
+      return;
     }
-  }
 
-  /* =======================================================
-     Toggle group
-     ======================================================= */
-
-  function toggleGroup(
-    href: string
-  ) {
-    setOpenGroups(
-      (
-        current: Record<
-          string,
-          boolean
-        >
-      ) => ({
-        ...current,
-
-        [href]:
-          !current[href],
-      })
+    setInternalCollapsed(
+      next
     );
   }
 
@@ -566,11 +478,6 @@ export default function Sidebar({
 
   return (
     <aside
-      className={
-        collapsed
-          ? "sidebar collapsed"
-          : "sidebar"
-      }
       style={{
         width:
           collapsed
@@ -631,12 +538,7 @@ export default function Sidebar({
         }}
       >
         {!collapsed && (
-          <div
-            style={{
-              minWidth:
-                0,
-            }}
-          >
+          <div>
             <strong
               style={{
                 display:
@@ -683,11 +585,6 @@ export default function Sidebar({
               ? "メニューを開く"
               : "メニューを閉じる"
           }
-          title={
-            collapsed
-              ? "メニューを開く"
-              : "メニューを閉じる"
-          }
           style={{
             width:
               32,
@@ -708,7 +605,7 @@ export default function Sidebar({
               "pointer",
 
             fontSize:
-              14,
+              13,
           }}
         >
           {collapsed
@@ -718,7 +615,7 @@ export default function Sidebar({
       </div>
 
       {/* ==================================================
-          Menu
+          Navigation
           ================================================== */}
 
       <nav
@@ -734,485 +631,135 @@ export default function Sidebar({
             "auto",
         }}
       >
-        {visibleItems.length ===
-        0 ? (
-          <div
-            style={{
-              padding:
-                12,
+        {visibleItems.map(
+          (
+            item
+          ) => {
+            const active =
+              pathname ===
+                item.href ||
+              pathname.startsWith(
+                `${item.href}/`
+              );
 
-              color:
-                "#999",
-
-              fontSize:
-                11,
-
-              textAlign:
-                "center",
-            }}
-          >
-            {collapsed
-              ? "—"
-              : "利用可能なメニューがありません"}
-          </div>
-        ) : (
-          visibleItems.map(
-            (
-              item
-            ) => (
-              <SidebarItem
+            return (
+              <Link
                 key={
                   item.href
                 }
-                item={
-                  item
+                href={
+                  item.href
                 }
-                pathname={
-                  pathname
+                aria-current={
+                  active
+                    ? "page"
+                    : undefined
                 }
-                collapsed={
+                title={
                   collapsed
+                    ? item.label
+                    : undefined
                 }
-                open={
-                  openGroups[
-                    item.href
-                  ] === true
-                }
-                onToggle={() =>
-                  toggleGroup(
-                    item.href
-                  )
-                }
-              />
-            )
-          )
-        )}
-      </nav>
-
-      {/* ==================================================
-          Footer
-          ================================================== */}
-
-      {!collapsed && (
-        <div
-          style={{
-            padding:
-              "10px 14px",
-
-            borderTop:
-              "1px solid #eee",
-
-            color:
-              "#999",
-
-            fontSize:
-              9,
-          }}
-        >
-          テストシステム
-        </div>
-      )}
-    </aside>
-  );
-}
-
-/* =========================================================
-   Sidebar item
-   ========================================================= */
-
-function SidebarItem({
-  item,
-  pathname,
-  collapsed,
-  open,
-  onToggle,
-}: {
-  item: MenuItem;
-
-  pathname: string;
-
-  collapsed: boolean;
-
-  open: boolean;
-
-  onToggle: () => void;
-}) {
-  const active =
-    isActivePath(
-      pathname,
-      item.href
-    );
-
-  const childActive =
-    item.children?.some(
-      (
-        child
-      ) =>
-        isActivePath(
-          pathname,
-          child.href
-        )
-    ) ??
-    false;
-
-  const hasChildren =
-    Boolean(
-      item.children &&
-      item.children.length >
-        0
-    );
-
-  /*
-   * 子メニューがある場合、
-   * 親自身が実ページならリンクとして扱う。
-   * そうでなければ開閉ボタンとして扱う。
-   */
-  return (
-    <div
-      style={{
-        marginBottom:
-          2,
-      }}
-    >
-      <div
-        style={{
-          display:
-            "flex",
-
-          alignItems:
-            "center",
-        }}
-      >
-        <Link
-          href={
-            item.href
-          }
-          title={
-            collapsed
-              ? item.label
-              : undefined
-          }
-          aria-current={
-            active
-              ? "page"
-              : undefined
-          }
-          style={{
-            flex:
-              1,
-
-            minWidth:
-              0,
-
-            display:
-              "block",
-
-            padding:
-              collapsed
-                ? "10px 8px"
-                : "9px 10px",
-
-            borderRadius:
-              7,
-
-            background:
-              active
-                ? "#eeeeee"
-                : childActive
-                  ? "#f7f7f7"
-                  : "transparent",
-
-            color:
-              "#222",
-
-            textDecoration:
-              "none",
-
-            fontWeight:
-              active ||
-              childActive
-                ? 700
-                : 400,
-          }}
-        >
-          {collapsed ? (
-            <span
-              style={{
-                display:
-                  "block",
-
-                textAlign:
-                  "center",
-
-                fontSize:
-                  12,
-
-                fontWeight:
-                  700,
-              }}
-            >
-              {
-                getMenuInitial(
-                  item.label
-                )
-              }
-            </span>
-          ) : (
-            <>
-              <span
                 style={{
                   display:
                     "block",
 
-                  fontSize:
-                    13,
+                  marginBottom:
+                    3,
 
-                  lineHeight:
-                    1.4,
+                  padding:
+                    collapsed
+                      ? "10px 8px"
+                      : "10px 11px",
+
+                  borderRadius:
+                    7,
+
+                  background:
+                    active
+                      ? "#eeeeee"
+                      : "transparent",
+
+                  color:
+                    "#222",
+
+                  textDecoration:
+                    "none",
+
+                  textAlign:
+                    collapsed
+                      ? "center"
+                      : "left",
+
+                  fontWeight:
+                    active
+                      ? 700
+                      : 400,
                 }}
               >
-                {
-                  item.label
-                }
-              </span>
+                {collapsed ? (
+                  <span
+                    style={{
+                      fontSize:
+                        12,
 
-              {item.description && (
-                <small
-                  style={{
-                    display:
-                      "block",
-
-                    marginTop:
-                      2,
-
-                    color:
-                      "#888",
-
-                    fontSize:
-                      9,
-
-                    lineHeight:
-                      1.4,
-                  }}
-                >
-                  {
-                    item.description
-                  }
-                </small>
-              )}
-            </>
-          )}
-        </Link>
-
-        {hasChildren &&
-          !collapsed && (
-            <button
-              type="button"
-              onClick={
-                onToggle
-              }
-              aria-label={
-                open
-                  ? `${item.label}を閉じる`
-                  : `${item.label}を開く`
-              }
-              style={{
-                width:
-                  30,
-
-                height:
-                  34,
-
-                marginLeft:
-                  2,
-
-                border:
-                  "none",
-
-                background:
-                  "transparent",
-
-                cursor:
-                  "pointer",
-
-                color:
-                  "#777",
-
-                fontSize:
-                  11,
-              }}
-            >
-              {open
-                ? "▲"
-                : "▼"}
-            </button>
-          )}
-      </div>
-
-      {/* ==================================================
-          Children
-          ================================================== */}
-
-      {hasChildren &&
-        open &&
-        !collapsed && (
-          <div
-            style={{
-              marginLeft:
-                12,
-
-              paddingLeft:
-                8,
-
-              borderLeft:
-                "1px solid #e5e5e5",
-            }}
-          >
-            {item.children?.map(
-              (
-                child
-              ) => (
-                <Link
-                  key={
-                    child.href
-                  }
-                  href={
-                    child.href
-                  }
-                  aria-current={
-                    isActivePath(
-                      pathname,
-                      child.href
-                    )
-                      ? "page"
-                      : undefined
-                  }
-                  style={{
-                    display:
-                      "block",
-
-                    marginTop:
-                      2,
-
-                    padding:
-                      "7px 9px",
-
-                    borderRadius:
-                      6,
-
-                    background:
-                      isActivePath(
-                        pathname,
-                        child.href
+                      fontWeight:
+                        700,
+                    }}
+                  >
+                    {
+                      item.label.charAt(
+                        0
                       )
-                        ? "#eeeeee"
-                        : "transparent",
+                    }
+                  </span>
+                ) : (
+                  <>
+                    <span
+                      style={{
+                        display:
+                          "block",
 
-                    color:
-                      "#333",
+                        fontSize:
+                          13,
 
-                    textDecoration:
-                      "none",
+                        lineHeight:
+                          1.4,
+                      }}
+                    >
+                      {
+                        item.label
+                      }
+                    </span>
 
-                    fontSize:
-                      11,
+                    {item.description && (
+                      <small
+                        style={{
+                          display:
+                            "block",
 
-                    fontWeight:
-                      isActivePath(
-                        pathname,
-                        child.href
-                      )
-                        ? 700
-                        : 400,
-                  }}
-                >
-                  {
-                    child.label
-                  }
-                </Link>
-              )
-            )}
-          </div>
+                          marginTop:
+                            2,
+
+                          color:
+                            "#888",
+
+                          fontSize:
+                            9,
+                        }}
+                      >
+                        {
+                          item.description
+                        }
+                      </small>
+                    )}
+                  </>
+                )}
+              </Link>
+            );
+          }
         )}
-    </div>
-  );
-}
-
-/* =========================================================
-   Filter by role
-   ========================================================= */
-
-function filterMenuByRole(
-  items: MenuItem[],
-  role: UserRole
-): MenuItem[] {
-  return items
-    .filter(
-      (
-        item
-      ) =>
-        item.roles.includes(
-          role
-        )
-    )
-    .map(
-      (
-        item
-      ) => ({
-        ...item,
-
-        children:
-          item.children
-            ?.filter(
-              (
-                child
-              ) =>
-                child.roles.includes(
-                  role
-                )
-            ),
-      })
-    );
-}
-
-/* =========================================================
-   Active path
-   ========================================================= */
-
-function isActivePath(
-  pathname: string,
-  href: string
-) {
-  if (
-    pathname ===
-    href
-  ) {
-    return true;
-  }
-
-  /*
-   * /grading と /grading/xxx を
-   * 同じグループとして扱う。
-   */
-  return pathname.startsWith(
-    `${href}/`
-  );
-}
-
-/* =========================================================
-   Collapsed icon
-   ========================================================= */
-
-function getMenuInitial(
-  label: string
-) {
-  if (
-    !label
-  ) {
-    return "・";
-  }
-
-  return label.charAt(
-    0
+      </nav>
+    </aside>
   );
 }
