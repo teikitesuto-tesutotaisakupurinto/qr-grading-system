@@ -1,11 +1,10 @@
-
 "use client";
 
 import {
-  ReactNode,
   useEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 
 import Link from "next/link";
@@ -16,409 +15,376 @@ import {
 } from "next/navigation";
 
 import {
-  onAuthStateChanged,
-  signOut,
-} from "firebase/auth";
-
-import {
-  doc,
-  getDoc,
-} from "firebase/firestore";
-
-import {
   auth,
-  db,
 } from "@/lib/firebase";
+
+import {
+  getAppUser,
+  getDashboardPath,
+  logout,
+  observeAuth,
+  type AppUser,
+} from "@/lib/auth";
 
 import type {
   UserRole,
-} from "@/types";
+} from "@/lib/types";
 
 /* =========================================================
-   Types
+   Props
    ========================================================= */
-
-type AppUser = {
-  uid: string;
-
-  role: UserRole | null;
-
-  organizationId:
-    | string
-    | null;
-
-  schoolIds: string[];
-
-  studentId:
-    | string
-    | null;
-};
 
 type AppShellProps = {
   children: ReactNode;
 };
 
+/* =========================================================
+   Menu
+   ========================================================= */
+
 type MenuItem = {
-  label: string;
-
   href: string;
-};
 
-type MenuSection = {
   label: string;
 
-  items: MenuItem[];
+  description?: string;
+
+  roles: UserRole[];
 };
 
-/* =========================================================
-   本部管理者
-   ========================================================= */
+/*
+ * 権限のない機能はメニューに表示しない。
+ */
+const MENU_ITEMS: MenuItem[] = [
+  /* -------------------------------------------------------
+     Dashboard
+     ------------------------------------------------------- */
 
-const HEAD_OFFICE_MENU: MenuSection[] = [
   {
-    label: "メイン",
+    href:
+      "/dashboard/head-office",
 
-    items: [
-      {
-        label: "ダッシュボード",
-        href: "/dashboard",
-      },
+    label:
+      "ホーム",
+
+    roles: [
+      "本部管理者",
     ],
   },
 
   {
-    label: "生徒・テスト",
+    href:
+      "/dashboard/school",
 
-    items: [
-      {
-        label: "生徒管理",
-        href: "/students",
-      },
+    label:
+      "ホーム",
 
-      {
-        label: "テスト管理",
-        href: "/tests",
-      },
+    roles: [
+      "校舎管理者",
     ],
   },
 
   {
-    label: "答案・採点",
+    href:
+      "/dashboard/teacher",
 
-    items: [
-      {
-        label: "答案管理",
-        href: "/answers",
-      },
+    label:
+      "ホーム",
 
-      {
-        label: "採点管理",
-        href: "/grading",
-      },
-
-      {
-        label: "一次確認",
-        href: "/grading/review",
-      },
-
-      {
-        label: "二次確認",
-        href: "/grading/second-review",
-      },
-
-      {
-        label: "採点確定",
-        href: "/grading/confirm",
-      },
+    roles: [
+      "講師",
     ],
   },
 
   {
-    label: "成績",
+    href:
+      "/dashboard/student",
 
-    items: [
-      {
-        label: "成績",
-        href: "/results",
-      },
+    label:
+      "ホーム",
 
-      {
-        label: "成績表",
-        href: "/reports",
-      },
+    roles: [
+      "生徒",
+    ],
+  },
 
-      {
-        label: "追試",
-        href: "/retests",
-      },
+  /* -------------------------------------------------------
+     Management
+     ------------------------------------------------------- */
+
+  {
+    href:
+      "/schools",
+
+    label:
+      "校舎管理",
+
+    description:
+      "校舎情報を管理",
+
+    roles: [
+      "本部管理者",
     ],
   },
 
   {
-    label: "QR",
+    href:
+      "/users",
 
-    items: [
-      {
-        label: "QRシール発行",
-        href: "/qr-stickers",
-      },
+    label:
+      "ユーザー管理",
+
+    description:
+      "ユーザーアカウントを管理",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
     ],
   },
 
   {
-    label: "本部管理",
+    href:
+      "/students",
 
-    items: [
-      {
-        label: "校舎管理",
-        href: "/schools",
-      },
+    label:
+      "生徒管理",
 
-      {
-        label: "ユーザー管理",
-        href: "/users",
-      },
+    description:
+      "生徒情報を管理",
 
-      {
-        label: "システム設定",
-        href: "/settings",
-      },
-    ],
-  },
-];
-
-/* =========================================================
-   校舎管理者
-   ========================================================= */
-
-const SCHOOL_ADMIN_MENU: MenuSection[] = [
-  {
-    label: "メイン",
-
-    items: [
-      {
-        label: "ダッシュボード",
-        href: "/dashboard",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
     ],
   },
 
+  /* -------------------------------------------------------
+     Tests
+     ------------------------------------------------------- */
+
   {
-    label: "生徒・テスト",
+    href:
+      "/tests",
 
-    items: [
-      {
-        label: "生徒管理",
-        href: "/students",
-      },
+    label:
+      "テスト管理",
 
-      {
-        label: "テスト管理",
-        href: "/tests",
-      },
+    description:
+      "テスト・問題を管理",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
+  /* -------------------------------------------------------
+     Answers
+     ------------------------------------------------------- */
+
   {
-    label: "答案・採点",
+    href:
+      "/answers",
 
-    items: [
-      {
-        label: "答案管理",
-        href: "/answers",
-      },
+    label:
+      "答案",
 
-      {
-        label: "採点管理",
-        href: "/grading",
-      },
+    description:
+      "答案画像を管理",
 
-      {
-        label: "一次確認",
-        href: "/grading/review",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
 
-      {
-        label: "二次確認",
-        href: "/grading/second-review",
-      },
+  /* -------------------------------------------------------
+     Grading
+     ------------------------------------------------------- */
 
-      {
-        label: "採点確定",
-        href: "/grading/confirm",
-      },
+  {
+    href:
+      "/grading",
+
+    label:
+      "採点",
+
+    description:
+      "採点状況を確認",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
   {
-    label: "成績",
+    href:
+      "/grading/auto",
 
-    items: [
-      {
-        label: "成績",
-        href: "/results",
-      },
+    label:
+      "自動採点",
 
-      {
-        label: "成績表",
-        href: "/reports",
-      },
+    description:
+      "自動採点を実行",
 
-      {
-        label: "追試",
-        href: "/retests",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
   {
-    label: "QR",
+    href:
+      "/grading/review",
 
-    items: [
-      {
-        label: "QRシール発行",
-        href: "/qr-stickers",
-      },
+    label:
+      "一次確認",
+
+    description:
+      "採点結果を確認",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
   {
-    label: "校舎運用",
+    href:
+      "/grading/second-review",
 
-    items: [
-      {
-        label: "ユーザー管理",
-        href: "/users",
-      },
+    label:
+      "二次確認",
 
-      {
-        label: "設定",
-        href: "/settings",
-      },
-    ],
-  },
-];
+    description:
+      "採点結果を再確認",
 
-/* =========================================================
-   講師
-   ========================================================= */
-
-const TEACHER_MENU: MenuSection[] = [
-  {
-    label: "メイン",
-
-    items: [
-      {
-        label: "ダッシュボード",
-        href: "/dashboard",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
   {
-    label: "授業・テスト",
+    href:
+      "/grading/confirm",
 
-    items: [
-      {
-        label: "テスト",
-        href: "/tests",
-      },
+    label:
+      "採点確定",
+
+    description:
+      "採点結果を確定",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
+    ],
+  },
+
+  /* -------------------------------------------------------
+     Results
+     ------------------------------------------------------- */
+
+  {
+    href:
+      "/results",
+
+    label:
+      "成績",
+
+    description:
+      "確定済み成績",
+
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
   {
-    label: "答案・採点",
+    href:
+      "/reports",
 
-    items: [
-      {
-        label: "答案管理",
-        href: "/answers",
-      },
+    label:
+      "成績表",
 
-      {
-        label: "採点管理",
-        href: "/grading",
-      },
+    description:
+      "成績表を作成・確認",
 
-      {
-        label: "一次確認",
-        href: "/grading/review",
-      },
-
-      {
-        label: "二次確認",
-        href: "/grading/second-review",
-      },
-
-      {
-        label: "採点確定",
-        href: "/grading/confirm",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
+  /* -------------------------------------------------------
+     Retest
+     ------------------------------------------------------- */
+
   {
-    label: "成績",
+    href:
+      "/retests",
 
-    items: [
-      {
-        label: "成績",
-        href: "/results",
-      },
+    label:
+      "追試",
 
-      {
-        label: "成績表",
-        href: "/reports",
-      },
+    description:
+      "追試・手動採点",
 
-      {
-        label: "追試",
-        href: "/retests",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
+      "講師",
     ],
   },
 
+  /* -------------------------------------------------------
+     QR
+     ------------------------------------------------------- */
+
   {
-    label: "QR",
+    href:
+      "/qr-stickers",
 
-    items: [
-      {
-        label: "QRシール発行",
-        href: "/qr-stickers",
-      },
-    ],
-  },
-];
+    label:
+      "QRシール",
 
-/* =========================================================
-   生徒
-   ========================================================= */
+    description:
+      "生徒QRシールを管理",
 
-const STUDENT_MENU: MenuSection[] = [
-  {
-    label: "メイン",
-
-    items: [
-      {
-        label: "ダッシュボード",
-        href: "/dashboard",
-      },
+    roles: [
+      "本部管理者",
+      "校舎管理者",
     ],
   },
 
+  /* -------------------------------------------------------
+     Settings
+     ------------------------------------------------------- */
+
   {
-    label: "学習",
+    href:
+      "/settings",
 
-    items: [
-      {
-        label: "成績",
-        href: "/results",
-      },
+    label:
+      "システム設定",
 
-      {
-        label: "成績表",
-        href: "/reports",
-      },
+    description:
+      "システム設定",
+
+    roles: [
+      "本部管理者",
     ],
   },
 ];
@@ -445,16 +411,10 @@ export default function AppShell({
     );
 
   const [
-    loading,
-    setLoading,
+    authLoading,
+    setAuthLoading,
   ] =
     useState(true);
-
-  const [
-    authError,
-    setAuthError,
-  ] =
-    useState("");
 
   const [
     loggingOut,
@@ -463,33 +423,32 @@ export default function AppShell({
     useState(false);
 
   /* =======================================================
-     Firebase Authentication
+     Authentication
      ======================================================= */
 
   useEffect(() => {
-    let disposed =
-      false;
+    let mounted =
+      true;
 
     const unsubscribe =
-      onAuthStateChanged(
-        auth,
+      observeAuth(
         async (
-          firebaseUser
+          authenticatedUser
         ) => {
           if (
-            disposed
+            !mounted
           ) {
             return;
           }
 
           if (
-            !firebaseUser
+            !authenticatedUser
           ) {
             setUser(
               null
             );
 
-            setLoading(
+            setAuthLoading(
               false
             );
 
@@ -497,86 +456,34 @@ export default function AppShell({
           }
 
           try {
-            const snapshot =
-              await getDoc(
-                doc(
-                  db,
-                  "users",
-                  firebaseUser.uid
-                )
+            const freshUser =
+              await getAppUser(
+                auth.currentUser
               );
 
             if (
-              disposed
+              !mounted
             ) {
               return;
             }
 
-            if (
-              !snapshot.exists()
-            ) {
-              setUser(
-                null
-              );
+            setUser(
+              freshUser
+            );
 
-              setAuthError(
-                "ユーザー情報が登録されていません。"
-              );
-
-              setLoading(
-                false
-              );
-
-              return;
-            }
-
-            const data =
-              snapshot.data();
-
-            setUser({
-              uid:
-                firebaseUser.uid,
-
-              role:
-                normalizeRole(
-                  data.role
-                ),
-
-              organizationId:
-                stringOrNull(
-                  data.organizationId
-                ),
-
-              schoolIds:
-                Array.isArray(
-                  data.schoolIds
-                )
-                  ? data.schoolIds.filter(
-                      (
-                        value
-                      ): value is string =>
-                        typeof value ===
-                        "string"
-                    )
-                  : [],
-
-              studentId:
-                stringOrNull(
-                  data.studentId
-                ),
-            });
-
-            setAuthError("");
+            setAuthLoading(
+              false
+            );
           } catch (
             error
           ) {
             console.error(
-              "Authentication error:",
+              "AppShell auth error:",
               error
             );
 
             if (
-              disposed
+              !mounted
             ) {
               return;
             }
@@ -585,31 +492,45 @@ export default function AppShell({
               null
             );
 
-            setAuthError(
-              "ユーザー情報を取得できませんでした。"
+            setAuthLoading(
+              false
             );
-          } finally {
-            if (
-              !disposed
-            ) {
-              setLoading(
-                false
-              );
-            }
           }
+        },
+        (
+          error
+        ) => {
+          console.error(
+            "AppShell auth observer error:",
+            error
+          );
+
+          if (
+            !mounted
+          ) {
+            return;
+          }
+
+          setUser(
+            null
+          );
+
+          setAuthLoading(
+            false
+          );
         }
       );
 
     return () => {
-      disposed =
-        true;
+      mounted =
+        false;
 
       unsubscribe();
     };
   }, []);
 
   /* =======================================================
-     Public routes
+     Login page
      ======================================================= */
 
   const isLoginPage =
@@ -619,116 +540,75 @@ export default function AppShell({
       "/login/"
     );
 
+  const isOnboardingPage =
+    pathname ===
+      "/onboarding" ||
+    pathname.startsWith(
+      "/onboarding/"
+    );
+
+  /*
+   * ログイン・オンボーディングには
+   * 管理画面のShellを表示しない。
+   */
   if (
-    isLoginPage
+    isLoginPage ||
+    isOnboardingPage
   ) {
     return (
       <>
-        {children}
+        {
+          children
+        }
       </>
     );
   }
 
   /* =======================================================
-     Loading
+     Authentication loading
      ======================================================= */
 
   if (
-    loading
+    authLoading
   ) {
     return (
-      <div className="ts-loading">
-        <div className="ts-loading-inner">
-          <div className="ts-brand">
-            テストシステム
-          </div>
-
-          <div className="ts-loading-text">
-            認証情報を確認しています...
-          </div>
-        </div>
-      </div>
+      <LoadingScreen />
     );
   }
 
   /* =======================================================
-     Unauthenticated
+     Not authenticated
      ======================================================= */
 
   if (
     !user
   ) {
     return (
-      <div className="ts-center">
-        <section className="ts-error-card">
-          <div className="ts-brand">
-            テストシステム
-          </div>
-
-          <h1>
-            ログインが必要です
-          </h1>
-
-          <p>
-            {authError ||
-              "この画面を利用するにはログインしてください。"}
-          </p>
-
-          <button
-            type="button"
-            className="ts-primary"
-            onClick={() =>
-              router.replace(
-                "/login"
-              )
-            }
-          >
-            ログイン画面へ
-          </button>
-        </section>
-      </div>
+      <LoadingScreen />
     );
   }
 
   /* =======================================================
-     Invalid role
+     Visible menu
      ======================================================= */
 
-  if (
-    !user.role
-  ) {
-    return (
-      <div className="ts-center">
-        <section className="ts-error-card">
-          <div className="ts-brand">
-            テストシステム
-          </div>
-
-          <h1>
-            権限が設定されていません
-          </h1>
-
-          <p>
-            管理者にアカウントの権限設定を確認してください。
-          </p>
-        </section>
-      </div>
-    );
-  }
-
-  /* =======================================================
-     Role menu
-     ======================================================= */
-
-  const menu =
-    useMemo(
-      () =>
-        getMenuForRole(
+  const visibleMenu =
+    MENU_ITEMS.filter(
+      (
+        item
+      ) =>
+        item.roles.includes(
           user.role
-        ),
-      [
-        user.role,
-      ]
+        )
+    );
+
+  /* =======================================================
+     Dashboard
+     ======================================================= */
+
+  const dashboardPath =
+    getDashboardPath(
+      user.role
     );
 
   /* =======================================================
@@ -747,8 +627,10 @@ export default function AppShell({
         true
       );
 
-      await signOut(
-        auth
+      await logout();
+
+      setUser(
+        null
       );
 
       router.replace(
@@ -762,10 +644,6 @@ export default function AppShell({
         error
       );
 
-      setAuthError(
-        "ログアウトできませんでした。"
-      );
-
       setLoggingOut(
         false
       );
@@ -777,190 +655,251 @@ export default function AppShell({
      ======================================================= */
 
   return (
-    <div className="ts-shell">
-      <aside className="ts-sidebar">
+    <div className="appShell">
 
-        {/* Logo */}
+      {/* ==================================================
+          Header
+          ================================================== */}
 
-        <div className="ts-logo">
+      <header className="appHeader">
+        <div className="appHeaderInner">
+
           <Link
-            href="/dashboard"
-            className="ts-logo-link"
+            href={
+              dashboardPath
+            }
+            className="appBrand"
+            style={{
+              textDecoration:
+                "none",
+
+              color:
+                "inherit",
+            }}
           >
-            テストシステム
+            <strong>
+              テストシステム
+            </strong>
           </Link>
-        </div>
 
-        {/* Menu */}
+          <div className="appUserArea">
 
-        <nav
-          className="ts-menu"
-          aria-label="メインメニュー"
-        >
-          {menu.map(
-            (
-              section
-            ) => (
-              <section
-                key={
-                  section.label
-                }
-                className="ts-menu-section"
+            <div
+              style={{
+                textAlign:
+                  "right",
+              }}
+            >
+              <div
+                style={{
+                  fontSize:
+                    12,
+
+                  fontWeight:
+                    600,
+                }}
               >
-                <div className="ts-section-title">
-                  {
-                    section.label
-                  }
-                </div>
+                {
+                  user.name ||
+                  "ユーザー"
+                }
+              </div>
 
-                {section.items.map(
-                  (
-                    item
-                  ) => {
-                    const active =
-                      isActivePath(
-                        pathname,
-                        item.href
-                      );
+              <div
+                className="muted"
+                style={{
+                  marginTop:
+                    2,
 
-                    return (
-                      <Link
-                        key={
-                          item.href
-                        }
-                        href={
-                          item.href
-                        }
-                        className={
-                          active
-                            ? "ts-menu-item active"
-                            : "ts-menu-item"
-                        }
-                      >
-                        {
-                          item.label
-                        }
-                      </Link>
-                    );
-                  }
-                )}
-              </section>
-            )
-          )}
-        </nav>
+                  fontSize:
+                    10,
+                }}
+              >
+                {
+                  user.role
+                }
+              </div>
+            </div>
 
-        {/* Footer */}
-
-        <div className="ts-sidebar-bottom">
-          <button
-            type="button"
-            className="ts-logout"
-            disabled={
-              loggingOut
-            }
-            onClick={
-              handleLogout
-            }
-          >
-            {loggingOut
-              ? "ログアウト中..."
-              : "ログアウト"}
-          </button>
+            <button
+              type="button"
+              className="logoutButton"
+              disabled={
+                loggingOut
+              }
+              onClick={
+                handleLogout
+              }
+            >
+              {loggingOut
+                ? "ログアウト中..."
+                : "ログアウト"}
+            </button>
+          </div>
         </div>
-      </aside>
+      </header>
 
-      <main className="ts-main">
-        {children}
-      </main>
+      {/* ==================================================
+          Body
+          ================================================== */}
+
+      <div className="appBody">
+
+        {/* =================================================
+            Sidebar
+            ================================================= */}
+
+        <aside className="appSidebar">
+          <nav
+            aria-label="メインメニュー"
+          >
+            <div className="sidebarSection">
+
+              <div className="sidebarTitle">
+                メニュー
+              </div>
+
+              {visibleMenu.map(
+                (
+                  item
+                ) => (
+                  <MenuLink
+                    key={
+                      item.href
+                    }
+                    item={
+                      item
+                    }
+                    pathname={
+                      pathname
+                    }
+                  />
+                )
+              )}
+            </div>
+          </nav>
+        </aside>
+
+        {/* =================================================
+            Main
+            ================================================= */}
+
+        <main className="appMain">
+          {
+            children
+          }
+        </main>
+      </div>
     </div>
   );
 }
 
 /* =========================================================
-   Helpers
+   Menu Link
    ========================================================= */
 
-function normalizeRole(
-  value: unknown
-): UserRole | null {
-  switch (
-    value
-  ) {
-    case "本部管理者":
-    case "hq":
-    case "head_office":
-    case "headOfficeAdmin":
-      return "本部管理者";
+function MenuLink({
+  item,
+  pathname,
+}: {
+  item: MenuItem;
 
-    case "校舎管理者":
-    case "school_admin":
-    case "schoolAdmin":
-      return "校舎管理者";
-
-    case "講師":
-    case "teacher":
-      return "講師";
-
-    case "生徒":
-    case "student":
-      return "生徒";
-
-    default:
-      return null;
-  }
-}
-
-function getMenuForRole(
-  role: UserRole
-): MenuSection[] {
-  switch (
-    role
-  ) {
-    case "本部管理者":
-      return HEAD_OFFICE_MENU;
-
-    case "校舎管理者":
-      return SCHOOL_ADMIN_MENU;
-
-    case "講師":
-      return TEACHER_MENU;
-
-    case "生徒":
-      return STUDENT_MENU;
-
-    default:
-      return [];
-  }
-}
-
-function isActivePath(
-  pathname: string,
-  href: string
-) {
-  if (
-    href ===
-    "/dashboard"
-  ) {
-    return (
-      pathname ===
-      "/dashboard"
+  pathname: string;
+}) {
+  const active =
+    pathname ===
+      item.href ||
+    pathname.startsWith(
+      `${item.href}/`
     );
-  }
 
   return (
-    pathname ===
-      href ||
-    pathname.startsWith(
-      `${href}/`
-    )
+    <Link
+      href={
+        item.href
+      }
+      className={
+        active
+          ? "sidebarLink active"
+          : "sidebarLink"
+      }
+      aria-current={
+        active
+          ? "page"
+          : undefined
+      }
+    >
+      <span>
+        {
+          item.label
+        }
+      </span>
+
+      {item.description && (
+        <small>
+          {
+            item.description
+          }
+        </small>
+      )}
+    </Link>
   );
 }
 
-function stringOrNull(
-  value: unknown
-) {
-  return typeof value ===
-    "string"
-    ? value
-    : null;
+/* =========================================================
+   Loading
+   ========================================================= */
+
+function LoadingScreen() {
+  return (
+    <main
+      style={{
+        minHeight:
+          "100vh",
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        background:
+          "#f7f7f7",
+      }}
+    >
+      <div
+        style={{
+          textAlign:
+            "center",
+        }}
+      >
+        <strong
+          style={{
+            fontSize:
+              18,
+          }}
+        >
+          テストシステム
+        </strong>
+
+        <p
+          style={{
+            margin:
+              "8px 0 0",
+
+            color:
+              "#777",
+
+            fontSize:
+              12,
+          }}
+        >
+          ログイン状態を確認しています...
+        </p>
+      </div>
+    </main>
+  );
 }
