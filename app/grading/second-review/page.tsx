@@ -6,863 +6,512 @@ import {
   useState,
 } from "react";
 
-import {
-  onAuthStateChanged,
-} from "firebase/auth";
-
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
+import Link from "next/link";
 
 import {
   auth,
-  db,
 } from "@/lib/firebase";
 
 import {
-  ANSWERS_BUCKET,
-  supabase,
-} from "@/lib/supabase";
+  getAppUser,
+} from "@/lib/auth";
 
-type UserRole =
-  | "本部管理者"
-  | "校舎管理者"
-  | "講師"
-  | "生徒";
+import {
+  getAnswerWithUrl,
+} from "@/lib/answers";
 
-type CurrentUser = {
-  uid: string;
-  name: string;
-  organizationId: string | null;
-  role: UserRole | null;
-  schoolIds: string[];
-};
+import {
+  getFirstReview,
+  getSecondReview,
+  saveSecondReview,
+  returnToFirstReview,
+  hasDisagreement,
+  calculateTotalScore,
+  calculateTotalMaxScore,
+  type SaveReviewInput,
+} from "@/lib/grading";
 
-type Answer = {
-  id: string;
-  organizationId: string;
-  testId: string;
-  testCode: string;
-  studentId: string | null;
-  studentNumber: string | null;
-  schoolId: string;
-  storagePath: string;
-  status: string;
-  gradingStatus: string;
-  firstReviewStatus: string;
-  secondReviewStatus: string;
-  finalized: boolean;
-};
+import {
+  answersQueries,
+  getScopedDocs,
+  studentsQueries,
+  testsQueries,
+  type FirestoreUser,
+} from "@/lib/firestore-scope";
 
-type Student = {
-  id: string;
-  name: string;
-  studentNumber: string;
-  schoolId: string;
-};
+import type {
+  Answer,
+  GradingResult,
+  Student,
+  Test,
+  UserRole,
+} from "@/lib/types";
 
-type GradingQuestion = {
-  questionId: string;
-  questionNumber: number;
-  answer: string | null;
-  correctAnswers: string[];
-  points: number;
-  score: number;
-  method: string;
-  result:
-    | "正解"
-    | "不正解"
-    | "部分点"
-    | "判定不能"
-    | "手動採点";
-  confidence: number | null;
-  reviewRequired: boolean;
-  reason?: string;
-};
+/* =========================================================
+   Types
+   ========================================================= */
 
-type GradingResult = {
-  answerId: string;
-  testId: string;
-  studentId: string | null;
-  studentNumber: string | null;
-  totalScore: number;
-  maxScore: number;
-  percentage: number;
-  reviewStatus: string;
-  results: GradingQuestion[];
-};
+type AnswerListItem =
+  Answer & {
+    studentName: string;
+
+    testName: string;
+
+    subjectName: string;
+  };
+
+type ReviewRow =
+  GradingResult & {
+    firstScore: number;
+
+    firstMark:
+      | GradingResult["mark"]
+      | null;
+
+    changed: boolean;
+  };
+
+/* =========================================================
+   Page
+   ========================================================= */
 
 export default function SecondReviewPage() {
   const [
-    currentUser,
-    setCurrentUser,
-  ] = useState<CurrentUser | null>(null);
+    userRole,
+    setUserRole,
+  ] =
+    useState<UserRole | null>(
+      null
+    );
 
   const [
     answers,
     setAnswers,
-  ] = useState<Answer[]>([]);
-
-  const [
-    students,
-    setStudents,
-  ] = useState<Student[]>([]);
+  ] =
+    useState<AnswerListItem[]>(
+      []
+    );
 
   const [
     selectedAnswerId,
     setSelectedAnswerId,
-  ] = useState("");
+  ] =
+    useState<
+      string | null
+    >(null);
 
   const [
-    gradingResult,
-    setGradingResult,
-  ] = useState<GradingResult | null>(
-    null
-  );
+    results,
+    setResults,
+  ] =
+    useState<ReviewRow[]>(
+      []
+    );
 
   const [
-    editedScores,
-    setEditedScores,
-  ] = useState<Record<string, number>>(
-    {}
-  );
+    internalNote,
+    setInternalNote,
+  ] =
+    useState("");
 
   const [
-    answerImageUrl,
-    setAnswerImageUrl,
-  ] = useState("");
+    publicAnnotation,
+    setPublicAnnotation,
+  ] =
+    useState("");
 
   const [
     search,
     setSearch,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     detailLoading,
     setDetailLoading,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     saving,
     setSaving,
-  ] = useState(false);
+  ] =
+    useState(false);
+
+  const [
+    returning,
+    setReturning,
+  ] =
+    useState(false);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
     message,
     setMessage,
-  ] = useState("");
+  ] =
+    useState("");
 
   const [
-    reviewComment,
-    setReviewComment,
-  ] = useState("");
+    imageUrl,
+    setImageUrl,
+  ] =
+    useState<
+      string | null
+    >(null);
 
-  /*
-   * ========================================================
-   * 認証
-   * ========================================================
-   */
+  const [
+    imageLoading,
+    setImageLoading,
+  ] =
+    useState(false);
+
+  /* =======================================================
+     Load
+     ======================================================= */
 
   useEffect(() => {
-    const unsubscribe =
-      onAuthStateChanged(
-        auth,
-        async (firebaseUser) => {
-          if (!firebaseUser) {
-            setLoading(false);
-
-            setError(
-              "ログイン状態を確認できません。"
-            );
-
-            return;
-          }
-
-          try {
-            const snapshot =
-              await getDocs(
-                query(
-                  collection(
-                    db,
-                    "users"
-                  ),
-                  where(
-                    "uid",
-                    "==",
-                    firebaseUser.uid
-                  )
-                )
-              );
-
-            /*
-             * uidフィールドがない既存users構造にも
-             * 対応するため、ID検索を追加で行う。
-             */
-            let userData:
-              Record<string, unknown> | null =
-              null;
-
-            if (
-              !snapshot.empty
-            ) {
-              userData =
-                snapshot.docs[0].data();
-            } else {
-              const direct =
-                await getDoc(
-                  doc(
-                    db,
-                    "users",
-                    firebaseUser.uid
-                  )
-                );
-
-              if (
-                direct.exists()
-              ) {
-                userData =
-                  direct.data();
-              }
-            }
-
-            if (!userData) {
-              setLoading(false);
-
-              setError(
-                "システムのユーザー情報が登録されていません。"
-              );
-
-              return;
-            }
-
-            const role =
-              isUserRole(
-                userData.role
-              )
-                ? userData.role
-                : null;
-
-            setCurrentUser({
-              uid:
-                firebaseUser.uid,
-
-              name:
-                typeof userData.name ===
-                "string"
-                  ? userData.name
-                  : firebaseUser.displayName ??
-                    "",
-
-              organizationId:
-                typeof userData.organizationId ===
-                "string"
-                  ? userData.organizationId
-                  : null,
-
-              role,
-
-              schoolIds:
-                Array.isArray(
-                  userData.schoolIds
-                )
-                  ? userData.schoolIds.filter(
-                      (
-                        value
-                      ): value is string =>
-                        typeof value ===
-                        "string"
-                    )
-                  : [],
-            });
-          } catch (err) {
-            console.error(
-              err
-            );
-
-            setError(
-              getSafeErrorMessage(
-                err
-              )
-            );
-
-            setLoading(false);
-          }
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
+    void loadAnswers();
   }, []);
 
-  /*
-   * ========================================================
-   * 答案一覧
-   * ========================================================
-   */
-
-  useEffect(() => {
-    if (
-      !currentUser?.organizationId
-    ) {
-      return;
-    }
-
-    void loadAnswers(
-      currentUser.organizationId
-    );
-  }, [
-    currentUser?.organizationId,
-  ]);
-
-  async function loadAnswers(
-    organizationId: string
-  ) {
+  async function loadAnswers() {
     try {
       setLoading(true);
+
       setError("");
 
-      const snapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "answers"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            ),
-            where(
-              "firstReviewStatus",
-              "==",
-              "確認済み"
-            ),
-            where(
-              "secondReviewStatus",
-              "==",
-              "未確認"
-            )
-          )
+      const user =
+        await getAppUser(
+          auth.currentUser
         );
 
-      const loaded =
-        snapshot.docs.map(
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "二次確認は職員のみ利用できます。"
+        );
+      }
+
+      if (
+        !user.organizationId
+      ) {
+        throw new Error(
+          "所属組織が設定されていません。"
+        );
+      }
+
+      setUserRole(
+        user.role
+      );
+
+      const scopeUser:
+        FirestoreUser =
+        {
+          uid:
+            user.uid,
+
+          organizationId:
+            user.organizationId,
+
+          role:
+            user.role,
+
+          schoolIds:
+            user.schoolIds,
+
+          studentId:
+            user.studentId,
+        };
+
+      const [
+        answerDocuments,
+        studentDocuments,
+        testDocuments,
+      ] =
+        await Promise.all([
+          getScopedDocs(
+            answersQueries(
+              scopeUser
+            )
+          ),
+
+          getScopedDocs(
+            studentsQueries(
+              scopeUser
+            )
+          ),
+
+          getScopedDocs(
+            testsQueries(
+              scopeUser
+            )
+          ),
+        ]);
+
+      const students =
+        studentDocuments.map(
           (
             item
-          ): Answer => {
-            const data =
-              item.data();
-
-            return {
-              id:
-                item.id,
-
-              organizationId,
-
-              testId:
-                stringValue(
-                  data.testId
-                ),
-
-              testCode:
-                stringValue(
-                  data.testCode
-                ),
-
-              studentId:
-                nullableString(
-                  data.studentId
-                ),
-
-              studentNumber:
-                nullableString(
-                  data.studentNumber
-                ),
-
-              schoolId:
-                stringValue(
-                  data.schoolId
-                ),
-
-              storagePath:
-                stringValue(
-                  data.storagePath
-                ),
-
-              status:
-                stringValue(
-                  data.status
-                ),
-
-              gradingStatus:
-                stringValue(
-                  data.gradingStatus
-                ),
-
-              firstReviewStatus:
-                stringValue(
-                  data.firstReviewStatus
-                ),
-
-              secondReviewStatus:
-                stringValue(
-                  data.secondReviewStatus
-                ),
-
-              finalized:
-                data.finalized ===
-                true,
-            };
-          }
+          ) =>
+            normalizeStudent(
+              item.id,
+              item.data
+            )
         );
 
-      const accessible =
-        currentUser?.role ===
-        "本部管理者"
-          ? loaded
-          : loaded.filter(
+      const tests =
+        testDocuments.map(
+          (
+            item
+          ) =>
+            normalizeTest(
+              item.id,
+              item.data
+            )
+        );
+
+      /*
+       * 二次確認対象は、
+       *
+       * status = second_review
+       *
+       * の答案。
+       *
+       * first_reviewのままの答案は
+       * 二次確認画面には出さない。
+       */
+      const loaded =
+        answerDocuments
+          .map(
+            (
+              item
+            ) =>
+              normalizeAnswer(
+                item.id,
+                item.data,
+                students,
+                tests
+              )
+          )
+          .filter(
+            (
+              answer
+            ) =>
+              answer.status ===
+              "second_review"
+          );
+
+      setAnswers(
+        loaded
+      );
+
+      setSelectedAnswerId(
+        (
+          current
+        ) => {
+          if (
+            current &&
+            loaded.some(
               (
                 answer
               ) =>
-                currentUser?.schoolIds.includes(
-                  answer.schoolId
-                )
-            );
+                answer.id ===
+                current
+            )
+          ) {
+            return current;
+          }
 
-      setAnswers(
-        accessible
+          return (
+            loaded[0]?.id ??
+            null
+          );
+        }
       );
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        err
+        "Second review load error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
+        error instanceof Error
+          ? error.message
+          : "二次確認対象の答案を取得できませんでした。"
       );
     } finally {
       setLoading(false);
     }
   }
 
-  /*
-   * ========================================================
-   * 生徒
-   * ========================================================
-   */
+  /* =======================================================
+     Selected
+     ======================================================= */
+
+  const selectedAnswer =
+    answers.find(
+      (
+        answer
+      ) =>
+        answer.id ===
+        selectedAnswerId
+    ) ??
+    null;
+
+  /* =======================================================
+     Detail
+     ======================================================= */
 
   useEffect(() => {
     if (
-      !currentUser?.organizationId
+      !selectedAnswer
     ) {
-      return;
-    }
-
-    void loadStudents(
-      currentUser.organizationId
-    );
-  }, [
-    currentUser?.organizationId,
-  ]);
-
-  async function loadStudents(
-    organizationId: string
-  ) {
-    try {
-      const snapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "students"
-            ),
-            where(
-              "organizationId",
-              "==",
-              organizationId
-            )
-          )
-        );
-
-      setStudents(
-        snapshot.docs.map(
-          (
-            item
-          ): Student => {
-            const data =
-              item.data();
-
-            return {
-              id:
-                item.id,
-
-              name:
-                stringValue(
-                  data.name
-                ),
-
-              studentNumber:
-                stringValue(
-                  data.studentNumber
-                ),
-
-              schoolId:
-                stringValue(
-                  data.schoolId
-                ),
-            };
-          }
-        )
-      );
-    } catch (err) {
-      console.error(
-        err
-      );
-    }
-  }
-
-  /*
-   * ========================================================
-   * 検索
-   * ========================================================
-   */
-
-  const filteredAnswers =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
-
-      if (!keyword) {
-        return answers;
-      }
-
-      return answers.filter(
-        (
-          answer
-        ) => {
-          const student =
-            students.find(
-              (
-                item
-              ) =>
-                item.id ===
-                answer.studentId
-            );
-
-          return (
-            answer.testCode
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            (
-              answer.studentNumber ??
-              ""
-            ).includes(
-              keyword
-            ) ||
-            (
-              student?.name ??
-              ""
-            )
-              .toLowerCase()
-              .includes(
-                keyword
-              )
-          );
-        }
-      );
-    }, [
-      answers,
-      students,
-      search,
-    ]);
-
-  /*
-   * ========================================================
-   * 詳細取得
-   * ========================================================
-   */
-
-  useEffect(() => {
-    if (
-      !selectedAnswerId
-    ) {
+      setResults([]);
+      setInternalNote("");
+      setPublicAnnotation("");
+      setImageUrl(null);
       return;
     }
 
     void loadDetail(
-      selectedAnswerId
+      selectedAnswer
     );
   }, [
     selectedAnswerId,
   ]);
 
   async function loadDetail(
-    answerId: string
+    answer: AnswerListItem
   ) {
     try {
-      setDetailLoading(true);
+      setDetailLoading(
+        true
+      );
+
       setError("");
+
       setMessage("");
 
-      /*
-       * gradingResults/{answerId}
-       * を直接取得。
-       */
+      const [
+        firstReview,
+        secondReview,
+      ] =
+        await Promise.all([
+          getFirstReview(
+            answer.id
+          ),
 
-      const gradingDocument =
-        await getDoc(
-          doc(
-            db,
-            "gradingResults",
-            answerId
-          )
-        );
-
-      if (
-        !gradingDocument.exists()
-      ) {
-        setGradingResult(
-          null
-        );
-
-        setEditedScores(
-          {}
-        );
-
-        setError(
-          "この答案の採点結果が見つかりません。"
-        );
-
-        return;
-      }
-
-      const data =
-        gradingDocument.data();
-
-      const rawResults =
-        Array.isArray(
-          data.results
-        )
-          ? data.results
-          : [];
-
-      const results =
-        rawResults.map(
-          (
-            item: any
-          ): GradingQuestion => ({
-            questionId:
-              stringValue(
-                item.questionId
-              ),
-
-            questionNumber:
-              numberValue(
-                item.questionNumber
-              ),
-
-            answer:
-              nullableString(
-                item.answer
-              ),
-
-            correctAnswers:
-              Array.isArray(
-                item.correctAnswers
-              )
-                ? item.correctAnswers.filter(
-                    (
-                      value: unknown
-                    ): value is string =>
-                      typeof value ===
-                      "string"
-                  )
-                : [],
-
-            points:
-              numberValue(
-                item.points
-              ),
-
-            score:
-              numberValue(
-                item.score
-              ),
-
-            method:
-              stringValue(
-                item.method
-              ),
-
-            result:
-              isGradingResult(
-                item.result
-              )
-                ? item.result
-                : "判定不能",
-
-            confidence:
-              typeof item.confidence ===
-              "number"
-                ? item.confidence
-                : null,
-
-            reviewRequired:
-              item.reviewRequired ===
-              true,
-
-            reason:
-              nullableString(
-                item.reason
-              ) ??
-              undefined,
-          })
-        );
-
-      const result: GradingResult =
-        {
-          answerId,
-
-          testId:
-            stringValue(
-              data.testId
-            ),
-
-          studentId:
-            nullableString(
-              data.studentId
-            ),
-
-          studentNumber:
-            nullableString(
-              data.studentNumber
-            ),
-
-          totalScore:
-            numberValue(
-              data.totalScore
-            ),
-
-          maxScore:
-            numberValue(
-              data.maxScore
-            ),
-
-          percentage:
-            numberValue(
-              data.percentage
-            ),
-
-          reviewStatus:
-            stringValue(
-              data.reviewStatus
-            ),
-
-          results,
-        };
-
-      setGradingResult(
-        result
-      );
-
-      const scores:
-        Record<
-          string,
-          number
-        > = {};
-
-      for (
-        const item of
-          results
-      ) {
-        scores[
-          item.questionId
-        ] =
-          item.score;
-      }
-
-      setEditedScores(
-        scores
-      );
+          getSecondReview(
+            answer.id
+          ),
+        ]);
 
       /*
-       * 答案画像
+       * 二次確認済みなら
+       * 二次確認結果を表示。
+       *
+       * 未作成なら一次確認結果。
        */
+      const source =
+        secondReview?.results
+          ?.length
+          ? secondReview.results
+          : firstReview?.results ??
+            [];
 
-      const answer =
-        answers.find(
+      const firstResults =
+        firstReview?.results ??
+        [];
+
+      const rows =
+        source.map(
           (
-            item
-          ) =>
-            item.id ===
-            answerId
+            result
+          ): ReviewRow => {
+            const first =
+              firstResults.find(
+                (
+                  item
+                ) =>
+                  item.questionId ===
+                  result.questionId
+              );
+
+            return {
+              ...result,
+
+              firstScore:
+                first?.score ??
+                result.score,
+
+              firstMark:
+                first?.mark ??
+                null,
+
+              changed:
+                first
+                  ? first.score !==
+                      result.score ||
+                    first.mark !==
+                      result.mark
+                  : false,
+            };
+          }
         );
 
-      if (
-        answer?.storagePath &&
-        supabase
-      ) {
-        const signed =
-          await supabase.storage
-            .from(
-              ANSWERS_BUCKET
-            )
-            .createSignedUrl(
-              answer.storagePath,
-              3600
-            );
+      setResults(
+        rows
+      );
 
-        if (
-          signed.error
-        ) {
-          console.error(
-            signed.error
-          );
+      setInternalNote(
+        secondReview?.internalNote ??
+          firstReview?.internalNote ??
+          ""
+      );
 
-          setAnswerImageUrl(
-            ""
-          );
-        } else {
-          setAnswerImageUrl(
-            signed.data
-              .signedUrl
-          );
-        }
-      }
-    } catch (err) {
+      setPublicAnnotation(
+        secondReview?.publicAnnotation ??
+          firstReview?.publicAnnotation ??
+          ""
+      );
+
+      void loadImage(
+        answer.id
+      );
+    } catch (
+      error
+    ) {
       console.error(
-        err
+        "Second review detail error:",
+        error
       );
+
+      setResults([]);
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
+        "二次確認データを取得できませんでした。"
       );
     } finally {
       setDetailLoading(
@@ -871,16 +520,171 @@ export default function SecondReviewPage() {
     }
   }
 
-  /*
-   * ========================================================
-   * 点数変更
-   * ========================================================
-   */
+  /* =======================================================
+     Image
+     ======================================================= */
 
-  function changeScore(
-    questionId: string,
-    value: string,
-    max: number
+  async function loadImage(
+    answerId: string
+  ) {
+    try {
+      setImageLoading(
+        true
+      );
+
+      setImageUrl(
+        null
+      );
+
+      const user =
+        await getAppUser();
+
+      if (
+        !user
+      ) {
+        return;
+      }
+
+      const answer =
+        await getAnswerWithUrl(
+          answerId
+        );
+
+      if (
+        !answer
+      ) {
+        return;
+      }
+
+      setImageUrl(
+        answer.signedUrl
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Second review image error:",
+        error
+      );
+
+      setImageUrl(
+        null
+      );
+    } finally {
+      setImageLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Search
+     ======================================================= */
+
+  const filtered =
+    useMemo(() => {
+      const keyword =
+        search
+          .trim()
+          .toLowerCase();
+
+      if (
+        !keyword
+      ) {
+        return answers;
+      }
+
+      return answers.filter(
+        (
+          answer
+        ) =>
+          answer.studentName
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          (
+            answer.studentNumber ??
+            ""
+          )
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          answer.testName
+            .toLowerCase()
+            .includes(
+              keyword
+            ) ||
+          answer.subjectName
+            .toLowerCase()
+            .includes(
+              keyword
+            )
+      );
+    }, [
+      answers,
+      search,
+    ]);
+
+  /* =======================================================
+     Statistics
+     ======================================================= */
+
+  const changedCount =
+    results.filter(
+      (
+        result
+      ) =>
+        result.changed
+    ).length;
+
+  const totalScore =
+    calculateTotalScore(
+      results
+    );
+
+  const totalMaxScore =
+    calculateTotalMaxScore(
+      results
+    );
+
+  const hasDisagreements =
+    useMemo(
+      () => {
+        const first =
+          results.map(
+            (
+              result
+            ) => ({
+              ...result,
+
+              score:
+                result.firstScore,
+
+              mark:
+                result.firstMark ??
+                result.mark,
+            })
+          );
+
+        return hasDisagreement(
+          first,
+          results
+        );
+      },
+      [
+        results,
+      ]
+    );
+
+  /* =======================================================
+     Update score
+     ======================================================= */
+
+  function updateScore(
+    index: number,
+    value: string
   ) {
     const parsed =
       Number(
@@ -895,366 +699,413 @@ export default function SecondReviewPage() {
       return;
     }
 
-    const score =
-      Math.max(
-        0,
-        Math.min(
-          max,
-          parsed
-        )
-      );
-
-    setEditedScores(
+    setResults(
       (
         current
-      ) => ({
-        ...current,
+      ) =>
+        current.map(
+          (
+            result,
+            resultIndex
+          ) => {
+            if (
+              resultIndex !==
+              index
+            ) {
+              return result;
+            }
 
-        [questionId]:
-          score,
-      })
+            const score =
+              Math.min(
+                Math.max(
+                  0,
+                  parsed
+                ),
+                result.maxScore
+              );
+
+            return {
+              ...result,
+
+              score,
+
+              changed:
+                score !==
+                result.firstScore,
+            };
+          }
+        )
     );
+
+    setMessage("");
   }
 
-  /*
-   * ========================================================
-   * 合計
-   * ========================================================
-   */
+  /* =======================================================
+     Mark
+     ======================================================= */
 
-  const editedTotal =
-    useMemo(() => {
-      if (
-        !gradingResult
-      ) {
-        return 0;
-      }
-
-      return gradingResult.results.reduce(
-        (
-          total,
-          item
-        ) =>
-          total +
+  function updateMark(
+    index: number,
+    mark: GradingResult["mark"]
+  ) {
+    setResults(
+      (
+        current
+      ) =>
+        current.map(
           (
-            editedScores[
-              item.questionId
-            ] ??
-            item.score
-          ),
-        0
-      );
-    }, [
-      gradingResult,
-      editedScores,
-    ]);
+            result,
+            resultIndex
+          ) =>
+            resultIndex ===
+            index
+              ? {
+                  ...result,
 
-  /*
-   * ========================================================
-   * 最終確定
-   * ========================================================
-   */
+                  mark,
 
-  async function finalizeAnswer() {
+                  changed:
+                    mark !==
+                    result.firstMark,
+                }
+              : result
+        )
+    );
+
+    setMessage("");
+  }
+
+  /* =======================================================
+     Reason
+     ======================================================= */
+
+  function updateReason(
+    index: number,
+    reason: string
+  ) {
+    setResults(
+      (
+        current
+      ) =>
+        current.map(
+          (
+            result,
+            resultIndex
+          ) =>
+            resultIndex ===
+            index
+              ? {
+                  ...result,
+
+                  reason,
+
+                  changed:
+                    true,
+                }
+              : result
+        )
+    );
+
+    setMessage("");
+  }
+
+  /* =======================================================
+     Save
+     ======================================================= */
+
+  async function handleSave() {
+    if (
+      !selectedAnswer
+    ) {
+      return;
+    }
+
     if (
       saving
     ) {
       return;
     }
 
-    if (
-      !currentUser
-    ) {
-      return;
-    }
-
-    if (
-      !selectedAnswerId ||
-      !gradingResult
-    ) {
-      setError(
-        "確定する答案を選択してください。"
-      );
-
-      return;
-    }
-
-    const answer =
-      answers.find(
-        (
-          item
-        ) =>
-          item.id ===
-          selectedAnswerId
-      );
-
-    if (
-      !answer
-    ) {
-      setError(
-        "答案情報を確認できません。"
-      );
-
-      return;
-    }
-
-    /*
-     * 自分自身が一次確認者の場合、
-     * 二次確認を兼任させない。
-     *
-     * firstReviewedByがある場合は
-     *そのUIDを取得する。
-     */
-
     try {
-      setSaving(true);
+      setSaving(
+        true
+      );
 
       setError("");
+
       setMessage("");
 
-      /*
-       * 採点結果を更新
-       */
+      const user =
+        await getAppUser();
 
-      await updateDoc(
-        doc(
-          db,
-          "gradingResults",
-          selectedAnswerId
-        ),
+      if (
+        !user
+      ) {
+        throw new Error(
+          "ログインしてください。"
+        );
+      }
+
+      if (
+        user.role ===
+        "生徒"
+      ) {
+        throw new Error(
+          "二次確認権限がありません。"
+        );
+      }
+
+      if (
+        !selectedAnswer.studentNumber
+      ) {
+        throw new Error(
+          "生徒番号が答案に紐付いていません。"
+        );
+      }
+
+      const input:
+        SaveReviewInput =
         {
-          totalScore:
-            editedTotal,
+          answerId:
+            selectedAnswer.id,
 
-          percentage:
-            gradingResult.maxScore >
-            0
-              ? (
-                  editedTotal /
-                  gradingResult.maxScore
-                ) *
-                100
-              : 0,
+          testId:
+            selectedAnswer.testId,
+
+          subjectId:
+            selectedAnswer.subjectId,
+
+          studentNumber:
+            selectedAnswer.studentNumber,
+
+          reviewerId:
+            user.uid,
 
           results:
-            gradingResult.results.map(
+            results.map(
               (
-                item
+                result
               ) => ({
-                ...item,
+                questionId:
+                  result.questionId,
+
+                questionNumber:
+                  result.questionNumber,
+
+                answerText:
+                  result.answerText,
+
+                mark:
+                  result.mark,
 
                 score:
-                  editedScores[
-                    item.questionId
-                  ] ??
-                  item.score,
+                  result.score,
+
+                maxScore:
+                  result.maxScore,
+
+                confidence:
+                  result.confidence,
+
+                reviewRequired:
+                  false,
+
+                reason:
+                  result.reason,
+
+                rubric:
+                  result.rubric,
               })
             ),
 
-          reviewStatus:
-            "確定",
+          internalNote,
 
-          finalizedBy:
-            currentUser.uid,
+          publicAnnotation,
+        };
 
-          finalizedByName:
-            currentUser.name,
-
-          finalizedAt:
-            serverTimestamp(),
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      /*
-       * 答案を確定
-       */
-
-      await updateDoc(
-        doc(
-          db,
-          "answers",
-          selectedAnswerId
-        ),
-        {
-          status:
-            "確定",
-
-          gradingStatus:
-            "確定",
-
-          secondReviewStatus:
-            "確認済み",
-
-          finalized:
-            true,
-
-          finalizedBy:
-            currentUser.uid,
-
-          finalizedByName:
-            currentUser.name,
-
-          finalizedAt:
-            serverTimestamp(),
-
-          secondReviewComment:
-            reviewComment.trim() ||
-            null,
-
-          updatedAt:
-            serverTimestamp(),
-        }
-      );
-
-      /*
-       * 履歴
-       */
-
-      await addReviewLog(
-        selectedAnswerId,
-        currentUser.uid,
-        currentUser.name,
-        reviewComment
+      await saveSecondReview(
+        input
       );
 
       setMessage(
-        "答案を確定しました。"
+        "二次確認を保存しました。"
       );
 
-      setReviewComment("");
-
-      setSelectedAnswerId("");
-
-      setGradingResult(
-        null
-      );
-
-      setAnswerImageUrl(
-        ""
-      );
-
-      if (
-        currentUser.organizationId
-      ) {
-        await loadAnswers(
-          currentUser.organizationId
-        );
-      }
-    } catch (err) {
+      await loadAnswers();
+    } catch (
+      error
+    ) {
       console.error(
-        "Finalization error:",
-        err
+        "Second review save error:",
+        error
       );
 
       setError(
-        getSafeErrorMessage(
-          err
-        )
+        error instanceof Error
+          ? error.message
+          : "二次確認を保存できませんでした。"
       );
     } finally {
-      setSaving(false);
+      setSaving(
+        false
+      );
     }
   }
 
-  /*
-   * ========================================================
-   * 権限
-   * ========================================================
-   */
+  /* =======================================================
+     Return
+     ======================================================= */
+
+  async function handleReturn() {
+    if (
+      !selectedAnswer
+    ) {
+      return;
+    }
+
+    if (
+      returning
+    ) {
+      return;
+    }
+
+    try {
+      setReturning(
+        true
+      );
+
+      setError("");
+
+      setMessage("");
+
+      await returnToFirstReview(
+        selectedAnswer.id
+      );
+
+      setMessage(
+        "一次確認へ差し戻しました。"
+      );
+
+      await loadAnswers();
+    } catch (
+      error
+    ) {
+      console.error(
+        "Return to first review error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "一次確認へ差し戻せませんでした。"
+      );
+    } finally {
+      setReturning(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Loading
+     ======================================================= */
 
   if (
-    currentUser &&
-    currentUser.role !==
-      "本部管理者" &&
-    currentUser.role !==
-      "校舎管理者" &&
-    currentUser.role !==
-      "講師"
+    loading
   ) {
     return (
-      <main
-        style={
-          pageStyle
-        }
-      >
-        <section
-          style={
-            cardStyle
-          }
-        >
+      <main className="page">
+        <section className="content">
           <h1>
             二次確認
           </h1>
 
           <p>
-            この機能を利用する権限がありません。
+            二次確認対象の答案を読み込んでいます...
           </p>
         </section>
       </main>
     );
   }
 
+  /* =======================================================
+     Render
+     ======================================================= */
+
   return (
-    <main
-      style={
-        pageStyle
-      }
-    >
-      <div
-        style={{
-          maxWidth:
-            1500,
+    <main className="page">
+      <section className="content">
 
-          margin:
-            "0 auto",
-        }}
-      >
-        <header
-          style={{
-            marginBottom:
-              24,
-          }}
-        >
-          <h1
+        {/* ==================================================
+            Header
+            ================================================== */}
+
+        <header className="pageHeader">
+          <div>
+            <h1>
+              二次確認
+            </h1>
+
+            <p className="muted">
+              一次確認済みの採点結果を再確認し、差異を確認します。
+            </p>
+          </div>
+
+          <div
             style={{
-              margin:
-                "0 0 8px",
+              display:
+                "flex",
+
+              gap:
+                8,
             }}
           >
-            採点二次確認
-          </h1>
+            <Link
+              href="/grading/review"
+              className="button"
+            >
+              一次確認
+            </Link>
 
-          <p
-            style={{
-              margin: 0,
-
-              color:
-                "#666",
-
-              lineHeight:
-                1.7,
-            }}
-          >
-            一次確認済みの答案を最終確認し、確定します。
-          </p>
+            <Link
+              href="/grading/confirm"
+              className="button primary"
+            >
+              採点確定
+            </Link>
+          </div>
         </header>
 
+        {/* ==================================================
+            Messages
+            ================================================== */}
+
         {error && (
-          <Message
-            type="error"
-            message={error}
-          />
+          <div
+            className="errorMessage"
+            role="alert"
+          >
+            {
+              error
+            }
+          </div>
         )}
 
         {message && (
-          <Message
-            type="success"
-            message={message}
-          />
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {
+              message
+            }
+          </div>
         )}
+
+        {/* ==================================================
+            Main
+            ================================================== */}
 
         <div
           style={{
@@ -1271,55 +1122,12 @@ export default function SecondReviewPage() {
               "start",
           }}
         >
-          {/* ==================================================
-              一覧
-              ================================================== */}
 
-          <section
-            style={
-              cardStyle
-            }
-          >
-            <div
-              style={{
-                display:
-                  "flex",
+          {/* ================================================
+              List
+              ================================================ */}
 
-                justifyContent:
-                  "space-between",
-
-                alignItems:
-                  "center",
-              }}
-            >
-              <h2
-                style={{
-                  margin:
-                    0,
-
-                  fontSize:
-                    18,
-                }}
-              >
-                二次確認待ち
-              </h2>
-
-              <span
-                style={{
-                  color:
-                    "#777",
-
-                  fontSize:
-                    12,
-                }}
-              >
-                {
-                  filteredAnswers.length
-                }
-                件
-              </span>
-            </div>
-
+          <section className="card">
             <input
               value={
                 search
@@ -1332,183 +1140,39 @@ export default function SecondReviewPage() {
                     .value
                 )
               }
-              placeholder="テストID・生徒番号・氏名"
-              style={
-                inputStyle
-              }
+              placeholder="生徒番号・氏名・テスト名"
+              style={{
+                width:
+                  "100%",
+
+                marginBottom:
+                  12,
+              }}
             />
 
             <div
+              className="muted"
               style={{
-                marginTop:
-                  16,
+                marginBottom:
+                  12,
 
-                display:
-                  "flex",
-
-                flexDirection:
-                  "column",
-
-                gap:
-                  8,
-
-                maxHeight:
-                  "calc(100vh - 280px)",
-
-                overflowY:
-                  "auto",
+                fontSize:
+                  12,
               }}
             >
-              {loading ? (
-                <p>
-                  読み込み中...
-                </p>
-              ) : filteredAnswers.length ===
-                0 ? (
-                <div
-                  style={{
-                    padding:
-                      30,
-
-                    textAlign:
-                      "center",
-
-                    color:
-                      "#777",
-
-                    fontSize:
-                      13,
-                  }}
-                >
-                  二次確認待ちの答案はありません。
-                </div>
-              ) : (
-                filteredAnswers.map(
-                  (
-                    answer
-                  ) => {
-                    const student =
-                      students.find(
-                        (
-                          item
-                        ) =>
-                          item.id ===
-                          answer.studentId
-                      );
-
-                    const selected =
-                      answer.id ===
-                      selectedAnswerId;
-
-                    return (
-                      <button
-                        type="button"
-                        key={
-                          answer.id
-                        }
-                        onClick={() =>
-                          setSelectedAnswerId(
-                            answer.id
-                          )
-                        }
-                        style={{
-                          textAlign:
-                            "left",
-
-                          padding:
-                            14,
-
-                          border:
-                            selected
-                              ? "2px solid #111"
-                              : "1px solid #ddd",
-
-                          borderRadius:
-                            9,
-
-                          background:
-                            selected
-                              ? "#f7f7f7"
-                              : "#fff",
-
-                          cursor:
-                            "pointer",
-                        }}
-                      >
-                        <strong>
-                          {
-                            answer.testCode
-                          }
-                        </strong>
-
-                        <div
-                          style={{
-                            marginTop:
-                              5,
-
-                            fontSize:
-                              13,
-                          }}
-                        >
-                          {student?.name ??
-                            "生徒未特定"}
-                        </div>
-
-                        <div
-                          style={{
-                            marginTop:
-                              3,
-
-                            color:
-                              "#777",
-
-                            fontSize:
-                              11,
-                          }}
-                        >
-                          生徒番号：
-                          {
-                            answer.studentNumber ??
-                            "—"
-                          }
-                        </div>
-
-                        <div
-                          style={{
-                            marginTop:
-                              8,
-
-                            color:
-                              "#777",
-
-                            fontSize:
-                              11,
-                          }}
-                        >
-                          一次確認済み
-                        </div>
-                      </button>
-                    );
-                  }
-                )
-              )}
+              二次確認対象：
+              {
+                filtered.length
+              }
+              件
             </div>
-          </section>
 
-          {/* ==================================================
-              詳細
-              ================================================== */}
-
-          <section
-            style={
-              cardStyle
-            }
-          >
-            {!selectedAnswerId ? (
+            {filtered.length ===
+              0 && (
               <div
                 style={{
                   padding:
-                    70,
+                    35,
 
                   textAlign:
                     "center",
@@ -1517,23 +1181,687 @@ export default function SecondReviewPage() {
                     "#777",
                 }}
               >
-                左側から答案を選択してください。
+                <strong>
+                  二次確認対象の答案はありません。
+                </strong>
+
+                <p
+                  style={{
+                    fontSize:
+                      12,
+                  }}
+                >
+                  一次確認を完了した答案がここに表示されます。
+                </p>
               </div>
+            )}
+
+            {filtered.map(
+              (
+                answer
+              ) => (
+                <button
+                  key={
+                    answer.id
+                  }
+                  type="button"
+                  onClick={() =>
+                    setSelectedAnswerId(
+                      answer.id
+                    )
+                  }
+                  style={{
+                    display:
+                      "block",
+
+                    width:
+                      "100%",
+
+                    marginBottom:
+                      8,
+
+                    padding:
+                      14,
+
+                    textAlign:
+                      "left",
+
+                    border:
+                      selectedAnswerId ===
+                      answer.id
+                        ? "2px solid #111"
+                        : "1px solid #ddd",
+
+                    borderRadius:
+                      8,
+
+                    background:
+                      selectedAnswerId ===
+                      answer.id
+                        ? "#f7f7f7"
+                        : "#fff",
+
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  <strong>
+                    {
+                      answer.studentName ||
+                      "生徒未紐付け"
+                    }
+                  </strong>
+
+                  <div
+                    className="muted"
+                    style={{
+                      marginTop:
+                        4,
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
+                      answer.studentNumber ||
+                      "生徒番号未設定"
+                    }
+                  </div>
+
+                  <div
+                    className="muted"
+                    style={{
+                      marginTop:
+                        3,
+
+                      fontSize:
+                        12,
+                    }}
+                  >
+                    {
+                      answer.testName
+                    }
+                    {" / "}
+                    {
+                      answer.subjectName ||
+                      "—"
+                    }
+                  </div>
+                </button>
+              )
+            )}
+          </section>
+
+          {/* ================================================
+              Detail
+              ================================================ */}
+
+          <section className="card">
+            {!selectedAnswer ? (
+              <EmptyDetail />
             ) : detailLoading ? (
               <div
                 style={{
                   padding:
-                    70,
+                    60,
 
                   textAlign:
                     "center",
                 }}
               >
-                答案を読み込んでいます...
+                二次確認データを読み込んでいます...
               </div>
             ) : (
               <>
-                <div
+                {/* ==========================================
+                    Header
+                    ========================================== */}
+
+                <header
+                  style={{
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "space-between",
+
+                    gap:
+                      20,
+
+                    paddingBottom:
+                      18,
+
+                    borderBottom:
+                      "1px solid #eee",
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        margin:
+                          0,
+                      }}
+                    >
+                      {
+                        selectedAnswer.studentName ||
+                        "生徒未紐付け"
+                      }
+                    </h2>
+
+                    <p
+                      className="muted"
+                      style={{
+                        margin:
+                          "5px 0 0",
+                      }}
+                    >
+                      {
+                        selectedAnswer.studentNumber ||
+                        "生徒番号未設定"
+                      }
+
+                      {" / "}
+
+                      {
+                        selectedAnswer.testName
+                      }
+
+                      {" / "}
+
+                      {
+                        selectedAnswer.subjectName ||
+                        "—"
+                      }
+                    </p>
+                  </div>
+
+                  <div
+                    style={{
+                      textAlign:
+                        "right",
+                    }}
+                  >
+                    <div
+                      className="muted"
+                      style={{
+                        fontSize:
+                          11,
+                      }}
+                    >
+                      二次確認得点
+                    </div>
+
+                    <strong
+                      style={{
+                        fontSize:
+                          28,
+                      }}
+                    >
+                      {
+                        totalScore
+                      }
+
+                      <span
+                        style={{
+                          fontSize:
+                            14,
+
+                          fontWeight:
+                            400,
+                        }}
+                      >
+                        {" / "}
+                        {
+                          totalMaxScore
+                        }
+                      </span>
+                    </strong>
+                  </div>
+                </header>
+
+                {/* ==========================================
+                    Difference warning
+                    ========================================== */}
+
+                {hasDisagreements && (
+                  <div
+                    style={{
+                      marginTop:
+                        16,
+
+                      padding:
+                        14,
+
+                      border:
+                        "1px solid #e6b85c",
+
+                      borderRadius:
+                        8,
+
+                      background:
+                        "#fff9e8",
+                    }}
+                  >
+                    <strong>
+                      一次確認と現在の採点結果に差異があります。
+                    </strong>
+
+                    <p
+                      style={{
+                        margin:
+                          "5px 0 0",
+
+                        fontSize:
+                          12,
+                      }}
+                    >
+                      差異を確認し、二次確認結果を保存してください。
+                    </p>
+                  </div>
+                )}
+
+                {/* ==========================================
+                    Image
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      18,
+                  }}
+                >
+                  <h3>
+                    答案
+                  </h3>
+
+                  <div
+                    style={{
+                      minHeight:
+                        280,
+
+                      display:
+                        "flex",
+
+                      alignItems:
+                        "center",
+
+                      justifyContent:
+                        "center",
+
+                      background:
+                        "#f5f5f5",
+
+                      borderRadius:
+                        8,
+
+                      overflow:
+                        "hidden",
+                    }}
+                  >
+                    {imageLoading ? (
+                      <span>
+                        答案画像を読み込んでいます...
+                      </span>
+                    ) : imageUrl ? (
+                      selectedAnswer.contentType ===
+                      "application/pdf" ? (
+                        <iframe
+                          src={
+                            imageUrl
+                          }
+                          title="答案"
+                          style={{
+                            width:
+                              "100%",
+
+                            height:
+                              500,
+
+                            border:
+                              0,
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={
+                            imageUrl
+                          }
+                          alt="答案"
+                          style={{
+                            maxWidth:
+                              "100%",
+
+                            maxHeight:
+                              550,
+
+                            objectFit:
+                              "contain",
+                          }}
+                        />
+                      )
+                    ) : (
+                      <span className="muted">
+                        答案画像を表示できません。
+                      </span>
+                    )}
+                  </div>
+                </section>
+
+                {/* ==========================================
+                    Comparison table
+                    ========================================== */}
+
+                <section
+                  style={{
+                    marginTop:
+                      22,
+                  }}
+                >
+                  <h3>
+                    採点比較
+                  </h3>
+
+                  <div
+                    style={{
+                      overflowX:
+                        "auto",
+                    }}
+                  >
+                    <table className="dataTable">
+                      <thead>
+                        <tr>
+                          <th>
+                            問題
+                          </th>
+
+                          <th>
+                            解答
+                          </th>
+
+                          <th>
+                            一次確認
+                          </th>
+
+                          <th>
+                            二次確認
+                          </th>
+
+                          <th>
+                            得点
+                          </th>
+
+                          <th>
+                            理由
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {results.map(
+                          (
+                            result,
+                            index
+                          ) => {
+                            const difference =
+                              result.changed;
+
+                            return (
+                              <tr
+                                key={`${result.questionId}-${index}`}
+                                style={{
+                                  background:
+                                    difference
+                                      ? "#fff9e8"
+                                      : undefined,
+                                }}
+                              >
+                                <td>
+                                  <strong>
+                                    {
+                                      result.questionNumber
+                                    }
+                                  </strong>
+                                </td>
+
+                                <td
+                                  style={{
+                                    minWidth:
+                                      150,
+                                  }}
+                                >
+                                  {
+                                    result.answerText ||
+                                    "—"
+                                  }
+                                </td>
+
+                                <td>
+                                  <div>
+                                    <strong>
+                                      {
+                                        result.firstMark ??
+                                        "—"
+                                      }
+                                    </strong>
+                                  </div>
+
+                                  <div
+                                    className="muted"
+                                    style={{
+                                      fontSize:
+                                        11,
+                                    }}
+                                  >
+                                    {
+                                      result.firstScore
+                                    }
+                                    {" / "}
+                                    {
+                                      result.maxScore
+                                    }
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <select
+                                    value={
+                                      result.mark
+                                    }
+                                    onChange={(
+                                      event
+                                    ) =>
+                                      updateMark(
+                                        index,
+                                        event
+                                          .target
+                                          .value as GradingResult["mark"]
+                                      )
+                                    }
+                                  >
+                                    <option value="○">
+                                      ○
+                                    </option>
+
+                                    <option value="△">
+                                      △
+                                    </option>
+
+                                    <option value="×">
+                                      ×
+                                    </option>
+                                  </select>
+                                </td>
+
+                                <td>
+                                  <div
+                                    style={{
+                                      display:
+                                        "flex",
+
+                                      alignItems:
+                                        "center",
+
+                                      gap:
+                                        4,
+                                    }}
+                                  >
+                                    <input
+                                      type="number"
+                                      min={
+                                        0
+                                      }
+                                      max={
+                                        result.maxScore
+                                      }
+                                      value={
+                                        result.score
+                                      }
+                                      onChange={(
+                                        event
+                                      ) =>
+                                        updateScore(
+                                          index,
+                                          event
+                                            .target
+                                            .value
+                                        )
+                                      }
+                                      style={{
+                                        width:
+                                          70,
+                                      }}
+                                    />
+
+                                    <span>
+                                      /
+                                      {
+                                        result.maxScore
+                                      }
+                                    </span>
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <input
+                                    value={
+                                      result.reason ??
+                                      ""
+                                    }
+                                    onChange={(
+                                      event
+                                    ) =>
+                                      updateReason(
+                                        index,
+                                        event
+                                          .target
+                                          .value
+                                      )
+                                    }
+                                    placeholder="必要な場合"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          }
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                {/* ==========================================
+                    Notes
+                    ========================================== */}
+
+                <section
+                  style={{
+                    display:
+                      "grid",
+
+                    gridTemplateColumns:
+                      "1fr 1fr",
+
+                    gap:
+                      14,
+
+                    marginTop:
+                      20,
+                  }}
+                >
+                  <label>
+                    <strong>
+                      内部メモ
+                    </strong>
+
+                    <textarea
+                      value={
+                        internalNote
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setInternalNote(
+                          event
+                            .target
+                            .value
+                        )
+                      }
+                      rows={
+                        4
+                      }
+                      style={{
+                        display:
+                          "block",
+
+                        width:
+                          "100%",
+
+                        marginTop:
+                          6,
+                      }}
+                    />
+                  </label>
+
+                  <label>
+                    <strong>
+                      生徒公開コメント
+                    </strong>
+
+                    <textarea
+                      value={
+                        publicAnnotation
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setPublicAnnotation(
+                          event
+                            .target
+                            .value
+                        )
+                      }
+                      rows={
+                        4
+                      }
+                      style={{
+                        display:
+                          "block",
+
+                        width:
+                          "100%",
+
+                        marginTop:
+                          6,
+                      }}
+                    />
+                  </label>
+                </section>
+
+                {/* ==========================================
+                    Actions
+                    ========================================== */}
+
+                <footer
                   style={{
                     display:
                       "flex",
@@ -1544,520 +1872,405 @@ export default function SecondReviewPage() {
                     alignItems:
                       "center",
 
-                    marginBottom:
+                    gap:
+                      12,
+
+                    marginTop:
                       20,
+
+                    paddingTop:
+                      18,
+
+                    borderTop:
+                      "1px solid #eee",
                   }}
                 >
-                  <div>
-                    <h2
-                      style={{
-                        margin:
-                          0,
-                      }}
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={
+                      returning ||
+                      saving
+                    }
+                    onClick={
+                      handleReturn
+                    }
+                  >
+                    {returning
+                      ? "差し戻し中..."
+                      : "一次確認へ差し戻す"}
+                  </button>
+
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      gap:
+                        8,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={
+                        saving ||
+                        results.length ===
+                          0
+                      }
+                      onClick={
+                        handleSave
+                      }
                     >
-                      最終確認
-                    </h2>
+                      {saving
+                        ? "保存中..."
+                        : "二次確認を保存"}
+                    </button>
 
-                    {gradingResult && (
-                      <p
-                        style={{
-                          margin:
-                            "7px 0 0",
-
-                          color:
-                            "#666",
-                        }}
+                    {!hasDisagreements && (
+                      <Link
+                        href="/grading/confirm"
+                        className="button"
                       >
-                        合計：
-                        <strong>
-                          {
-                            editedTotal
-                          }
-                        </strong>
-                        {" / "}
-                        {
-                          gradingResult.maxScore
-                        }
-                        点
-                      </p>
+                        採点確定へ
+                      </Link>
                     )}
                   </div>
-
-                  <span
-                    style={{
-                      padding:
-                        "7px 12px",
-
-                      borderRadius:
-                        999,
-
-                      background:
-                        "#f3f3f3",
-
-                      fontSize:
-                        12,
-
-                      fontWeight:
-                        600,
-                    }}
-                  >
-                    二次確認
-                  </span>
-                </div>
-
-                {/* ==========================================
-                    答案画像
-                    ========================================== */}
-
-                {answerImageUrl && (
-                  <section
-                    style={{
-                      marginBottom:
-                        24,
-                    }}
-                  >
-                    <h3>
-                      答案画像
-                    </h3>
-
-                    <div
-                      style={{
-                        maxHeight:
-                          700,
-
-                        overflow:
-                          "auto",
-
-                        padding:
-                          10,
-
-                        border:
-                          "1px solid #ddd",
-
-                        borderRadius:
-                          10,
-
-                        background:
-                          "#f7f7f7",
-                      }}
-                    >
-                      <img
-                        src={
-                          answerImageUrl
-                        }
-                        alt="答案"
-                        style={{
-                          display:
-                            "block",
-
-                          maxWidth:
-                            "100%",
-
-                          margin:
-                            "0 auto",
-                        }}
-                      />
-                    </div>
-                  </section>
-                )}
-
-                {/* ==========================================
-                    採点
-                    ========================================== */}
-
-                {gradingResult && (
-                  <section
-                    style={{
-                      marginBottom:
-                        24,
-                    }}
-                  >
-                    <h3>
-                      採点結果
-                    </h3>
-
-                    <div
-                      style={{
-                        overflowX:
-                          "auto",
-                      }}
-                    >
-                      <table
-                        style={
-                          tableStyle
-                        }
-                      >
-                        <thead>
-                          <tr>
-                            <th
-                              style={
-                                thStyle
-                              }
-                            >
-                              問題
-                            </th>
-
-                            <th
-                              style={
-                                thStyle
-                              }
-                            >
-                              回答
-                            </th>
-
-                            <th
-                              style={
-                                thStyle
-                              }
-                            >
-                              判定
-                            </th>
-
-                            <th
-                              style={
-                                thStyle
-                              }
-                            >
-                              得点
-                            </th>
-
-                            <th
-                              style={
-                                thStyle
-                              }
-                            >
-                              確信度
-                            </th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {gradingResult.results.map(
-                            (
-                              item
-                            ) => (
-                              <tr
-                                key={
-                                  item.questionId
-                                }
-                              >
-                                <td
-                                  style={
-                                    tdStyle
-                                  }
-                                >
-                                  {
-                                    item.questionNumber
-                                  }
-                                </td>
-
-                                <td
-                                  style={
-                                    tdStyle
-                                  }
-                                >
-                                  {
-                                    item.answer ??
-                                    "—"
-                                  }
-                                </td>
-
-                                <td
-                                  style={
-                                    tdStyle
-                                  }
-                                >
-                                  {
-                                    item.result
-                                  }
-                                </td>
-
-                                <td
-                                  style={
-                                    tdStyle
-                                  }
-                                >
-                                  <div
-                                    style={{
-                                      display:
-                                        "flex",
-
-                                      alignItems:
-                                        "center",
-
-                                      gap:
-                                        5,
-                                    }}
-                                  >
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={
-                                        item.points
-                                      }
-                                      step="0.1"
-                                      value={
-                                        editedScores[
-                                          item.questionId
-                                        ] ??
-                                        item.score
-                                      }
-                                      onChange={(
-                                        event
-                                      ) =>
-                                        changeScore(
-                                          item.questionId,
-                                          event
-                                            .target
-                                            .value,
-                                          item.points
-                                        )
-                                      }
-                                      style={
-                                        scoreInputStyle
-                                      }
-                                    />
-
-                                    <span>
-                                      /
-                                      {
-                                        item.points
-                                      }
-                                    </span>
-                                  </div>
-                                </td>
-
-                                <td
-                                  style={
-                                    tdStyle
-                                  }
-                                >
-                                  {item.confidence ===
-                                  null
-                                    ? "—"
-                                    : `${Math.round(
-                                        item.confidence *
-                                          100
-                                      )}%`}
-                                </td>
-                              </tr>
-                            )
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                )}
-
-                {/* ==========================================
-                    コメント
-                    ========================================== */}
-
-                <label
-                  style={{
-                    display:
-                      "block",
-
-                    marginBottom:
-                      20,
-
-                    fontWeight:
-                      600,
-                  }}
-                >
-                  二次確認コメント
-
-                  <textarea
-                    value={
-                      reviewComment
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setReviewComment(
-                        event.target
-                          .value
-                      )
-                    }
-                    rows={
-                      4
-                    }
-                    placeholder="確認内容や修正理由を記録できます。"
-                    style={
-                      textareaStyle
-                    }
-                  />
-                </label>
-
-                {/* ==========================================
-                    確定
-                    ========================================== */}
-
-                <div
-                  style={{
-                    padding:
-                      16,
-
-                    marginBottom:
-                      16,
-
-                    background:
-                      "#f7f7f7",
-
-                    borderRadius:
-                      8,
-
-                    fontSize:
-                      13,
-
-                    lineHeight:
-                      1.7,
-                  }}
-                >
-                  <strong>
-                    最終確定
-                  </strong>
-
-                  <p
-                    style={{
-                      margin:
-                        "6px 0 0",
-
-                      color:
-                        "#666",
-                    }}
-                  >
-                    この操作を行うと答案は「確定」になり、
-                    通常の採点フローから変更できない状態になります。
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={
-                    saving ||
-                    !gradingResult
-                  }
-                  onClick={
-                    finalizeAnswer
-                  }
-                  style={{
-                    ...primaryButton,
-
-                    opacity:
-                      saving ||
-                      !gradingResult
-                        ? 0.5
-                        : 1,
-                  }}
-                >
-                  {saving
-                    ? "確定中..."
-                    : "採点を最終確定する"}
-                </button>
+                </footer>
               </>
             )}
           </section>
         </div>
-      </div>
+      </section>
     </main>
   );
 }
 
 /* =========================================================
-   Review log
+   Normalize answer
    ========================================================= */
 
-async function addReviewLog(
-  answerId: string,
-  uid: string,
-  userName: string,
-  comment: string
-) {
-  try {
-    const { addDoc } =
-      await import(
-        "firebase/firestore"
-      );
+function normalizeAnswer(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  students: Student[],
+  tests: Test[]
+): AnswerListItem {
+  const studentId =
+    nullableString(
+      data.studentId
+    );
 
-    await addDoc(
-      collection(
-        db,
-        "systemLogs"
+  const testId =
+    stringValue(
+      data.testId
+    );
+
+  const student =
+    students.find(
+      (
+        item
+      ) =>
+        item.id ===
+        studentId
+    );
+
+  const test =
+    tests.find(
+      (
+        item
+      ) =>
+        item.id ===
+          testId ||
+        item.testId ===
+          testId
+    );
+
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
       ),
-      {
-        type:
-          "grading_second_review",
 
-        answerId,
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
 
-        userId:
-          uid,
+    testId,
 
-        userName,
+    subjectId:
+      stringValue(
+        data.subjectId
+      ),
 
-        comment:
-          comment.trim() ||
-          null,
+    studentId,
 
-        createdAt:
-          serverTimestamp(),
-      }
-    );
-  } catch (error) {
-    /*
-     * 履歴保存に失敗しても
-     * コンソールには記録する。
-     *
-     * ただし画面にはFirebase生エラーを
-     * 表示しない。
-     */
-    console.error(
-      "Review log error:",
-      error
-    );
+    studentNumber:
+      nullableString(
+        data.studentNumber
+      ),
 
-    throw new Error(
-      "確認履歴を保存できませんでした。"
-    );
+    fileKey:
+      stringValue(
+        data.fileKey
+      ),
+
+    fileName:
+      stringValue(
+        data.fileName
+      ),
+
+    contentType:
+      stringValue(
+        data.contentType
+      ),
+
+    size:
+      safeNumber(
+        data.size
+      ),
+
+    status:
+      normalizeStatus(
+        data.status
+      ),
+
+    reviewRequired:
+      data.reviewRequired ===
+      true,
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    totalMaxScore:
+      safeNumber(
+        data.totalMaxScore
+      ),
+
+    qrText:
+      stringValue(
+        data.qrText
+      ),
+
+    qrConfidence:
+      safeNumber(
+        data.qrConfidence
+      ),
+
+    ocrConfidence:
+      safeNumber(
+        data.ocrConfidence
+      ),
+
+    processingError:
+      stringValue(
+        data.processingError
+      ),
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+
+    processedAt:
+      data.processedAt,
+
+    confirmedAt:
+      data.confirmedAt,
+
+    studentName:
+      student?.name ??
+      "",
+
+    testName:
+      test?.name ??
+      "テスト未設定",
+
+    subjectName:
+      stringValue(
+        data.subjectName
+      ),
+  };
+}
+
+/* =========================================================
+   Student
+   ========================================================= */
+
+function normalizeStudent(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Student {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    studentNumber:
+      stringValue(
+        data.studentNumber
+      ),
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Test
+   ========================================================= */
+
+function normalizeTest(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >
+): Test {
+  return {
+    id,
+
+    organizationId:
+      stringValue(
+        data.organizationId
+      ),
+
+    schoolId:
+      stringValue(
+        data.schoolId
+      ),
+
+    testId:
+      stringValue(
+        data.testId
+      ) ||
+      id,
+
+    name:
+      stringValue(
+        data.name
+      ),
+
+    subject:
+      stringValue(
+        data.subject
+      ),
+
+    grade:
+      stringValue(
+        data.grade
+      ),
+
+    className:
+      stringValue(
+        data.className
+      ),
+
+    examDate:
+      stringValue(
+        data.examDate
+      ),
+
+    totalScore:
+      safeNumber(
+        data.totalScore
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    isRetest:
+      data.isRetest ===
+      true,
+
+    originalTestId:
+      nullableString(
+        data.originalTestId
+      ),
+
+    automaticGrading:
+      data.automaticGrading ===
+      true,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Status
+   ========================================================= */
+
+function normalizeStatus(
+  value: unknown
+): Answer["status"] {
+  switch (
+    value
+  ) {
+    case "uploaded":
+    case "processing":
+    case "graded":
+    case "first_review":
+    case "second_review":
+    case "confirmed":
+    case "published":
+    case "error":
+      return value;
+
+    default:
+      return "uploaded";
   }
 }
 
 /* =========================================================
    Helpers
    ========================================================= */
-
-function isUserRole(
-  value: unknown
-): value is UserRole {
-  return (
-    value ===
-      "本部管理者" ||
-    value ===
-      "校舎管理者" ||
-    value ===
-      "講師" ||
-    value ===
-      "生徒"
-  );
-}
-
-function isGradingResult(
-  value: unknown
-): value is GradingQuestion["result"] {
-  return (
-    value ===
-      "正解" ||
-    value ===
-      "不正解" ||
-    value ===
-      "部分点" ||
-    value ===
-      "判定不能" ||
-    value ===
-      "手動採点"
-  );
-}
 
 function stringValue(
   value: unknown
@@ -2077,288 +2290,67 @@ function nullableString(
     : null;
 }
 
-function numberValue(
+function safeNumber(
   value: unknown
 ) {
-  return typeof value ===
-    "number"
-    ? value
+  const number =
+    Number(
+      value ?? 0
+    );
+
+  return Number.isFinite(
+    number
+  )
+    ? number
     : 0;
 }
 
-function getSafeErrorMessage(
-  error: unknown
+function getStatusLabel(
+  status: Answer["status"]
 ) {
-  const value =
-    error as {
-      code?: string;
-    };
-
   switch (
-    value?.code
+    status
   ) {
-    case "permission-denied":
-      return "この操作を行う権限がありません。";
+    case "second_review":
+      return "二次確認";
 
-    case "unauthenticated":
-      return "ログイン状態を確認できません。";
-
-    case "not-found":
-      return "指定された答案が見つかりません。";
-
-    case "failed-precondition":
-      return "現在この操作を実行できません。";
-
-    case "unavailable":
-      return "サーバーに接続できませんでした。しばらくしてからお試しください。";
-
-    case "storage/unauthorized":
-      return "答案画像を表示する権限がありません。";
+    case "confirmed":
+      return "確定";
 
     default:
-      return error instanceof Error
-        ? error.message
-        : "二次確認処理に失敗しました。";
+      return status;
   }
 }
 
-/* =========================================================
-   Styles
-   ========================================================= */
-
-const pageStyle:
-  React.CSSProperties = {
-    minHeight:
-      "100vh",
-
-    padding:
-      32,
-
-    background:
-      "#f5f6f8",
-  };
-
-const cardStyle:
-  React.CSSProperties = {
-    padding:
-      24,
-
-    background:
-      "#fff",
-
-    border:
-      "1px solid #e1e4e8",
-
-    borderRadius:
-      12,
-  };
-
-const inputStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    width:
-      "100%",
-
-    marginTop:
-      10,
-
-    padding:
-      "10px 12px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    background:
-      "#fff",
-  };
-
-const textareaStyle:
-  React.CSSProperties = {
-    display:
-      "block",
-
-    width:
-      "100%",
-
-    marginTop:
-      8,
-
-    padding:
-      12,
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      7,
-
-    resize:
-      "vertical",
-
-    fontFamily:
-      "inherit",
-  };
-
-const primaryButton:
-  React.CSSProperties = {
-    width:
-      "100%",
-
-    padding:
-      "13px 20px",
-
-    border:
-      "none",
-
-    borderRadius:
-      8,
-
-    background:
-      "#111",
-
-    color:
-      "#fff",
-
-    fontWeight:
-      600,
-
-    cursor:
-      "pointer",
-  };
-
-const scoreInputStyle:
-  React.CSSProperties = {
-    width:
-      75,
-
-    padding:
-      "7px 8px",
-
-    border:
-      "1px solid #ccc",
-
-    borderRadius:
-      6,
-
-    textAlign:
-      "right",
-  };
-
-const tableStyle:
-  React.CSSProperties = {
-    width:
-      "100%",
-
-    borderCollapse:
-      "collapse",
-  };
-
-const thStyle:
-  React.CSSProperties = {
-    padding:
-      "11px 10px",
-
-    textAlign:
-      "left",
-
-    borderBottom:
-      "2px solid #ddd",
-
-    whiteSpace:
-      "nowrap",
-
-    fontSize:
-      12,
-  };
-
-const tdStyle:
-  React.CSSProperties = {
-    padding:
-      "11px 10px",
-
-    borderBottom:
-      "1px solid #eee",
-
-    fontSize:
-      13,
-
-    verticalAlign:
-      "top",
-  };
-
-const errorStyle:
-  React.CSSProperties = {
-    marginBottom:
-      16,
-
-    padding:
-      14,
-
-    border:
-      "1px solid #efb5b5",
-
-    borderRadius:
-      8,
-
-    background:
-      "#fff4f4",
-
-    color:
-      "#9b1c1c",
-
-    lineHeight:
-      1.6,
-  };
-
-const successStyle:
-  React.CSSProperties = {
-    marginBottom:
-      16,
-
-    padding:
-      14,
-
-    border:
-      "1px solid #b8d9c0",
-
-    borderRadius:
-      8,
-
-    background:
-      "#f2faf4",
-
-    color:
-      "#25633a",
-
-    lineHeight:
-      1.6,
-  };
-
-function Message({
-  type,
-  message,
-}: {
-  type:
-    | "error"
-    | "success";
-
-  message: string;
-}) {
+function EmptyDetail() {
   return (
     <div
-      style={
-        type ===
-        "error"
-          ? errorStyle
-          : successStyle
-      }
+      style={{
+        minHeight:
+          500,
+
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
+
+        textAlign:
+          "center",
+      }}
     >
-      {message}
+      <div>
+        <strong>
+          答案を選択してください
+        </strong>
+
+        <p className="muted">
+          左側から二次確認する答案を選択してください。
+        </p>
+      </div>
     </div>
   );
 }
