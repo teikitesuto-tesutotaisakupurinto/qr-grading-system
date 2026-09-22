@@ -6,95 +6,177 @@ import {
 } from "react";
 
 import {
-  onAuthStateChanged,
-} from "firebase/auth";
-
-import {
-  doc,
-  getDoc,
-} from "firebase/firestore";
+  useRouter,
+} from "next/navigation";
 
 import {
   auth,
-  db,
-} from "../lib/firebase";
+} from "@/lib/firebase";
+
+import {
+  getAppUser,
+  getDashboardPath,
+  observeAuth,
+} from "@/lib/auth";
+
+/* =========================================================
+   Root page
+   ========================================================= */
 
 export default function HomePage() {
-  const [
-    userName,
-    setUserName,
-  ] = useState("");
+  const router =
+    useRouter();
 
   const [
-    role,
-    setRole,
-  ] = useState("");
+    checking,
+    setChecking,
+  ] =
+    useState(true);
 
   const [
-    loading,
-    setLoading,
-  ] = useState(true);
+    error,
+    setError,
+  ] =
+    useState("");
 
   useEffect(() => {
+    let mounted =
+      true;
+
     const unsubscribe =
-      onAuthStateChanged(
-        auth,
+      observeAuth(
         async (
-          firebaseUser
+          user
         ) => {
-          if (!firebaseUser) {
-            setLoading(
-              false
+          if (
+            !mounted
+          ) {
+            return;
+          }
+
+          /*
+           * 未ログイン
+           */
+          if (
+            !user
+          ) {
+            router.replace(
+              "/login"
             );
 
             return;
           }
 
           try {
-            const snapshot =
-              await getDoc(
-                doc(
-                  db,
-                  "users",
-                  firebaseUser.uid
-                )
+            /*
+             * Firestoreのusers/{uid}を
+             * 改めて確認。
+             */
+            const appUser =
+              await getAppUser(
+                auth.currentUser
               );
 
             if (
-              snapshot.exists()
+              !mounted
             ) {
-              const data =
-                snapshot.data();
-
-              setUserName(
-                typeof data.name ===
-                  "string"
-                  ? data.name
-                  : ""
-              );
-
-              setRole(
-                typeof data.role ===
-                  "string"
-                  ? data.role
-                  : ""
-              );
+              return;
             }
-          } finally {
-            setLoading(
+
+            if (
+              !appUser
+            ) {
+              router.replace(
+                "/login"
+              );
+
+              return;
+            }
+
+            if (
+              appUser.active ===
+              false
+            ) {
+              router.replace(
+                "/login"
+              );
+
+              return;
+            }
+
+            /*
+             * 権限別ホームへ。
+             */
+            router.replace(
+              getDashboardPath(
+                appUser.role
+              )
+            );
+          } catch (
+            error
+          ) {
+            if (
+              !mounted
+            ) {
+              return;
+            }
+
+            console.error(
+              "Root page auth error:",
+              error
+            );
+
+            setError(
+              error instanceof Error
+                ? error.message
+                : "ログイン状態を確認できませんでした。"
+            );
+
+            setChecking(
               false
             );
           }
+        },
+        (
+          observerError
+        ) => {
+          if (
+            !mounted
+          ) {
+            return;
+          }
+
+          console.error(
+            "Root auth observer error:",
+            observerError
+          );
+
+          /*
+           * 認証エラー時は
+           * ログイン画面へ。
+           */
+          router.replace(
+            "/login"
+          );
         }
       );
 
     return () => {
+      mounted =
+        false;
+
       unsubscribe();
     };
-  }, []);
+  }, [
+    router,
+  ]);
+
+  /* =======================================================
+     Loading
+     ======================================================= */
 
   if (
-    loading
+    checking
   ) {
     return (
       <main
@@ -102,50 +184,104 @@ export default function HomePage() {
           minHeight:
             "100vh",
 
-          padding:
-            32,
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
 
           background:
-            "#f5f6f8",
+            "#f7f7f7",
         }}
       >
-        <h1>
-          Tsystem
-        </h1>
+        <div
+          style={{
+            textAlign:
+              "center",
+          }}
+        >
+          <strong
+            style={{
+              fontSize:
+                20,
+            }}
+          >
+            テストシステム
+          </strong>
 
-        <p>
-          読み込み中...
-        </p>
+          <p
+            style={{
+              margin:
+                "8px 0 0",
+
+              color:
+                "#777",
+
+              fontSize:
+                12,
+            }}
+          >
+            ログイン状態を確認しています...
+          </p>
+        </div>
       </main>
     );
   }
 
-  return (
-    <main
-      style={{
-        minHeight:
-          "100vh",
+  /* =======================================================
+     Error
+     ======================================================= */
 
-        padding:
-          32,
-
-        background:
-          "#f5f6f8",
-      }}
-    >
-      <div
+  if (
+    error
+  ) {
+    return (
+      <main
         style={{
-          maxWidth:
-            1400,
+          minHeight:
+            "100vh",
 
-          margin:
-            "0 auto",
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          background:
+            "#f7f7f7",
+
+          padding:
+            20,
         }}
       >
-        <header
+        <section
           style={{
-            marginBottom:
-              30,
+            width:
+              "100%",
+
+            maxWidth:
+              420,
+
+            padding:
+              25,
+
+            background:
+              "#fff",
+
+            border:
+              "1px solid #e5e5e5",
+
+            borderRadius:
+              10,
+
+            textAlign:
+              "center",
           }}
         >
           <h1
@@ -154,168 +290,83 @@ export default function HomePage() {
                 0,
 
               fontSize:
-                30,
+                20,
             }}
           >
-            Tsystem
+            テストシステム
           </h1>
 
           <p
             style={{
               marginTop:
-                8,
+                10,
 
               color:
-                "#666",
+                "#8a2222",
+
+              fontSize:
+                12,
             }}
           >
-            学習・成績管理システム
+            {
+              error
+            }
           </p>
-        </header>
 
-        <section
-          style={{
-            padding:
-              24,
+          <a
+            href="/login"
+            className="button primary"
+            style={{
+              display:
+                "inline-flex",
 
-            background:
-              "#fff",
+              marginTop:
+                10,
 
-            border:
-              "1px solid #e1e4e8",
-
-            borderRadius:
-              12,
-
-            marginBottom:
-              20,
-          }}
-        >
-          <h2>
-            ダッシュボード
-          </h2>
-
-          {userName && (
-            <p>
-              {userName}さん
-            </p>
-          )}
-
-          {role && (
-            <p
-              style={{
-                color:
-                  "#666",
-              }}
-            >
-              {role}
-            </p>
-          )}
+              textDecoration:
+                "none",
+            }}
+          >
+            ログイン
+          </a>
         </section>
+      </main>
+    );
+  }
 
-        <section
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(220px, 1fr))",
-
-            gap:
-              16,
-          }}
-        >
-          <DashboardCard
-            title="成績"
-            description="テスト結果や成績を確認します。"
-            href="/grades"
-          />
-
-          <DashboardCard
-            title="成績表"
-            description="成績表を確認します。"
-            href="/reports"
-          />
-
-          {role !== "生徒" && (
-            <>
-              <DashboardCard
-                title="テスト"
-                description="テストを管理します。"
-                href="/tests"
-              />
-
-              <DashboardCard
-                title="答案・採点"
-                description="答案と採点を管理します。"
-                href="/grading"
-              />
-            </>
-          )}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function DashboardCard({
-  title,
-  description,
-  href,
-}: {
-  title: string;
-
-  description: string;
-
-  href: string;
-}) {
+  /*
+   * router.replace()待ち。
+   */
   return (
-    <a
-      href={href}
+    <main
       style={{
-        display:
-          "block",
+        minHeight:
+          "100vh",
 
-        padding:
-          22,
+        display:
+          "flex",
+
+        alignItems:
+          "center",
+
+        justifyContent:
+          "center",
 
         background:
-          "#fff",
-
-        border:
-          "1px solid #e1e4e8",
-
-        borderRadius:
-          10,
-
-        color:
-          "#111",
-
-        textDecoration:
-          "none",
+          "#f7f7f7",
       }}
     >
-      <strong>
-        {title}
-      </strong>
-
-      <p
+      <div
         style={{
-          margin:
-            "8px 0 0",
-
           color:
             "#777",
 
           fontSize:
-            13,
-
-          lineHeight:
-            1.6,
+            12,
         }}
       >
-        {description}
-      </p>
-    </a>
+        移動しています...
+      </div>
+    </main>
   );
 }
