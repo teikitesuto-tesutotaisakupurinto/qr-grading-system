@@ -1,86 +1,107 @@
+"use client";
+
 import {
-  GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
-  type User,
+  type User as FirebaseUser,
+  type Unsubscribe,
 } from "firebase/auth";
 
 import {
   doc,
   getDoc,
+  serverTimestamp,
+  setDoc,
 } from "firebase/firestore";
 
 import {
   auth,
   db,
-} from "./firebase";
+} from "@/lib/firebase";
 
 import type {
-  UserProfile,
+  AppUser,
   UserRole,
-} from "./types";
-
-export type AppUser =
-  UserProfile;
+} from "@/lib/types";
 
 /* =========================================================
-   Role
+   Types
    ========================================================= */
 
-export function normalizeUserRole(
-  value: unknown
-): UserRole | null {
-  switch (
-    value
-  ) {
-    case "本部管理者":
-    case "hq":
-    case "head_office":
-    case "headOfficeAdmin":
-      return "本部管理者";
+export type {
+  AppUser,
+  UserRole,
+};
 
-    case "校舎管理者":
-    case "school_admin":
-    case "schoolAdmin":
-      return "校舎管理者";
-
-    case "講師":
-    case "teacher":
-      return "講師";
-
-    case "生徒":
-    case "student":
-      return "生徒";
-
-    default:
-      return null;
-  }
-}
-
-/* =========================================================
-   Profile
-   ========================================================= */
-
-export async function getCurrentUserProfile(
+export type AuthState = {
   firebaseUser:
-    | User
-    | null
-) {
+    | FirebaseUser
+    | null;
+
+  appUser:
+    | AppUser
+    | null;
+
+  loading: boolean;
+
+  error:
+    | string
+    | null;
+};
+
+/* =========================================================
+   Collection
+   ========================================================= */
+
+const USERS_COLLECTION =
+  "users";
+
+/* =========================================================
+   Get current Firebase user
+   ========================================================= */
+
+export function getCurrentFirebaseUser() {
   if (
-    !firebaseUser
+    typeof window ===
+    "undefined"
   ) {
     return null;
   }
 
+  return auth.currentUser;
+}
+
+/* =========================================================
+   Get AppUser
+   ========================================================= */
+
+export async function getAppUser(
+  firebaseUser?:
+    | FirebaseUser
+    | null
+): Promise<
+  AppUser | null
+> {
+  const currentUser =
+    firebaseUser ??
+    getCurrentFirebaseUser();
+
+  if (
+    !currentUser
+  ) {
+    return null;
+  }
+
+  const userRef =
+    doc(
+      db,
+      USERS_COLLECTION,
+      currentUser.uid
+    );
+
   const snapshot =
     await getDoc(
-      doc(
-        db,
-        "users",
-        firebaseUser.uid
-      )
+      userRef
     );
 
   if (
@@ -89,235 +110,170 @@ export async function getCurrentUserProfile(
     return null;
   }
 
-  const data =
-    snapshot.data();
-
-  return {
-    uid:
-      firebaseUser.uid,
-
-    organizationId:
-      stringOrNull(
-        data.organizationId
-      ),
-
-    role:
-      normalizeUserRole(
-        data.role
-      ),
-
-    schoolIds:
-      Array.isArray(
-        data.schoolIds
-      )
-        ? data.schoolIds.filter(
-            (
-              value
-            ): value is string =>
-              typeof value ===
-              "string"
-          )
-        : [],
-
-    studentId:
-      stringOrNull(
-        data.studentId
-      ),
-
-    name:
-      typeof data.name ===
-      "string"
-        ? data.name
-        : "",
-
-    email:
-      typeof data.email ===
-      "string"
-        ? data.email
-        : firebaseUser.email,
-
-    active:
-      data.active !==
-      false,
-  } satisfies UserProfile;
-}
-
-/* =========================================================
-   Compatibility
-   ========================================================= */
-
-export async function getAppUser(
-  firebaseUser?:
-    | User
-    | null
-) {
-  return getCurrentUserProfile(
-    firebaseUser ??
-      auth.currentUser
+  return normalizeAppUser(
+    snapshot.id,
+    snapshot.data(),
+    currentUser
   );
 }
 
 /* =========================================================
-   Email login
+   Get required AppUser
    ========================================================= */
 
-export async function login(
-  email: string,
-  password: string
-) {
-  const credential =
-    await signInWithEmailAndPassword(
-      auth,
-      email
-        .trim()
-        .toLowerCase(),
-      password
-    );
-
-  const user =
-    await getAppUser(
-      credential.user
-    );
+export async function requireAppUser() {
+  const firebaseUser =
+    getCurrentFirebaseUser();
 
   if (
-    !user ||
-    !user.active ||
-    !user.role ||
-    !user.organizationId
+    !firebaseUser
   ) {
-    await signOut(
-      auth
-    );
-
     throw new Error(
-      "このアカウントはTsystemで利用できません。"
+      "ログインしてください。"
     );
   }
 
-  return user;
-}
-
-/* =========================================================
-   Google login
-   ========================================================= */
-
-export async function loginWithGoogle() {
-  const provider =
-    new GoogleAuthProvider();
-
-  provider.setCustomParameters({
-    prompt:
-      "select_account",
-  });
-
-  const credential =
-    await signInWithPopup(
-      auth,
-      provider
-    );
-
-  const user =
+  const appUser =
     await getAppUser(
-      credential.user
+      firebaseUser
     );
 
   if (
-    !user ||
-    !user.active ||
-    !user.role ||
-    !user.organizationId
+    !appUser
   ) {
-    await signOut(
-      auth
-    );
-
     throw new Error(
-      "このGoogleアカウントはTsystemに登録されていません。"
+      "アプリ側のユーザー情報が登録されていません。"
     );
   }
 
-  return user;
+  if (
+    appUser.active ===
+    false
+  ) {
+    throw new Error(
+      "このアカウントは利用停止されています。"
+    );
+  }
+
+  return appUser;
 }
 
 /* =========================================================
-   Auth observer
+   Observe auth
    ========================================================= */
 
 export function observeAuth(
   onUser: (
-    user:
-      | AppUser
-      | null
+    user: AppUser | null
   ) => void,
-
-  onError?: (
-    error: unknown
-  ) => void
-) {
-  let disposed =
-    false;
-
-  const unsubscribe =
-    onAuthStateChanged(
-      auth,
-      async (
-        firebaseUser
-      ) => {
+  onError?:
+    | ((
+        error: Error
+      ) => void)
+    | undefined
+): Unsubscribe {
+  /*
+   * Firebase Authenticationの
+   * セッション状態を監視。
+   *
+   * ログイン・ログアウト・
+   * ページ再読み込みを共通処理する。
+   */
+  return onAuthStateChanged(
+    auth,
+    async (
+      firebaseUser
+    ) => {
+      try {
         if (
-          disposed
+          !firebaseUser
         ) {
+          onUser(
+            null
+          );
+
           return;
         }
 
-        try {
-          const user =
-            await getAppUser(
-              firebaseUser
-            );
-
-          if (
-            disposed
-          ) {
-            return;
-          }
-
-          onUser(
-            user
+        const appUser =
+          await getAppUser(
+            firebaseUser
           );
-        } catch (
-          error
-        ) {
-          if (
-            disposed
-          ) {
-            return;
-          }
 
-          if (
-            onError
-          ) {
-            onError(
-              error
-            );
-          } else {
-            onUser(
-              null
-            );
-          }
+        if (
+          !appUser
+        ) {
+          onUser(
+            null
+          );
+
+          return;
+        }
+
+        if (
+          appUser.active ===
+          false
+        ) {
+          onUser(
+            null
+          );
+
+          return;
+        }
+
+        onUser(
+          appUser
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "observeAuth error:",
+          error
+        );
+
+        onUser(
+          null
+        );
+
+        if (
+          onError
+        ) {
+          onError(
+            error instanceof Error
+              ? error
+              : new Error(
+                  "認証情報の取得に失敗しました。"
+                )
+          );
         }
       }
-    );
+    },
+    (
+      error
+    ) => {
+      console.error(
+        "Firebase auth observer error:",
+        error
+      );
 
-  return () => {
-    disposed =
-      true;
+      onUser(
+        null
+      );
 
-    unsubscribe();
-  };
+      if (
+        onError
+      ) {
+        onError(
+          error
+        );
+      }
+    }
+  );
 }
 
 /* =========================================================
-   Logout
+   Sign out
    ========================================================= */
 
 export async function logout() {
@@ -327,13 +283,259 @@ export async function logout() {
 }
 
 /* =========================================================
-   Role
+   Create user profile
+   ========================================================= */
+
+export async function createAppUser(
+  input: {
+    uid: string;
+
+    email?:
+      | string
+      | null;
+
+    name: string;
+
+    role: UserRole;
+
+    organizationId: string;
+
+    schoolIds?: string[];
+
+    studentId?:
+      | string
+      | null;
+
+    active?: boolean;
+
+    photoURL?:
+      | string
+      | null;
+  }
+) {
+  const currentUser =
+    getCurrentFirebaseUser();
+
+  if (
+    !currentUser
+  ) {
+    throw new Error(
+      "ログインしてください。"
+    );
+  }
+
+  /*
+   * 原則として
+   * 自分以外のユーザーを
+   * クライアントから勝手に作成させない。
+   *
+   * 本部・校舎管理者のユーザー作成UIでは
+   * Firestore Rules側でも必ず制限する。
+   */
+  if (
+    currentUser.uid !==
+    input.uid
+  ) {
+    const currentAppUser =
+      await getAppUser(
+        currentUser
+      );
+
+    if (
+      !currentAppUser ||
+      (
+        currentAppUser.role !==
+          "本部管理者" &&
+        currentAppUser.role !==
+          "校舎管理者"
+      )
+    ) {
+      throw new Error(
+        "ユーザーを作成する権限がありません。"
+      );
+    }
+  }
+
+  if (
+    !input.name.trim()
+  ) {
+    throw new Error(
+      "氏名を入力してください。"
+    );
+  }
+
+  if (
+    !input.organizationId
+  ) {
+    throw new Error(
+      "organizationIdが必要です。"
+    );
+  }
+
+  const schoolIds =
+    normalizeSchoolIds(
+      input.schoolIds
+    );
+
+  /*
+   * 生徒以外はstudentId不要。
+   */
+  const studentId =
+    input.role ===
+    "生徒"
+      ? normalizeNullableString(
+          input.studentId
+        )
+      : null;
+
+  await setDoc(
+    doc(
+      db,
+      USERS_COLLECTION,
+      input.uid
+    ),
+    {
+      uid:
+        input.uid,
+
+      email:
+        normalizeNullableString(
+          input.email
+        ),
+
+      name:
+        input.name.trim(),
+
+      role:
+        input.role,
+
+      organizationId:
+        input.organizationId,
+
+      schoolIds,
+
+      studentId,
+
+      active:
+        input.active !==
+        false,
+
+      photoURL:
+        normalizeNullableString(
+          input.photoURL
+        ),
+
+      createdAt:
+        serverTimestamp(),
+
+      updatedAt:
+        serverTimestamp(),
+    }
+  );
+}
+
+/* =========================================================
+   Update current AppUser
+   ========================================================= */
+
+export async function updateCurrentAppUser(
+  patch: Partial<
+    Pick<
+      AppUser,
+      | "name"
+      | "photoURL"
+      | "studentId"
+    >
+  >
+) {
+  const currentUser =
+    getCurrentFirebaseUser();
+
+  if (
+    !currentUser
+  ) {
+    throw new Error(
+      "ログインしてください。"
+    );
+  }
+
+  const ref =
+    doc(
+      db,
+      USERS_COLLECTION,
+      currentUser.uid
+    );
+
+  const update: Record<
+    string,
+    unknown
+  > = {
+    updatedAt:
+      serverTimestamp(),
+  };
+
+  if (
+    patch.name !==
+    undefined
+  ) {
+    const name =
+      patch.name.trim();
+
+    if (
+      !name
+    ) {
+      throw new Error(
+        "氏名を空にできません。"
+      );
+    }
+
+    update.name =
+      name;
+  }
+
+  if (
+    patch.photoURL !==
+    undefined
+  ) {
+    update.photoURL =
+      normalizeNullableString(
+        patch.photoURL
+      );
+  }
+
+  if (
+    patch.studentId !==
+    undefined
+  ) {
+    update.studentId =
+      normalizeNullableString(
+        patch.studentId
+      );
+  }
+
+  await setDoc(
+    ref,
+    update,
+    {
+      merge:
+        true,
+    }
+  );
+
+  return getAppUser(
+    currentUser
+  );
+}
+
+/* =========================================================
+   Role helpers
    ========================================================= */
 
 export function isHeadOfficeAdmin(
   user:
-    | UserProfile
+    | AppUser
     | null
+    | undefined
 ) {
   return (
     user?.role ===
@@ -343,8 +545,9 @@ export function isHeadOfficeAdmin(
 
 export function isSchoolAdmin(
   user:
-    | UserProfile
+    | AppUser
     | null
+    | undefined
 ) {
   return (
     user?.role ===
@@ -354,8 +557,9 @@ export function isSchoolAdmin(
 
 export function isTeacher(
   user:
-    | UserProfile
+    | AppUser
     | null
+    | undefined
 ) {
   return (
     user?.role ===
@@ -365,8 +569,9 @@ export function isTeacher(
 
 export function isStudent(
   user:
-    | UserProfile
+    | AppUser
     | null
+    | undefined
 ) {
   return (
     user?.role ===
@@ -375,17 +580,127 @@ export function isStudent(
 }
 
 /* =========================================================
-   Scope
+   Permission helpers
+   ========================================================= */
+
+export function canManageUsers(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者"
+  );
+}
+
+export function canManageSchools(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+    "本部管理者"
+  );
+}
+
+export function canManageStudents(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者"
+  );
+}
+
+export function canManageTests(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+export function canManageGrading(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+export function canConfirmGrading(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+export function canManageRetests(
+  user:
+    | AppUser
+    | null
+    | undefined
+) {
+  return (
+    user?.role ===
+      "本部管理者" ||
+    user?.role ===
+      "校舎管理者" ||
+    user?.role ===
+      "講師"
+  );
+}
+
+/* =========================================================
+   School access
    ========================================================= */
 
 export function canAccessSchool(
   user:
-    | UserProfile
-    | null,
+    | AppUser
+    | null
+    | undefined,
   schoolId: string
 ) {
   if (
-    !user
+    !user ||
+    !schoolId
   ) {
     return false;
   }
@@ -402,22 +717,30 @@ export function canAccessSchool(
   );
 }
 
+/* =========================================================
+   Student access
+   ========================================================= */
+
 export function canAccessStudent(
   user:
-    | UserProfile
-    | null,
+    | AppUser
+    | null
+    | undefined,
   studentId: string,
-  schoolId?: string
+  studentSchoolId?:
+    | string
+    | null
 ) {
   if (
-    !user
+    !user ||
+    !studentId
   ) {
     return false;
   }
 
   if (
     user.role ===
-    "本部管理者"
+      "本部管理者"
   ) {
     return true;
   }
@@ -428,31 +751,223 @@ export function canAccessStudent(
     user.role ===
       "講師"
   ) {
-    return Boolean(
-      schoolId &&
-        user.schoolIds.includes(
-          schoolId
-        )
+    if (
+      studentSchoolId
+    ) {
+      return user.schoolIds.includes(
+        studentSchoolId
+      );
+    }
+
+    return false;
+  }
+
+  if (
+    user.role ===
+    "生徒"
+  ) {
+    return (
+      user.studentId ===
+      studentId
     );
   }
 
-  return (
-    user.role ===
-      "生徒" &&
-    user.studentId ===
-      studentId
+  return false;
+}
+
+/* =========================================================
+   Dashboard path
+   ========================================================= */
+
+export function getDashboardPath(
+  role:
+    | UserRole
+    | null
+    | undefined
+) {
+  switch (
+    role
+  ) {
+    case "本部管理者":
+      return "/dashboard/head-office";
+
+    case "校舎管理者":
+      return "/dashboard/school";
+
+    case "講師":
+      return "/dashboard/teacher";
+
+    case "生徒":
+      return "/dashboard/student";
+
+    default:
+      return "/login";
+  }
+}
+
+/* =========================================================
+   Normalize AppUser
+   ========================================================= */
+
+function normalizeAppUser(
+  id: string,
+  data: Record<
+    string,
+    unknown
+  >,
+  firebaseUser: FirebaseUser
+): AppUser {
+  const role =
+    normalizeRole(
+      data.role
+    );
+
+  return {
+    uid:
+      stringValue(
+        data.uid
+      ) ||
+      id,
+
+    email:
+      normalizeNullableString(
+        data.email
+      ) ??
+      firebaseUser.email,
+
+    name:
+      stringValue(
+        data.name
+      ) ||
+      firebaseUser.displayName ||
+      "",
+
+    role,
+
+    organizationId:
+      normalizeNullableString(
+        data.organizationId
+      ),
+
+    schoolIds:
+      normalizeSchoolIds(
+        data.schoolIds
+      ),
+
+    studentId:
+      normalizeNullableString(
+        data.studentId
+      ),
+
+    active:
+      data.active !==
+      false,
+
+    photoURL:
+      normalizeNullableString(
+        data.photoURL
+      ) ??
+      firebaseUser.photoURL,
+
+    createdAt:
+      data.createdAt,
+
+    updatedAt:
+      data.updatedAt,
+  };
+}
+
+/* =========================================================
+   Role
+   ========================================================= */
+
+function normalizeRole(
+  value: unknown
+): UserRole {
+  switch (
+    value
+  ) {
+    case "本部管理者":
+    case "校舎管理者":
+    case "講師":
+    case "生徒":
+      return value;
+
+    /*
+     * 未登録・不正roleを
+     * 管理者権限として扱わない。
+     */
+    default:
+      throw new Error(
+        "ユーザー権限が不正です。"
+      );
+  }
+}
+
+/* =========================================================
+   School IDs
+   ========================================================= */
+
+function normalizeSchoolIds(
+  value: unknown
+) {
+  if (
+    !Array.isArray(
+      value
+    )
+  ) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter(
+          (
+            item
+          ): item is string =>
+            typeof item ===
+            "string"
+        )
+        .map(
+          (
+            item
+          ) =>
+            item.trim()
+        )
+        .filter(
+          Boolean
+        )
+    )
   );
 }
 
 /* =========================================================
-   Helpers
+   Primitive
    ========================================================= */
 
-function stringOrNull(
+function stringValue(
   value: unknown
 ) {
   return typeof value ===
     "string"
     ? value
-    : null;
+    : "";
+}
+
+function normalizeNullableString(
+  value: unknown
+) {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return null;
+  }
+
+  const normalized =
+    value.trim();
+
+  return normalized ||
+    null;
 }
