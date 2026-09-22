@@ -19,14 +19,10 @@ import {
 import {
   getScopedDocs,
   resultsQueries,
-  studentsQueries,
-  testsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
-  Student,
-  Test,
   StudentResult,
   UserRole,
 } from "@/lib/types";
@@ -37,18 +33,17 @@ import type {
 
 type ResultRow =
   StudentResult & {
-    studentName: string;
-    testSubject: string;
+    percentage: number;
   };
 
 /* =========================================================
    Page
    ========================================================= */
 
-export default function ManagementResultsPage() {
+export default function ResultsManagementPage() {
   const [
-    userRole,
-    setUserRole,
+    role,
+    setRole,
   ] =
     useState<UserRole | null>(
       null
@@ -59,22 +54,6 @@ export default function ManagementResultsPage() {
     setResults,
   ] =
     useState<ResultRow[]>(
-      []
-    );
-
-  const [
-    students,
-    setStudents,
-  ] =
-    useState<Student[]>(
-      []
-    );
-
-  const [
-    tests,
-    setTests,
-  ] =
-    useState<Test[]>(
       []
     );
 
@@ -97,16 +76,28 @@ export default function ManagementResultsPage() {
     useState("");
 
   const [
-    selectedTestId,
-    setSelectedTestId,
+    subjectFilter,
+    setSubjectFilter,
   ] =
     useState("");
 
   const [
-    selectedSchoolId,
-    setSelectedSchoolId,
+    sourceFilter,
+    setSourceFilter,
   ] =
-    useState("");
+    useState<
+      "all" | "通常" | "追試"
+    >(
+      "all"
+    );
+
+  const [
+    selectedIds,
+    setSelectedIds,
+  ] =
+    useState<string[]>(
+      []
+    );
 
   /* =======================================================
      Load
@@ -136,13 +127,11 @@ export default function ManagementResultsPage() {
       }
 
       if (
-        user.role !==
-          "本部管理者" &&
-        user.role !==
-          "校舎管理者"
+        user.role ===
+        "生徒"
       ) {
         throw new Error(
-          "この成績画面は管理者用です。"
+          "この画面は管理者・講師用です。"
         );
       }
 
@@ -154,7 +143,7 @@ export default function ManagementResultsPage() {
         );
       }
 
-      setUserRole(
+      setRole(
         user.role
       );
 
@@ -177,96 +166,49 @@ export default function ManagementResultsPage() {
             user.studentId,
         };
 
-      const [
-        resultDocuments,
-        studentDocuments,
-        testDocuments,
-      ] =
-        await Promise.all([
-          getScopedDocs(
-            resultsQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            studentsQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            testsQueries(
-              scopeUser
-            )
-          ),
-        ]);
-
-      const loadedStudents =
-        studentDocuments.map(
-          (
-            item
-          ) =>
-            normalizeStudent(
-              item.id,
-              item.data
-            )
+      const documents =
+        await getScopedDocs(
+          resultsQueries(
+            scopeUser
+          )
         );
 
-      const loadedTests =
-        testDocuments.map(
-          (
-            item
-          ) =>
-            normalizeTest(
-              item.id,
-              item.data
-            )
-        );
-
-      /*
-       * 確定済み結果のみ。
-       *
-       * resultsコレクションそのものが
-       * 確定結果を保持する。
-       */
-      const loadedResults =
-        resultDocuments
+      const loaded =
+        documents
           .map(
             (
               item
             ) =>
               normalizeResult(
                 item.id,
-                item.data,
-                loadedStudents,
-                loadedTests
+                item.data
               )
           )
-          .filter(
+          .sort(
             (
-              result
+              a,
+              b
             ) =>
-              result.studentId &&
-              result.testId
+              getTime(
+                b.createdAt
+              ) -
+              getTime(
+                a.createdAt
+              )
           );
 
-      setStudents(
-        loadedStudents
-      );
-
-      setTests(
-        loadedTests
-      );
-
       setResults(
-        loadedResults
+        loaded
+      );
+
+      setSelectedIds(
+        []
       );
     } catch (
       error
     ) {
       console.error(
-        "Management results error:",
+        "Results management load error:",
         error
       );
 
@@ -281,10 +223,36 @@ export default function ManagementResultsPage() {
   }
 
   /* =======================================================
-     Filters
+     Subjects
      ======================================================= */
 
-  const filteredResults =
+  const subjects =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            results
+              .map(
+                (
+                  result
+                ) =>
+                  result.subject
+              )
+              .filter(
+                Boolean
+              )
+          )
+        ).sort(),
+      [
+        results,
+      ]
+    );
+
+  /* =======================================================
+     Filter
+     ======================================================= */
+
+  const filtered =
     useMemo(() => {
       const keyword =
         search
@@ -295,23 +263,8 @@ export default function ManagementResultsPage() {
         (
           result
         ) => {
-          const matchesTest =
-            !selectedTestId ||
-            result.testId ===
-              selectedTestId;
-
-          const matchesSchool =
-            !selectedSchoolId ||
-            result.schoolId ===
-              selectedSchoolId;
-
-          const matchesSearch =
+          const searchMatch =
             !keyword ||
-            result.studentName
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
             result.studentNumber
               .toLowerCase()
               .includes(
@@ -328,113 +281,156 @@ export default function ManagementResultsPage() {
                 keyword
               );
 
+          const subjectMatch =
+            !subjectFilter ||
+            result.subject ===
+              subjectFilter;
+
+          const sourceMatch =
+            sourceFilter ===
+              "all" ||
+            result.source ===
+              sourceFilter;
+
           return (
-            matchesTest &&
-            matchesSchool &&
-            matchesSearch
+            searchMatch &&
+            subjectMatch &&
+            sourceMatch
           );
         }
       );
     }, [
       results,
       search,
-      selectedTestId,
-      selectedSchoolId,
+      subjectFilter,
+      sourceFilter,
     ]);
-
-  /* =======================================================
-     Tests used by results
-     ======================================================= */
-
-  const resultTests =
-    useMemo(
-      () => {
-        const ids =
-          new Set(
-            results.map(
-              (
-                result
-              ) =>
-                result.testId
-            )
-          );
-
-        return tests.filter(
-          (
-            test
-          ) =>
-            ids.has(
-              test.id
-            ) ||
-            ids.has(
-              test.testId
-            )
-        );
-      },
-      [
-        results,
-        tests,
-      ]
-    );
-
-  /* =======================================================
-     Schools
-     ======================================================= */
-
-  const schoolIds =
-    useMemo(
-      () =>
-        Array.from(
-          new Set(
-            results.map(
-              (
-                result
-              ) =>
-                result.schoolId
-            )
-          )
-        ).filter(
-          Boolean
-        ),
-      [
-        results,
-      ]
-    );
 
   /* =======================================================
      Statistics
      ======================================================= */
 
-  const average =
-    calculateAverage(
-      filteredResults
+  const averagePercentage =
+    filtered.length ===
+    0
+      ? null
+      : filtered.reduce(
+          (
+            total,
+            result
+          ) =>
+            total +
+            result.percentage,
+          0
+        ) /
+        filtered.length;
+
+  const averageScore =
+    filtered.length ===
+    0
+      ? null
+      : filtered.reduce(
+          (
+            total,
+            result
+          ) =>
+            total +
+            result.score,
+          0
+        ) /
+        filtered.length;
+
+  const selectedCount =
+    selectedIds.length;
+
+  /* =======================================================
+     Selection
+     ======================================================= */
+
+  const allVisibleSelected =
+    filtered.length >
+      0 &&
+    filtered.every(
+      (
+        result
+      ) =>
+        selectedIds.includes(
+          result.id
+        )
     );
 
-  const max =
-    filteredResults.length >
-    0
-      ? Math.max(
-          ...filteredResults.map(
-            (
-              result
-            ) =>
-              result.score
-          )
+  function toggleResult(
+    id: string
+  ) {
+    setSelectedIds(
+      (
+        current
+      ) =>
+        current.includes(
+          id
         )
-      : 0;
+          ? current.filter(
+              (
+                currentId
+              ) =>
+                currentId !==
+                id
+            )
+          : [
+              ...current,
+              id,
+            ]
+    );
+  }
 
-  const min =
-    filteredResults.length >
-    0
-      ? Math.min(
-          ...filteredResults.map(
+  function toggleAllVisible() {
+    if (
+      allVisibleSelected
+    ) {
+      const visibleIds =
+        new Set(
+          filtered.map(
             (
               result
             ) =>
-              result.score
+              result.id
           )
+        );
+
+      setSelectedIds(
+        (
+          current
+        ) =>
+          current.filter(
+            (
+              id
+            ) =>
+              !visibleIds.has(
+                id
+              )
+          )
+      );
+
+      return;
+    }
+
+    setSelectedIds(
+      (
+        current
+      ) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...filtered.map(
+              (
+                result
+              ) =>
+                result.id
+            ),
+          ])
         )
-      : 0;
+    );
+  }
 
   /* =======================================================
      Loading
@@ -451,7 +447,7 @@ export default function ManagementResultsPage() {
           </h1>
 
           <p>
-            確定済みの成績を読み込んでいます...
+            成績を読み込んでいます...
           </p>
         </section>
       </main>
@@ -466,6 +462,10 @@ export default function ManagementResultsPage() {
     <main className="page">
       <section className="content">
 
+        {/* ==================================================
+            Header
+            ================================================== */}
+
         <header className="pageHeader">
           <div>
             <h1>
@@ -473,20 +473,44 @@ export default function ManagementResultsPage() {
             </h1>
 
             <p className="muted">
-              確定したテスト結果を確認します。
+              採点確定済みの成績だけを表示しています。
             </p>
           </div>
 
-          <Link
-            href="/reports/management"
-            className="button"
+          <div
+            style={{
+              display:
+                "flex",
+
+              gap:
+                8,
+            }}
           >
-            成績表
-          </Link>
+            <Link
+              href="/grading/confirm"
+              className="button"
+            >
+              採点確定
+            </Link>
+
+            <Link
+              href="/reports/management"
+              className="button"
+            >
+              成績表
+            </Link>
+          </div>
         </header>
 
+        {/* ==================================================
+            Error
+            ================================================== */}
+
         {error && (
-          <div className="errorMessage">
+          <div
+            className="errorMessage"
+            role="alert"
+          >
             {
               error
             }
@@ -509,36 +533,44 @@ export default function ManagementResultsPage() {
               12,
 
             marginBottom:
-              18,
+              16,
           }}
         >
           <SummaryCard
             label="成績件数"
             value={
-              filteredResults.length
+              filtered.length
+            }
+          />
+
+          <SummaryCard
+            label="平均得点率"
+            value={
+              averagePercentage ===
+              null
+                ? "—"
+                : `${averagePercentage.toFixed(
+                    1
+                  )}%`
             }
           />
 
           <SummaryCard
             label="平均点"
             value={
-              formatScore(
-                average
-              )
+              averageScore ===
+              null
+                ? "—"
+                : averageScore.toFixed(
+                    1
+                  )
             }
           />
 
           <SummaryCard
-            label="最高点"
+            label="選択中"
             value={
-              max
-            }
-          />
-
-          <SummaryCard
-            label="最低点"
-            value={
-              min
+              selectedCount
             }
           />
         </div>
@@ -554,10 +586,13 @@ export default function ManagementResultsPage() {
                 "grid",
 
               gridTemplateColumns:
-                "1fr 240px 220px",
+                "1fr 200px 180px auto",
 
               gap:
                 10,
+
+              alignItems:
+                "center",
             }}
           >
             <input
@@ -572,40 +607,40 @@ export default function ManagementResultsPage() {
                     .value
                 )
               }
-              placeholder="生徒番号・氏名・テスト名・教科"
+              placeholder="生徒番号・テスト名・教科"
             />
 
             <select
               value={
-                selectedTestId
+                subjectFilter
               }
               onChange={(
                 event
               ) =>
-                setSelectedTestId(
+                setSubjectFilter(
                   event.target
                     .value
                 )
               }
             >
               <option value="">
-                全テスト
+                全教科
               </option>
 
-              {resultTests.map(
+              {subjects.map(
                 (
-                  test
+                  subject
                 ) => (
                   <option
                     key={
-                      test.id
+                      subject
                     }
                     value={
-                      test.id
+                      subject
                     }
                   >
                     {
-                      test.name
+                      subject
                     }
                   </option>
                 )
@@ -614,45 +649,53 @@ export default function ManagementResultsPage() {
 
             <select
               value={
-                selectedSchoolId
+                sourceFilter
               }
               onChange={(
                 event
               ) =>
-                setSelectedSchoolId(
+                setSourceFilter(
                   event.target
-                    .value
+                    .value as
+                    | "all"
+                    | "通常"
+                    | "追試"
                 )
               }
             >
-              <option value="">
-                全校舎
+              <option value="all">
+                通常・追試
               </option>
 
-              {schoolIds.map(
-                (
-                  schoolId
-                ) => (
-                  <option
-                    key={
-                      schoolId
-                    }
-                    value={
-                      schoolId
-                    }
-                  >
-                    {
-                      schoolId
-                    }
-                  </option>
-                )
-              )}
+              <option value="通常">
+                通常
+              </option>
+
+              <option value="追試">
+                追試
+              </option>
             </select>
+
+            <button
+              type="button"
+              className="button"
+              onClick={
+                toggleAllVisible
+              }
+              disabled={
+                filtered.length ===
+                0
+              }
+            >
+              {allVisibleSelected
+                ? "表示分を解除"
+                : "表示分を選択"}
+            </button>
           </div>
         </section>
 
         {/* ==================================================
-            Results
+            Data
             ================================================== */}
 
         <section
@@ -662,7 +705,66 @@ export default function ManagementResultsPage() {
               16,
           }}
         >
-          {filteredResults.length ===
+          <div
+            style={{
+              display:
+                "flex",
+
+              justifyContent:
+                "space-between",
+
+              alignItems:
+                "center",
+
+              marginBottom:
+                12,
+            }}
+          >
+            <div>
+              <h2
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                成績一覧
+              </h2>
+
+              <p
+                className="muted"
+                style={{
+                  margin:
+                    "4px 0 0",
+
+                  fontSize:
+                    11,
+                }}
+              >
+                {
+                  filtered.length
+                }
+                件
+              </p>
+            </div>
+
+            {selectedCount >
+              0 && (
+              <span
+                className="muted"
+                style={{
+                  fontSize:
+                    12,
+                }}
+              >
+                {
+                  selectedCount
+                }
+                件選択中
+              </span>
+            )}
+          </div>
+
+          {filtered.length ===
           0 ? (
             <EmptyState />
           ) : (
@@ -675,12 +777,26 @@ export default function ManagementResultsPage() {
               <table className="dataTable">
                 <thead>
                   <tr>
-                    <th>
-                      生徒番号
+                    <th
+                      style={{
+                        width:
+                          45,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={
+                          allVisibleSelected
+                        }
+                        onChange={
+                          toggleAllVisible
+                        }
+                        aria-label="表示中の成績をすべて選択"
+                      />
                     </th>
 
                     <th>
-                      生徒名
+                      生徒番号
                     </th>
 
                     <th>
@@ -700,6 +816,10 @@ export default function ManagementResultsPage() {
                     </th>
 
                     <th>
+                      平均
+                    </th>
+
+                    <th>
                       偏差値
                     </th>
 
@@ -708,17 +828,13 @@ export default function ManagementResultsPage() {
                     </th>
 
                     <th>
-                      受験者数
-                    </th>
-
-                    <th>
-                      成績表
+                      種別
                     </th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {filteredResults.map(
+                  {filtered.map(
                     (
                       result
                     ) => (
@@ -728,15 +844,26 @@ export default function ManagementResultsPage() {
                         }
                       >
                         <td>
-                          {
-                            result.studentNumber
-                          }
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(
+                              result.id
+                            )}
+                            onChange={() =>
+                              toggleResult(
+                                result.id
+                              )
+                            }
+                            aria-label={`${result.studentNumber}の成績を選択`}
+                          />
                         </td>
 
                         <td>
-                          {
-                            result.studentName
-                          }
+                          <strong>
+                            {
+                              result.studentNumber
+                            }
+                          </strong>
                         </td>
 
                         <td>
@@ -767,46 +894,50 @@ export default function ManagementResultsPage() {
 
                         <td>
                           {
-                            formatPercentage(
-                              result.percentage
+                            result.percentage.toFixed(
+                              1
+                            )
+                          }
+                          %
+                        </td>
+
+                        <td>
+                          {
+                            result.average ===
+                            null
+                              ? "—"
+                              : result.average.toFixed(
+                                  1
+                                )
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            result.deviationScore ===
+                            null
+                              ? "—"
+                              : result.deviationScore.toFixed(
+                                  1
+                                )
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            formatRank(
+                              result.rank,
+                              result.population
                             )
                           }
                         </td>
 
                         <td>
-                          {result.deviationScore ===
-                          null
-                            ? "—"
-                            : result.deviationScore.toFixed(
-                                1
-                              )}
-                        </td>
-
-                        <td>
-                          {result.rank ===
-                          null
-                            ? "—"
-                            : result.rank}
-                        </td>
-
-                        <td>
-                          {result.population ===
-                          null
-                            ? "—"
-                            : result.population}
-                        </td>
-
-                        <td>
-                          <Link
-                            href={`/reports/management?studentId=${encodeURIComponent(
-                              result.studentId
-                            )}&testId=${encodeURIComponent(
-                              result.testId
-                            )}`}
-                            className="button"
-                          >
-                            成績表
-                          </Link>
+                          <SourceBadge
+                            source={
+                              result.source
+                            }
+                          />
                         </td>
                       </tr>
                     )
@@ -816,13 +947,222 @@ export default function ManagementResultsPage() {
             </div>
           )}
         </section>
+
+        {/* ==================================================
+            Footer links
+            ================================================== */}
+
+        <section
+          style={{
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(2, minmax(0, 1fr))",
+
+            gap:
+              12,
+
+            marginTop:
+              16,
+          }}
+        >
+          <Link
+            href="/reports/management"
+            className="card"
+            style={{
+              display:
+                "block",
+
+              color:
+                "inherit",
+
+              textDecoration:
+                "none",
+            }}
+          >
+            <strong>
+              成績表を確認
+            </strong>
+
+            <p
+              className="muted"
+              style={{
+                margin:
+                  "5px 0 0",
+
+                fontSize:
+                  12,
+              }}
+            >
+              生徒ごとの科目別成績・偏差値・順位を確認します。
+            </p>
+          </Link>
+
+          <Link
+            href="/grading"
+            className="card"
+            style={{
+              display:
+                "block",
+
+              color:
+                "inherit",
+
+              textDecoration:
+                "none",
+            }}
+          >
+            <strong>
+              採点へ戻る
+            </strong>
+
+            <p
+              className="muted"
+              style={{
+                margin:
+                  "5px 0 0",
+
+                fontSize:
+                  12,
+              }}
+            >
+              未確定の答案は採点画面から確認します。
+            </p>
+          </Link>
+        </section>
       </section>
     </main>
   );
 }
 
 /* =========================================================
-   Normalize result
+   Summary
+   ========================================================= */
+
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
+
+  value:
+    | string
+    | number;
+}) {
+  return (
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            10,
+        }}
+      >
+        {
+          label
+        }
+      </div>
+
+      <strong
+        style={{
+          display:
+            "block",
+
+          marginTop:
+            4,
+
+          fontSize:
+            21,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
+  );
+}
+
+/* =========================================================
+   Source
+   ========================================================= */
+
+function SourceBadge({
+  source,
+}: {
+  source:
+    | "通常"
+    | "追試";
+}) {
+  return (
+    <span
+      style={{
+        display:
+          "inline-block",
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
+        background:
+          source ===
+          "追試"
+            ? "#f1f1f1"
+            : "#e8f5e9",
+
+        fontSize:
+          10,
+      }}
+    >
+      {
+        source
+      }
+    </span>
+  );
+}
+
+/* =========================================================
+   Empty
+   ========================================================= */
+
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          60,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        成績はありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        採点確定した成績が登録されると、ここに表示されます。
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   Normalize
    ========================================================= */
 
 function normalizeResult(
@@ -830,38 +1170,11 @@ function normalizeResult(
   data: Record<
     string,
     unknown
-  >,
-  students: Student[],
-  tests: Test[]
+  >
 ): ResultRow {
-  const studentId =
-    stringValue(
-      data.studentId
-    );
-
-  const testId =
-    stringValue(
-      data.testId
-    );
-
-  const student =
-    students.find(
-      (
-        item
-      ) =>
-        item.id ===
-        studentId
-    );
-
-  const test =
-    tests.find(
-      (
-        item
-      ) =>
-        item.id ===
-          testId ||
-        item.testId ===
-          testId
+  const score =
+    safeNumber(
+      data.score
     );
 
   const maxScore =
@@ -869,17 +1182,10 @@ function normalizeResult(
       data.maxScore
     );
 
-  const score =
-    safeNumber(
-      data.score
+  const storedPercentage =
+    nullableNumber(
+      data.percentage
     );
-
-  const percentage =
-    maxScore > 0
-      ? (score /
-          maxScore) *
-        100
-      : 0;
 
   return {
     id,
@@ -894,36 +1200,42 @@ function normalizeResult(
         data.schoolId
       ),
 
-    studentId,
+    studentId:
+      stringValue(
+        data.studentId
+      ),
 
     studentNumber:
       stringValue(
         data.studentNumber
-      ) ||
-      student?.studentNumber ||
-      "",
+      ),
 
-    testId,
+    testId:
+      stringValue(
+        data.testId
+      ),
 
     testName:
       stringValue(
         data.testName
       ) ||
-      test?.name ||
       "テスト未設定",
 
     subject:
       stringValue(
         data.subject
-      ) ||
-      test?.subject ||
-      "",
+      ),
 
     score,
 
     maxScore,
 
-    percentage,
+    percentage:
+      storedPercentage ??
+      calculatePercentage(
+        score,
+        maxScore
+      ),
 
     average:
       nullableNumber(
@@ -956,293 +1268,109 @@ function normalizeResult(
 
     updatedAt:
       data.updatedAt,
-
-    studentName:
-      student?.name ??
-      stringValue(
-        data.studentName
-      ),
-
-    testSubject:
-      test?.subject ??
-      "",
   };
 }
 
 /* =========================================================
-   Student
+   Rank
    ========================================================= */
 
-function normalizeStudent(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Student {
-  return {
-    id,
+function formatRank(
+  rank:
+    | number
+    | null,
 
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Test
-   ========================================================= */
-
-function normalizeTest(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Test {
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    testId:
-      stringValue(
-        data.testId
-      ) ||
-      id,
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    subject:
-      stringValue(
-        data.subject
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    examDate:
-      stringValue(
-        data.examDate
-      ),
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    isRetest:
-      data.isRetest ===
-      true,
-
-    originalTestId:
-      nullableString(
-        data.originalTestId
-      ),
-
-    automaticGrading:
-      data.automaticGrading ===
-      true,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Summary
-   ========================================================= */
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value:
-    | string
-    | number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            11,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            24,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState() {
-  return (
-    <div
-      style={{
-        padding:
-          60,
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
-      }}
-    >
-      <strong>
-        確定済みの成績はありません。
-      </strong>
-
-      <p
-        style={{
-          fontSize:
-            12,
-        }}
-      >
-        採点確定した結果が登録されると、ここに表示されます。
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   Statistics
-   ========================================================= */
-
-function calculateAverage(
-  results: ResultRow[]
+  population:
+    | number
+    | null
 ) {
   if (
-    results.length ===
+    rank ===
+    null
+  ) {
+    return "—";
+  }
+
+  if (
+    population ===
+    null
+  ) {
+    return String(
+      rank
+    );
+  }
+
+  return `${rank} / ${population}`;
+}
+
+/* =========================================================
+   Percentage
+   ========================================================= */
+
+function calculatePercentage(
+  score: number,
+  maxScore: number
+) {
+  if (
+    maxScore <=
     0
   ) {
     return 0;
   }
 
-  const total =
-    results.reduce(
-      (
-        sum,
-        result
-      ) =>
-        sum +
-        result.score,
-      0
-    );
-
   return (
-    total /
-    results.length
+    score /
+    maxScore *
+    100
   );
 }
 
-function formatScore(
-  value: number
-) {
-  return Number.isInteger(
-    value
-  )
-    ? String(
-        value
-      )
-    : value.toFixed(
-        1
-      );
-}
+/* =========================================================
+   Time
+   ========================================================= */
 
-function formatPercentage(
-  value: number
+function getTime(
+  value: unknown
 ) {
-  return `${value.toFixed(
-    1
-  )}%`;
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    "toMillis" in
+      value &&
+    typeof (
+      value as {
+        toMillis?: unknown;
+      }
+    ).toMillis ===
+      "function"
+  ) {
+    return (
+      value as {
+        toMillis: () => number;
+      }
+    ).toMillis();
+  }
+
+  if (
+    value instanceof Date
+  ) {
+    return value.getTime();
+  }
+
+  const parsed =
+    new Date(
+      String(
+        value ??
+          ""
+      )
+    ).getTime();
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
 }
 
 /* =========================================================
@@ -1258,22 +1386,16 @@ function stringValue(
     : "";
 }
 
-function nullableString(
-  value: unknown
-) {
-  return typeof value ===
-    "string"
-    ? value
-    : null;
-}
-
 function nullableNumber(
   value: unknown
 ) {
   if (
-    value === null ||
-    value === undefined ||
-    value === ""
+    value ===
+      null ||
+    value ===
+      undefined ||
+    value ===
+      ""
   ) {
     return null;
   }
@@ -1295,7 +1417,8 @@ function safeNumber(
 ) {
   const number =
     Number(
-      value ?? 0
+      value ??
+        0
     );
 
   return Number.isFinite(
