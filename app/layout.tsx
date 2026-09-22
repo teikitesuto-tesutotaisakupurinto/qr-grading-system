@@ -6,13 +6,21 @@ import "./globals.css";
 
 import AppShell from "@/components/AppShell";
 
+/* =========================================================
+   Metadata
+   ========================================================= */
+
 export const metadata: Metadata = {
   title:
     "テストシステム",
 
   description:
-    "テストシステム",
+    "答案・採点・成績管理システム",
 };
+
+/* =========================================================
+   Root Layout
+   ========================================================= */
 
 export default function RootLayout({
   children,
@@ -22,6 +30,7 @@ export default function RootLayout({
   return (
     <html
       lang="ja"
+      suppressHydrationWarning
     >
       <body>
         <AppShell>
