@@ -40,6 +40,15 @@ export type AppUser = {
   updatedAt?: unknown;
 };
 
+/*
+ * 既存画面との互換用。
+ *
+ * UserProfileを利用している画面は
+ * AppUserと同じユーザープロフィールとして扱う。
+ */
+export type UserProfile =
+  AppUser;
+
 /* =========================================================
    Student
    ========================================================= */
@@ -109,10 +118,6 @@ export type Test = {
 
   schoolId: string;
 
-  /*
-   * Firestore document IDとは別に
-   * 業務上のテストIDを持てる。
-   */
   testId: string;
 
   name: string;
@@ -129,22 +134,12 @@ export type Test = {
 
   active: boolean;
 
-  /*
-   * 追試ならtrue。
-   */
   isRetest: boolean;
 
-  /*
-   * 追試の場合のみ。
-   */
   originalTestId:
     | string
     | null;
 
-  /*
-   * 通常テストでも
-   * 問題単位の設定を優先する。
-   */
   automaticGrading: boolean;
 
   createdAt?: unknown;
@@ -167,15 +162,6 @@ export type TestQuestion = {
 
   testId: string;
 
-  /*
-   * 画面表示用の問題番号。
-   *
-   * "1"
-   * "1-1"
-   * "大問1"
-   *
-   * のような表記にも対応するためstring。
-   */
   questionNumber: string;
 
   title: string;
@@ -184,33 +170,14 @@ export type TestQuestion = {
 
   gradingMethod: GradingMethod;
 
-  /*
-   * automaticの場合のみ利用。
-   *
-   * manualでは空文字にする。
-   */
   correctAnswer: string;
 
-  /*
-   * 手動採点時の採点基準。
-   */
   rubric: string;
 
-  /*
-   * 自動採点でも人による確認を
-   * 必須にできる。
-   */
   requiresReview: boolean;
 
-  /*
-   * 表示順。
-   */
   order: number;
 
-  /*
-   * 追試問題の場合、
-   * 元問題IDを保持。
-   */
   sourceQuestionId?: string;
 
   createdAt?: unknown;
@@ -251,12 +218,6 @@ export type Answer = {
     | string
     | null;
 
-  /*
-   * Supabase Storageの
-   * bucket内パス。
-   *
-   * Firestoreには画像本体を保存しない。
-   */
   fileKey: string;
 
   fileName: string;
@@ -273,17 +234,10 @@ export type Answer = {
 
   totalMaxScore: number;
 
-  /*
-   * 答案から認識した
-   * 生徒QR等の情報。
-   */
   qrText: string;
 
   qrConfidence: number;
 
-  /*
-   * OCRの確信度。
-   */
   ocrConfidence: number;
 
   processingError: string;
@@ -466,15 +420,13 @@ export type StudentResult = {
 
   schoolId: string;
 
-  /*
-   * 通常答案の場合。
-   */
-  answerId?: string | null;
+  answerId?:
+    | string
+    | null;
 
-  /*
-   * 追試の場合。
-   */
-  retestId?: string | null;
+  retestId?:
+    | string
+    | null;
 
   studentId: string;
 
@@ -634,18 +586,12 @@ export type Retest = {
 
   schoolId: string;
 
-  /*
-   * 元の通常テスト。
-   */
   originalTestId: string;
 
   studentId: string;
 
   studentNumber: string;
 
-  /*
-   * 実際に作成された追試テスト。
-   */
   retestTestId: string;
 
   scheduledDate: string;
@@ -698,7 +644,7 @@ export type QRSticker = {
 };
 
 /* =========================================================
-   Test ID
+   Test Identifier
    ========================================================= */
 
 export type TestIdentifier = {
@@ -905,7 +851,7 @@ export type AppSettings = {
 };
 
 /* =========================================================
-   Generic Firestore Timestamp-like value
+   Timestamp
    ========================================================= */
 
 export type TimestampLike =
