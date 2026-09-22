@@ -1,24 +1,5 @@
-import type {
-  Timestamp,
-} from "firebase/firestore";
-
 /* =========================================================
-   Common
-   ========================================================= */
-
-export type FirestoreTimestamp =
-  | Timestamp
-  | {
-      seconds: number;
-      nanoseconds: number;
-    }
-  | Date
-  | string
-  | null
-  | undefined;
-
-/* =========================================================
-   User Role
+   User
    ========================================================= */
 
 export type UserRole =
@@ -27,16 +8,14 @@ export type UserRole =
   | "講師"
   | "生徒";
 
-/* =========================================================
-   App User
-   ========================================================= */
-
 export type AppUser = {
   uid: string;
 
-  name: string;
+  email:
+    | string
+    | null;
 
-  email: string;
+  name: string;
 
   role: UserRole;
 
@@ -52,51 +31,13 @@ export type AppUser = {
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
-};
-
-/* =========================================================
-   Organization
-   ========================================================= */
-
-export type Organization = {
-  id: string;
-
-  name: string;
-
-  logoUrl:
+  photoURL:
     | string
     | null;
 
-  active: boolean;
+  createdAt?: unknown;
 
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
-};
-
-/* =========================================================
-   School
-   ========================================================= */
-
-export type School = {
-  id: string;
-
-  organizationId: string;
-
-  name: string;
-
-  code: string;
-
-  address: string;
-
-  active: boolean;
-
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -120,51 +61,41 @@ export type Student = {
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  gender?: string;
 
-  updatedAt?: FirestoreTimestamp;
+  schoolName?: string;
+
+  enrolledSchool?: string;
+
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   Student History
+   School
    ========================================================= */
 
-export type StudentHistory = {
+export type School = {
   id: string;
 
   organizationId: string;
 
-  studentId: string;
+  name: string;
 
-  studentNumber: string;
+  code?: string;
 
-  previousName: string;
+  postalCode?: string;
 
-  previousGrade: string;
+  address?: string;
 
-  previousClassName: string;
+  phone?: string;
 
-  previousSchoolId: string;
+  active: boolean;
 
-  newName: string;
+  createdAt?: unknown;
 
-  newGrade: string;
-
-  newClassName: string;
-
-  newSchoolId: string;
-
-  changeType:
-    | "新規登録"
-    | "CSV更新"
-    | "手動更新"
-    | "校舎変更"
-    | "クラス変更"
-    | "学年変更";
-
-  changedBy: string;
-
-  changedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -178,6 +109,10 @@ export type Test = {
 
   schoolId: string;
 
+  /*
+   * Firestore document IDとは別に
+   * 業務上のテストIDを持てる。
+   */
   testId: string;
 
   name: string;
@@ -195,29 +130,26 @@ export type Test = {
   active: boolean;
 
   /*
-   * 通常テスト / 追試
+   * 追試ならtrue。
    */
   isRetest: boolean;
 
   /*
-   * 追試の場合の元テスト
+   * 追試の場合のみ。
    */
   originalTestId:
     | string
     | null;
 
   /*
-   * 後方互換用。
-   *
-   * 実際の採点方式は
-   * testQuestions.gradingMethod
-   * を使用する。
+   * 通常テストでも
+   * 問題単位の設定を優先する。
    */
   automaticGrading: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -235,6 +167,15 @@ export type TestQuestion = {
 
   testId: string;
 
+  /*
+   * 画面表示用の問題番号。
+   *
+   * "1"
+   * "1-1"
+   * "大問1"
+   *
+   * のような表記にも対応するためstring。
+   */
   questionNumber: string;
 
   title: string;
@@ -243,21 +184,42 @@ export type TestQuestion = {
 
   gradingMethod: GradingMethod;
 
+  /*
+   * automaticの場合のみ利用。
+   *
+   * manualでは空文字にする。
+   */
   correctAnswer: string;
 
+  /*
+   * 手動採点時の採点基準。
+   */
   rubric: string;
 
+  /*
+   * 自動採点でも人による確認を
+   * 必須にできる。
+   */
   requiresReview: boolean;
 
+  /*
+   * 表示順。
+   */
   order: number;
 
-  createdAt?: FirestoreTimestamp;
+  /*
+   * 追試問題の場合、
+   * 元問題IDを保持。
+   */
+  sourceQuestionId?: string;
 
-  updatedAt?: FirestoreTimestamp;
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   Answer Status
+   Answer
    ========================================================= */
 
 export type AnswerStatus =
@@ -269,10 +231,6 @@ export type AnswerStatus =
   | "confirmed"
   | "published"
   | "error";
-
-/* =========================================================
-   Answer
-   ========================================================= */
 
 export type Answer = {
   id: string;
@@ -297,7 +255,7 @@ export type Answer = {
    * Supabase Storageの
    * bucket内パス。
    *
-   * 実画像はFirestoreには保存しない。
+   * Firestoreには画像本体を保存しない。
    */
   fileKey: string;
 
@@ -316,29 +274,29 @@ export type Answer = {
   totalMaxScore: number;
 
   /*
-   * QR解析
+   * 答案から認識した
+   * 生徒QR等の情報。
    */
   qrText: string;
 
   qrConfidence: number;
 
   /*
-   * OCR解析
+   * OCRの確信度。
    */
   ocrConfidence: number;
 
   processingError: string;
 
-  /*
-   * Firebase Timestamp等。
-   */
-  createdAt?: FirestoreTimestamp;
+  uploadedBy?: string;
 
-  updatedAt?: FirestoreTimestamp;
+  processedAt?: unknown;
 
-  processedAt?: FirestoreTimestamp;
+  confirmedAt?: unknown;
 
-  confirmedAt?: FirestoreTimestamp;
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -371,19 +329,29 @@ export type GradingResult = {
 
   reviewRequired: boolean;
 
-  reason?: string;
+  reason: string;
 
-  rubric?: string;
+  rubric: string;
 };
 
 /* =========================================================
-   Grading Document
+   Grading
    ========================================================= */
 
-export type GradingDocument = {
+export type GradingStatus =
+  | "graded"
+  | "first_review"
+  | "second_review"
+  | "confirmed";
+
+export type Grading = {
   id: string;
 
   answerId: string;
+
+  testId: string;
+
+  subjectId: string;
 
   results: GradingResult[];
 
@@ -399,9 +367,9 @@ export type GradingDocument = {
 
   publicAnnotation: string;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -442,9 +410,9 @@ export type FirstReview = {
 
   status: ReviewStatus;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -478,22 +446,18 @@ export type SecondReview = {
 
   status: ReviewStatus;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   Result Source
+   Student Result
    ========================================================= */
 
 export type ResultSource =
   | "通常"
   | "追試";
-
-/* =========================================================
-   Student Result
-   ========================================================= */
 
 export type StudentResult = {
   id: string;
@@ -501,6 +465,16 @@ export type StudentResult = {
   organizationId: string;
 
   schoolId: string;
+
+  /*
+   * 通常答案の場合。
+   */
+  answerId?: string | null;
+
+  /*
+   * 追試の場合。
+   */
+  retestId?: string | null;
 
   studentId: string;
 
@@ -518,46 +492,34 @@ export type StudentResult = {
 
   percentage: number;
 
-  /*
-   * 受験者平均
-   */
   average:
     | number
     | null;
 
-  /*
-   * 偏差値
-   */
   deviationScore:
     | number
     | null;
 
-  /*
-   * 順位
-   */
   rank:
     | number
     | null;
 
-  /*
-   * 受験者数
-   */
   population:
     | number
     | null;
 
   source: ResultSource;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
    Grade Report Subject
    ========================================================= */
 
-export type GradeReportDistribution = {
+export type GradeDistributionItem = {
   range: string;
 
   minScore: number;
@@ -592,8 +554,7 @@ export type GradeReportSubject = {
     | number
     | null;
 
-  distribution:
-    GradeReportDistribution[];
+  distribution: GradeDistributionItem[];
 };
 
 /* =========================================================
@@ -631,9 +592,6 @@ export type GradeReport = {
 
   subjects: GradeReportSubject[];
 
-  /*
-   * 総合
-   */
   totalScore: number;
 
   totalMaxScore: number;
@@ -654,13 +612,13 @@ export type GradeReport = {
     | number
     | null;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   Retest Status
+   Retest
    ========================================================= */
 
 export type RetestStatus =
@@ -668,10 +626,6 @@ export type RetestStatus =
   | "採点待ち"
   | "採点済み"
   | "確定";
-
-/* =========================================================
-   Retest
-   ========================================================= */
 
 export type Retest = {
   id: string;
@@ -681,19 +635,16 @@ export type Retest = {
   schoolId: string;
 
   /*
-   * 元テスト
+   * 元の通常テスト。
    */
   originalTestId: string;
 
-  /*
-   * 生徒
-   */
   studentId: string;
 
   studentNumber: string;
 
   /*
-   * 追試テスト
+   * 実際に作成された追試テスト。
    */
   retestTestId: string;
 
@@ -701,37 +652,30 @@ export type Retest = {
 
   status: RetestStatus;
 
-  /*
-   * 手採点結果
-   */
   manualScore:
     | number
     | null;
 
   manualMaxScore: number;
 
-  /*
-   * 確定状態
-   */
   finalized: boolean;
 
-  /*
-   * 成績反映済みか
-   */
   appliedToResult: boolean;
 
   createdBy: string;
 
-  createdAt?: FirestoreTimestamp;
+  internalNote?: string;
 
-  updatedAt?: FirestoreTimestamp;
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   QR
+   QR Sticker
    ========================================================= */
 
-export type StudentQRCode = {
+export type QRSticker = {
   id: string;
 
   organizationId: string;
@@ -742,99 +686,105 @@ export type StudentQRCode = {
 
   studentNumber: string;
 
-  name: string;
+  studentName: string;
 
-  qrValue: string;
+  qrText: string;
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
-export type TestQRCode = {
+/* =========================================================
+   Test ID
+   ========================================================= */
+
+export type TestIdentifier = {
   id: string;
 
   organizationId: string;
 
   testId: string;
 
-  testCode: string;
+  testName: string;
 
-  qrValue: string;
+  schoolId: string;
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   User Management
+   Subject
    ========================================================= */
 
-export type ManagedUser = {
+export type Subject = {
   id: string;
 
-  uid: string;
-
   organizationId: string;
-
-  schoolIds: string[];
 
   name: string;
 
-  email: string;
-
-  role: UserRole;
+  code?: string;
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   System Log
+   Class
    ========================================================= */
 
-export type SystemLogLevel =
-  | "info"
-  | "warning"
-  | "error";
-
-export type SystemLog = {
+export type SchoolClass = {
   id: string;
 
   organizationId: string;
 
-  schoolId:
-    | string
-    | null;
+  schoolId: string;
 
-  userId: string;
+  name: string;
 
-  action: string;
+  grade: string;
 
-  level: SystemLogLevel;
+  active: boolean;
 
-  targetType: string;
+  createdAt?: unknown;
 
-  targetId: string;
+  updatedAt?: unknown;
+};
 
-  message: string;
+/* =========================================================
+   Teacher Assignment
+   ========================================================= */
 
-  metadata:
-    | Record<
-        string,
-        unknown
-      >
-    | null;
+export type TeacherAssignment = {
+  id: string;
 
-  createdAt?: FirestoreTimestamp;
+  organizationId: string;
+
+  schoolId: string;
+
+  teacherId: string;
+
+  subjectId?: string;
+
+  testId?: string;
+
+  classId?: string;
+
+  active: boolean;
+
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
@@ -845,8 +795,8 @@ export type NotificationType =
   | "system"
   | "grading"
   | "result"
-  | "retest"
-  | "message";
+  | "message"
+  | "warning";
 
 export type Notification = {
   id: string;
@@ -863,24 +813,16 @@ export type Notification = {
 
   read: boolean;
 
-  targetPath:
-    | string
-    | null;
+  link?: string;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  readAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
    Message
    ========================================================= */
-
-export type MessageTarget =
-  | "all"
-  | "school"
-  | "class"
-  | "student";
 
 export type Message = {
   id: string;
@@ -889,260 +831,95 @@ export type Message = {
 
   senderId: string;
 
-  targetType: MessageTarget;
-
-  targetIds: string[];
+  recipientUserIds: string[];
 
   title: string;
 
   body: string;
 
-  createdAt?: FirestoreTimestamp;
+  readBy: string[];
+
+  createdAt?: unknown;
+
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   Dashboard Statistics
+   System Log
    ========================================================= */
 
-export type DashboardStatistics = {
-  studentCount: number;
-
-  testCount: number;
-
-  answerCount: number;
-
-  firstReviewCount: number;
-
-  secondReviewCount: number;
-
-  confirmedCount: number;
-
-  retestCount: number;
-};
-
-/* =========================================================
-   CSV
-   ========================================================= */
-
-export type StudentCSVRow = {
-  studentNumber: string;
-
-  name: string;
-
-  grade: string;
-
-  className: string;
-
-  schoolId: string;
-
-  schoolName: string;
-};
-
-/* =========================================================
-   Permission Scope
-   ========================================================= */
-
-export type DataScope =
-  | "organization"
-  | "school"
-  | "student";
-
-/* =========================================================
-   Answer Processing
-   ========================================================= */
-
-export type AnswerProcessingStep =
-  | "uploaded"
-  | "qr"
-  | "ocr"
-  | "grading"
-  | "first_review"
-  | "second_review"
-  | "confirmed"
-  | "published"
+export type SystemLogLevel =
+  | "info"
+  | "warning"
   | "error";
 
-export type AnswerProcessingState = {
-  answerId: string;
+export type SystemLog = {
+  id: string;
 
-  currentStep:
-    AnswerProcessingStep;
+  organizationId: string;
 
-  qrCompleted: boolean;
-
-  ocrCompleted: boolean;
-
-  gradingCompleted: boolean;
-
-  firstReviewCompleted: boolean;
-
-  secondReviewCompleted: boolean;
-
-  confirmed: boolean;
-
-  published: boolean;
-
-  error:
+  userId:
     | string
     | null;
 
-  updatedAt?: FirestoreTimestamp;
+  level: SystemLogLevel;
+
+  action: string;
+
+  resourceType?: string;
+
+  resourceId?: string;
+
+  message: string;
+
+  metadata?: Record<
+    string,
+    unknown
+  >;
+
+  createdAt?: unknown;
 };
 
 /* =========================================================
-   Subject
+   App Settings
    ========================================================= */
 
-export type Subject = {
+export type AppSettings = {
   id: string;
 
   organizationId: string;
 
-  name: string;
+  siteName: string;
 
-  code: string;
-
-  active: boolean;
-
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
-};
-
-/* =========================================================
-   Test Subject
-   ========================================================= */
-
-export type TestSubject = {
-  id: string;
-
-  organizationId: string;
-
-  testId: string;
-
-  subjectId: string;
-
-  subjectName: string;
-
-  maxScore: number;
-
-  order: number;
-
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
-};
-
-/* =========================================================
-   Class
-   ========================================================= */
-
-export type SchoolClass = {
-  id: string;
-
-  organizationId: string;
-
-  schoolId: string;
-
-  grade: string;
-
-  name: string;
-
-  active: boolean;
-
-  createdAt?: FirestoreTimestamp;
-
-  updatedAt?: FirestoreTimestamp;
-};
-
-/* =========================================================
-   Teacher Assignment
-   ========================================================= */
-
-export type TeacherAssignment = {
-  id: string;
-
-  organizationId: string;
-
-  teacherId: string;
-
-  schoolId: string;
-
-  classId:
+  logoUrl:
     | string
     | null;
 
-  subjectId:
-    | string
-    | null;
+  timezone: string;
 
   active: boolean;
 
-  createdAt?: FirestoreTimestamp;
+  createdAt?: unknown;
 
-  updatedAt?: FirestoreTimestamp;
+  updatedAt?: unknown;
 };
 
 /* =========================================================
-   CSV Import Result
+   Generic Firestore Timestamp-like value
    ========================================================= */
 
-export type CSVImportResult = {
-  total: number;
+export type TimestampLike =
+  | {
+      seconds: number;
 
-  added: number;
+      nanoseconds: number;
 
-  updated: number;
+      toDate?: () => Date;
 
-  unchanged: number;
-
-  errors: string[];
-};
-
-/* =========================================================
-   Generic Firestore Document
-   ========================================================= */
-
-export type FirestoreDocument<
-  T
-> = {
-  id: string;
-
-  data: T;
-};
-
-/* =========================================================
-   Pagination
-   ========================================================= */
-
-export type PaginationState = {
-  page: number;
-
-  pageSize: number;
-
-  total: number;
-};
-
-/* =========================================================
-   API Result
-   ========================================================= */
-
-export type ApiSuccess<
-  T
-> = {
-  success: true;
-
-  data: T;
-};
-
-export type ApiFailure = {
-  success: false;
-
-  error: string;
-};
-
-export type ApiResult<
-  T
-> =
-  | ApiSuccess<T>
-  | ApiFailure;
+      toMillis?: () => number;
+    }
+  | Date
+  | string
+  | number
+  | null
+  | undefined;
