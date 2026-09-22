@@ -18,35 +18,44 @@ import {
 
 import {
   getScopedDocs,
-  gradeReportsQueries,
+  resultsQueries,
   type FirestoreUser,
 } from "@/lib/firestore-scope";
 
 import type {
-  GradeReport,
-  GradeReportSubject,
+  StudentResult,
+  UserRole,
 } from "@/lib/types";
+
+/* =========================================================
+   Types
+   ========================================================= */
+
+type ResultItem =
+  StudentResult & {
+    percentage: number;
+  };
 
 /* =========================================================
    Page
    ========================================================= */
 
-export default function StudentReportsPage() {
+export default function StudentResultsPage() {
   const [
-    reports,
-    setReports,
+    role,
+    setRole,
   ] =
-    useState<GradeReport[]>(
-      []
+    useState<UserRole | null>(
+      null
     );
 
   const [
-    selectedReportId,
-    setSelectedReportId,
+    results,
+    setResults,
   ] =
-    useState<
-      string | null
-    >(null);
+    useState<ResultItem[]>(
+      []
+    );
 
   const [
     loading,
@@ -60,15 +69,27 @@ export default function StudentReportsPage() {
   ] =
     useState("");
 
+  const [
+    testFilter,
+    setTestFilter,
+  ] =
+    useState("");
+
+  const [
+    subjectFilter,
+    setSubjectFilter,
+  ] =
+    useState("");
+
   /* =======================================================
      Load
      ======================================================= */
 
   useEffect(() => {
-    void loadReports();
+    void loadResults();
   }, []);
 
-  async function loadReports() {
+  async function loadResults() {
     try {
       setLoading(true);
 
@@ -105,6 +126,10 @@ export default function StudentReportsPage() {
         );
       }
 
+      setRole(
+        user.role
+      );
+
       const scopeUser:
         FirestoreUser =
         {
@@ -126,14 +151,14 @@ export default function StudentReportsPage() {
 
       const documents =
         await getScopedDocs(
-          gradeReportsQueries(
+          resultsQueries(
             scopeUser
           )
         );
 
       /*
-       * gradeReportsQueries() は生徒の場合、
-       * 自分のstudentIdだけを取得する。
+       * 念のためクライアント側でも
+       * 自分のstudentIdだけに限定。
        */
       const loaded =
         documents
@@ -141,16 +166,16 @@ export default function StudentReportsPage() {
             (
               document
             ) =>
-              normalizeReport(
+              normalizeResult(
                 document.id,
                 document.data
               )
           )
           .filter(
             (
-              report
+              result
             ) =>
-              report.studentId ===
+              result.studentId ===
               user.studentId
           )
           .sort(
@@ -159,53 +184,31 @@ export default function StudentReportsPage() {
               b
             ) =>
               String(
-                b.examDate
+                b.createdAt ??
+                  ""
               ).localeCompare(
                 String(
-                  a.examDate
+                  a.createdAt ??
+                    ""
                 )
               )
           );
 
-      setReports(
+      setResults(
         loaded
-      );
-
-      setSelectedReportId(
-        (
-          current
-        ) => {
-          if (
-            current &&
-            loaded.some(
-              (
-                report
-              ) =>
-                report.id ===
-                current
-            )
-          ) {
-            return current;
-          }
-
-          return (
-            loaded[0]?.id ??
-            null
-          );
-        }
       );
     } catch (
       error
     ) {
       console.error(
-        "Student report load error:",
+        "Student results error:",
         error
       );
 
       setError(
         error instanceof Error
           ? error.message
-          : "成績表を取得できませんでした。"
+          : "成績を取得できませんでした。"
       );
     } finally {
       setLoading(false);
@@ -213,51 +216,100 @@ export default function StudentReportsPage() {
   }
 
   /* =======================================================
-     Selected
+     Options
      ======================================================= */
 
-  const selectedReport =
-    reports.find(
-      (
-        report
-      ) =>
-        report.id ===
-        selectedReportId
-    ) ??
-    null;
-
-  /* =======================================================
-     Summary
-     ======================================================= */
-
-  const deviationHistory =
+  const tests =
     useMemo(
       () =>
-        [...reports]
-          .filter(
-            (
-              report
-            ) =>
-              report.totalDeviation !==
-              null
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              String(
-                a.examDate
-              ).localeCompare(
-                String(
-                  b.examDate
-                )
-              )
-          ),
+        Array.from(
+          new Map(
+            results.map(
+              (
+                result
+              ) => [
+                result.testId,
+                result.testName,
+              ]
+            )
+          ).entries()
+        ),
       [
-        reports,
+        results,
       ]
     );
+
+  const subjects =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            results.map(
+              (
+                result
+              ) =>
+                result.subject
+            )
+          )
+        ).filter(
+          Boolean
+        ),
+      [
+        results,
+      ]
+    );
+
+  /* =======================================================
+     Filtered
+     ======================================================= */
+
+  const filteredResults =
+    useMemo(
+      () =>
+        results.filter(
+          (
+            result
+          ) => {
+            const testMatch =
+              !testFilter ||
+              result.testId ===
+                testFilter;
+
+            const subjectMatch =
+              !subjectFilter ||
+              result.subject ===
+                subjectFilter;
+
+            return (
+              testMatch &&
+              subjectMatch
+            );
+          }
+        ),
+      [
+        results,
+        testFilter,
+        subjectFilter,
+      ]
+    );
+
+  /* =======================================================
+     Statistics
+     ======================================================= */
+
+  const averagePercentage =
+    calculateAverage(
+      filteredResults.map(
+        (
+          result
+        ) =>
+          result.percentage
+      )
+    );
+
+  const latest =
+    filteredResults[0] ??
+    null;
 
   /* =======================================================
      Loading
@@ -270,11 +322,11 @@ export default function StudentReportsPage() {
       <main className="page">
         <section className="content">
           <h1>
-            成績表
+            成績
           </h1>
 
           <p>
-            あなたの成績表を読み込んでいます...
+            あなたの成績を読み込んでいます...
           </p>
         </section>
       </main>
@@ -292,19 +344,19 @@ export default function StudentReportsPage() {
         <header className="pageHeader">
           <div>
             <h1>
-              成績表
+              成績
             </h1>
 
             <p className="muted">
-              あなたの確定済みの成績を確認できます。
+              あなたの確定済みテスト結果です。
             </p>
           </div>
 
           <Link
-            href="/results/student"
+            href="/reports/student"
             className="button"
           >
-            成績一覧
+            成績表
           </Link>
         </header>
 
@@ -320,106 +372,266 @@ export default function StudentReportsPage() {
         )}
 
         {/* ==================================================
-            Report selector
+            Latest
             ================================================== */}
 
-        {reports.length >
-          0 && (
-          <section className="card">
-            <label>
-              <strong>
-                テストを選択
-              </strong>
+        {latest && (
+          <section
+            className="card"
+            style={{
+              marginBottom:
+                16,
+            }}
+          >
+            <div
+              className="muted"
+              style={{
+                fontSize:
+                  12,
+              }}
+            >
+              最新の成績
+            </div>
 
-              <select
-                value={
-                  selectedReportId ??
-                  ""
-                }
-                onChange={(
-                  event
-                ) =>
-                  setSelectedReportId(
-                    event.target
-                      .value ||
-                      null
-                  )
-                }
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                alignItems:
+                  "center",
+
+                gap:
+                  20,
+
+                marginTop:
+                  6,
+              }}
+            >
+              <div>
+                <h2
+                  style={{
+                    margin:
+                      0,
+                  }}
+                >
+                  {
+                    latest.testName
+                  }
+                </h2>
+
+                <p
+                  className="muted"
+                  style={{
+                    margin:
+                      "5px 0 0",
+                  }}
+                >
+                  {
+                    latest.subject
+                  }
+                </p>
+              </div>
+
+              <div
                 style={{
-                  display:
-                    "block",
-
-                  width:
-                    "100%",
-
-                  maxWidth:
-                    600,
-
-                  marginTop:
-                    7,
+                  textAlign:
+                    "right",
                 }}
               >
-                {reports.map(
-                  (
-                    report
-                  ) => (
-                    <option
-                      key={
-                        report.id
-                      }
-                      value={
-                        report.id
-                      }
-                    >
-                      {
-                        report.testName
-                      }
+                <strong
+                  style={{
+                    fontSize:
+                      30,
+                  }}
+                >
+                  {
+                    latest.score
+                  }
+                </strong>
 
-                      {report.examDate &&
-                        ` / ${report.examDate}`}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+                <span
+                  className="muted"
+                >
+                  {" / "}
+                  {
+                    latest.maxScore
+                  }
+                </span>
+              </div>
+            </div>
           </section>
         )}
 
         {/* ==================================================
-            Current report
+            Summary
             ================================================== */}
 
-        {selectedReport ? (
-          <CurrentReport
-            report={
-              selectedReport
+        <div
+          style={{
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(3, minmax(0, 1fr))",
+
+            gap:
+              12,
+
+            marginBottom:
+              18,
+          }}
+        >
+          <SummaryCard
+            label="成績件数"
+            value={
+              filteredResults.length
             }
           />
-        ) : (
-          <EmptyReport />
-        )}
+
+          <SummaryCard
+            label="平均得点率"
+            value={
+              averagePercentage ===
+              null
+                ? "—"
+                : `${averagePercentage.toFixed(
+                    1
+                  )}%`
+            }
+          />
+
+          <SummaryCard
+            label="最高得点率"
+            value={
+              getMaximumPercentage(
+                filteredResults
+              ) ===
+              null
+                ? "—"
+                : `${getMaximumPercentage(
+                    filteredResults
+                  )!.toFixed(
+                    1
+                  )}%`
+            }
+          />
+        </div>
 
         {/* ==================================================
-            History
+            Filters
             ================================================== */}
 
-        {deviationHistory.length >
-          0 && (
-          <section
-            className="card"
+        <section className="card">
+          <div
             style={{
-              marginTop:
-                18,
+              display:
+                "grid",
+
+              gridTemplateColumns:
+                "1fr 1fr",
+
+              gap:
+                10,
             }}
           >
-            <h2>
-              過去の成績推移
-            </h2>
+            <select
+              value={
+                testFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setTestFilter(
+                  event.target
+                    .value
+                )
+              }
+            >
+              <option value="">
+                全テスト
+              </option>
 
-            <p className="muted">
-              確定済み成績の偏差値推移です。
-            </p>
+              {tests.map(
+                (
+                  [
+                    testId,
+                    testName,
+                  ]
+                ) => (
+                  <option
+                    key={
+                      testId
+                    }
+                    value={
+                      testId
+                    }
+                  >
+                    {
+                      testName
+                    }
+                  </option>
+                )
+              )}
+            </select>
 
+            <select
+              value={
+                subjectFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setSubjectFilter(
+                  event.target
+                    .value
+                )
+              }
+            >
+              <option value="">
+                全教科
+              </option>
+
+              {subjects.map(
+                (
+                  subject
+                ) => (
+                  <option
+                    key={
+                      subject
+                    }
+                    value={
+                      subject
+                    }
+                  >
+                    {
+                      subject
+                    }
+                  </option>
+                )
+              )}
+            </select>
+          </div>
+        </section>
+
+        {/* ==================================================
+            Results
+            ================================================== */}
+
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
+          {filteredResults.length ===
+          0 ? (
+            <EmptyState />
+          ) : (
             <div
               style={{
                 overflowX:
@@ -430,15 +642,23 @@ export default function StudentReportsPage() {
                 <thead>
                   <tr>
                     <th>
-                      日付
-                    </th>
-
-                    <th>
                       テスト
                     </th>
 
                     <th>
-                      総得点
+                      教科
+                    </th>
+
+                    <th>
+                      得点
+                    </th>
+
+                    <th>
+                      得点率
+                    </th>
+
+                    <th>
+                      平均点
                     </th>
 
                     <th>
@@ -448,72 +668,97 @@ export default function StudentReportsPage() {
                     <th>
                       順位
                     </th>
+
+                    <th>
+                      成績表
+                    </th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {deviationHistory.map(
+                  {filteredResults.map(
                     (
-                      report
+                      result
                     ) => (
                       <tr
                         key={
-                          report.id
+                          result.id
                         }
-                        onClick={() =>
-                          setSelectedReportId(
-                            report.id
-                          )
-                        }
-                        style={{
-                          cursor:
-                            "pointer",
-                        }}
                       >
                         <td>
                           {
-                            report.examDate ||
-                            "—"
+                            result.testName
                           }
                         </td>
 
                         <td>
                           {
-                            report.testName
+                            result.subject
                           }
                         </td>
 
                         <td>
-                          {
-                            report.totalScore
-                          }
+                          <strong>
+                            {
+                              result.score
+                            }
+                          </strong>
+
                           {" / "}
+
                           {
-                            report.totalMaxScore
+                            result.maxScore
                           }
                         </td>
 
                         <td>
                           {
-                            report.totalDeviation ===
+                            result.percentage.toFixed(
+                              1
+                            )
+                          }
+                          %
+                        </td>
+
+                        <td>
+                          {
+                            result.average ===
                             null
                               ? "—"
-                              : report.totalDeviation.toFixed(
+                              : formatNumber(
+                                  result.average
+                                )
+                          }
+                        </td>
+
+                        <td>
+                          {
+                            result.deviationScore ===
+                            null
+                              ? "—"
+                              : result.deviationScore.toFixed(
                                   1
                                 )}
                         </td>
 
                         <td>
                           {
-                            report.totalRank ===
-                            null
-                              ? "—"
-                              : report.totalRank
+                            formatRank(
+                              result.rank,
+                              result.population
+                            )
                           }
+                        </td>
 
-                          {report.totalPopulation !==
-                            null &&
-                            ` / ${report.totalPopulation}`}
+                        <td>
+                          <Link
+                            href={`/reports/student?testId=${encodeURIComponent(
+                              result.testId
+                            )}`}
+                            className="button"
+                          >
+                            成績表
+                          </Link>
                         </td>
                       </tr>
                     )
@@ -521,526 +766,10 @@ export default function StudentReportsPage() {
                 </tbody>
               </table>
             </div>
-          </section>
-        )}
+          )}
+        </section>
       </section>
     </main>
-  );
-}
-
-/* =========================================================
-   Current report
-   ========================================================= */
-
-function CurrentReport({
-  report,
-}: {
-  report: GradeReport;
-}) {
-  return (
-    <article
-      className="card"
-      style={{
-        marginTop:
-          18,
-      }}
-    >
-      {/* Header */}
-
-      <header
-        style={{
-          paddingBottom:
-            18,
-
-          borderBottom:
-            "1px solid #eee",
-        }}
-      >
-        <div
-          className="muted"
-          style={{
-            fontSize:
-              12,
-          }}
-        >
-          {
-            report.examDate ||
-            "実施日未設定"
-          }
-        </div>
-
-        <h2
-          style={{
-            margin:
-              "5px 0 0",
-          }}
-        >
-          {
-            report.testName
-          }
-        </h2>
-
-        <p
-          className="muted"
-          style={{
-            margin:
-              "5px 0 0",
-          }}
-        >
-          {
-            report.grade
-          }
-
-          {report.className &&
-            ` / ${report.className}`}
-        </p>
-      </header>
-
-      {/* Total */}
-
-      <section
-        style={{
-          marginTop:
-            20,
-        }}
-      >
-        <h3>
-          今回の成績
-        </h3>
-
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(4, minmax(0, 1fr))",
-
-            gap:
-              10,
-          }}
-        >
-          <ResultCard
-            label="総得点"
-            value={
-              `${report.totalScore} / ${report.totalMaxScore}`
-            }
-          />
-
-          <ResultCard
-            label="平均点"
-            value={
-              formatNumber(
-                report.totalAverage
-              )
-            }
-          />
-
-          <ResultCard
-            label="偏差値"
-            value={
-              formatNumber(
-                report.totalDeviation
-              )
-            }
-          />
-
-          <ResultCard
-            label="順位"
-            value={
-              report.totalRank ===
-              null
-                ? "—"
-                : report.totalPopulation ===
-                  null
-                  ? String(
-                      report.totalRank
-                    )
-                  : `${report.totalRank} / ${report.totalPopulation}`
-            }
-          />
-        </div>
-      </section>
-
-      {/* Subjects */}
-
-      <section
-        style={{
-          marginTop:
-            24,
-        }}
-      >
-        <h3>
-          科目別成績
-        </h3>
-
-        {report.subjects.length ===
-        0 ? (
-          <p className="muted">
-            科目別成績はまだありません。
-          </p>
-        ) : (
-          <div
-            style={{
-              overflowX:
-                "auto",
-            }}
-          >
-            <table className="dataTable">
-              <thead>
-                <tr>
-                  <th>
-                    科目
-                  </th>
-
-                  <th>
-                    得点
-                  </th>
-
-                  <th>
-                    受験者平均
-                  </th>
-
-                  <th>
-                    偏差値
-                  </th>
-
-                  <th>
-                    順位
-                  </th>
-
-                  <th>
-                    受験者数
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {report.subjects.map(
-                  (
-                    subject
-                  ) => (
-                    <tr
-                      key={
-                        subject.subject
-                      }
-                    >
-                      <td>
-                        <strong>
-                          {
-                            subject.subject
-                          }
-                        </strong>
-                      </td>
-
-                      <td>
-                        {
-                          subject.score
-                        }
-                        {" / "}
-                        {
-                          subject.maxScore
-                        }
-                      </td>
-
-                      <td>
-                        {
-                          formatNumber(
-                            subject.average
-                          )
-                        }
-                      </td>
-
-                      <td>
-                        {
-                          formatNumber(
-                            subject.deviation
-                          )
-                        }
-                      </td>
-
-                      <td>
-                        {
-                          formatRank(
-                            subject.rank,
-                            subject.population
-                          )
-                        }
-                      </td>
-
-                      <td>
-                        {
-                          subject.population ??
-                          "—"
-                        }
-                      </td>
-                    </tr>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Distribution */}
-
-      <section
-        style={{
-          marginTop:
-            24,
-        }}
-      >
-        <h3>
-          度数分布
-        </h3>
-
-        <DistributionSection
-          subjects={
-            report.subjects
-          }
-        />
-      </section>
-    </article>
-  );
-}
-
-/* =========================================================
-   Result card
-   ========================================================= */
-
-function ResultCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          14,
-
-        background:
-          "#f7f7f7",
-
-        borderRadius:
-          8,
-      }}
-    >
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            11,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            5,
-
-          fontSize:
-            22,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Distribution
-   ========================================================= */
-
-function DistributionSection({
-  subjects,
-}: {
-  subjects: GradeReportSubject[];
-}) {
-  const distributions =
-    combineDistributions(
-      subjects
-    );
-
-  if (
-    distributions.length ===
-    0
-  ) {
-    return (
-      <p className="muted">
-        度数分布データはありません。
-      </p>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        display:
-          "grid",
-
-        gridTemplateColumns:
-          "repeat(auto-fit, minmax(140px, 1fr))",
-
-        gap:
-          10,
-      }}
-    >
-      {distributions.map(
-        (
-          item
-        ) => (
-          <div
-            key={
-              item.range
-            }
-            style={{
-              padding:
-                14,
-
-              border:
-                "1px solid #ddd",
-
-              borderRadius:
-                8,
-
-              background:
-                item.selected
-                  ? "#f5f5f5"
-                  : "#fff",
-            }}
-          >
-            <div
-              className="muted"
-              style={{
-                fontSize:
-                  11,
-              }}
-            >
-              {
-                item.range
-              }
-            </div>
-
-            <strong
-              style={{
-                display:
-                  "block",
-
-                marginTop:
-                  5,
-
-                fontSize:
-                  22,
-              }}
-            >
-              {
-                item.count
-              }
-            </strong>
-
-            <div
-              className="muted"
-              style={{
-                fontSize:
-                  11,
-              }}
-            >
-              人
-            </div>
-          </div>
-        )
-      )}
-    </div>
-  );
-}
-
-/* =========================================================
-   Combine distribution
-   ========================================================= */
-
-function combineDistributions(
-  subjects: GradeReportSubject[]
-) {
-  const map =
-    new Map<
-      string,
-      {
-        range: string;
-
-        minScore: number;
-
-        maxScore: number;
-
-        count: number;
-
-        selected: boolean;
-      }
-    >();
-
-  for (
-    const subject of
-      subjects
-  ) {
-    for (
-      const item of
-        subject.distribution
-    ) {
-      const current =
-        map.get(
-          item.range
-        );
-
-      map.set(
-        item.range,
-        {
-          range:
-            item.range,
-
-          minScore:
-            item.minScore,
-
-          maxScore:
-            item.maxScore,
-
-          count:
-            (current?.count ??
-              0) +
-            item.count,
-
-          selected:
-            Boolean(
-              current?.selected
-            ) ||
-            item.selected,
-        }
-      );
-    }
-  }
-
-  return Array.from(
-    map.values()
-  ).sort(
-    (
-      a,
-      b
-    ) =>
-      a.minScore -
-      b.minScore
   );
 }
 
@@ -1048,13 +777,23 @@ function combineDistributions(
    Normalize
    ========================================================= */
 
-function normalizeReport(
+function normalizeResult(
   id: string,
   data: Record<
     string,
     unknown
   >
-): GradeReport {
+): ResultItem {
+  const maxScore =
+    safeNumber(
+      data.maxScore
+    );
+
+  const score =
+    safeNumber(
+      data.score
+    );
+
   return {
     id,
 
@@ -1078,36 +817,6 @@ function normalizeReport(
         data.studentNumber
       ),
 
-    studentName:
-      stringValue(
-        data.studentName
-      ),
-
-    schoolName:
-      stringValue(
-        data.schoolName
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    gender:
-      stringValue(
-        data.gender
-      ),
-
-    enrolledSchool:
-      stringValue(
-        data.enrolledSchool
-      ),
-
     testId:
       stringValue(
         data.testId
@@ -1116,47 +825,50 @@ function normalizeReport(
     testName:
       stringValue(
         data.testName
-      ),
+      ) ||
+      "テスト未設定",
 
-    examDate:
+    subject:
       stringValue(
-        data.examDate
+        data.subject
       ),
 
-    subjects:
-      normalizeSubjects(
-        data.subjects
-      ),
+    score,
 
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
+    maxScore,
 
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
+    percentage:
+      maxScore > 0
+        ? (score /
+            maxScore) *
+          100
+        : 0,
 
-    totalAverage:
+    average:
       nullableNumber(
-        data.totalAverage
+        data.average
       ),
 
-    totalDeviation:
+    deviationScore:
       nullableNumber(
-        data.totalDeviation
+        data.deviationScore
       ),
 
-    totalRank:
+    rank:
       nullableNumber(
-        data.totalRank
+        data.rank
       ),
 
-    totalPopulation:
+    population:
       nullableNumber(
-        data.totalPopulation
+        data.population
       ),
+
+    source:
+      data.source ===
+      "追試"
+        ? "追試"
+        : "通常",
 
     createdAt:
       data.createdAt,
@@ -1167,142 +879,133 @@ function normalizeReport(
 }
 
 /* =========================================================
-   Subjects
+   Summary
    ========================================================= */
 
-function normalizeSubjects(
-  value: unknown
-): GradeReportSubject[] {
-  if (
-    !Array.isArray(
-      value
-    )
-  ) {
-    return [];
-  }
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
 
-  return value.map(
-    (
-      item
-    ) => {
-      const data =
-        item &&
-        typeof item ===
-          "object"
-          ? item as Record<
-              string,
-              unknown
-            >
-          : {};
+  value:
+    | string
+    | number;
+}) {
+  return (
+    <div className="card">
+      <div
+        className="muted"
+        style={{
+          fontSize:
+            11,
+        }}
+      >
+        {
+          label
+        }
+      </div>
 
-      return {
-        subject:
-          stringValue(
-            data.subject
-          ),
+      <strong
+        style={{
+          display:
+            "block",
 
-        maxScore:
-          safeNumber(
-            data.maxScore
-          ),
+          marginTop:
+            4,
 
-        score:
-          safeNumber(
-            data.score
-          ),
-
-        average:
-          nullableNumber(
-            data.average
-          ),
-
-        deviation:
-          nullableNumber(
-            data.deviation
-          ),
-
-        rank:
-          nullableNumber(
-            data.rank
-          ),
-
-        population:
-          nullableNumber(
-            data.population
-          ),
-
-        distribution:
-          normalizeDistribution(
-            data.distribution
-          ),
-      };
-    }
+          fontSize:
+            24,
+        }}
+      >
+        {
+          value
+        }
+      </strong>
+    </div>
   );
 }
 
 /* =========================================================
-   Distribution normalization
+   Empty
    ========================================================= */
 
-function normalizeDistribution(
-  value: unknown
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          60,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        成績はまだありません。
+      </strong>
+
+      <p
+        style={{
+          fontSize:
+            12,
+        }}
+      >
+        採点が確定すると、ここに成績が表示されます。
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   Average
+   ========================================================= */
+
+function calculateAverage(
+  values: number[]
 ) {
   if (
-    !Array.isArray(
-      value
-    )
+    values.length ===
+    0
   ) {
-    return [];
+    return null;
   }
 
-  return value
-    .map(
+  return (
+    values.reduce(
       (
-        item
-      ) => {
-        const data =
-          item &&
-          typeof item ===
-            "object"
-            ? item as Record<
-                string,
-                unknown
-              >
-            : {};
-
-        return {
-          range:
-            stringValue(
-              data.range
-            ),
-
-          minScore:
-            safeNumber(
-              data.minScore
-            ),
-
-          maxScore:
-            safeNumber(
-              data.maxScore
-            ),
-
-          count:
-            safeNumber(
-              data.count
-            ),
-
-          selected:
-            data.selected ===
-            true,
-        };
-      }
-    )
-    .filter(
-      (
-        item
+        total,
+        value
       ) =>
-        item.range
-    );
+        total +
+        value,
+      0
+    ) /
+    values.length
+  );
+}
+
+function getMaximumPercentage(
+  results: ResultItem[]
+) {
+  if (
+    results.length ===
+    0
+  ) {
+    return null;
+  }
+
+  return Math.max(
+    ...results.map(
+      (
+        result
+      ) =>
+        result.percentage
+    )
+  );
 }
 
 /* =========================================================
@@ -1310,17 +1013,8 @@ function normalizeDistribution(
    ========================================================= */
 
 function formatNumber(
-  value:
-    | number
-    | null
+  value: number
 ) {
-  if (
-    value ===
-    null
-  ) {
-    return "—";
-  }
-
   return Number.isInteger(
     value
   )
@@ -1413,46 +1107,4 @@ function safeNumber(
   )
     ? number
     : 0;
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyReport() {
-  return (
-    <section
-      className="card"
-      style={{
-        marginTop:
-          18,
-      }}
-    >
-      <div
-        style={{
-          padding:
-            60,
-
-          textAlign:
-            "center",
-
-          color:
-            "#777",
-        }}
-      >
-        <strong>
-          成績表がありません。
-        </strong>
-
-        <p
-          style={{
-            fontSize:
-              12,
-          }}
-        >
-          採点確定済みの成績表が登録されると、ここに表示されます。
-        </p>
-      </div>
-    </section>
-  );
 }
