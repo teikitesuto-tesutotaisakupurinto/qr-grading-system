@@ -6,10 +6,17 @@ import {
   useState,
 } from "react";
 
-import Link from "next/link";
+import {
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  where,
+} from "firebase/firestore";
 
 import {
   auth,
+  db,
 } from "@/lib/firebase";
 
 import {
@@ -17,17 +24,21 @@ import {
 } from "@/lib/auth";
 
 import {
-  getScopedDocs,
-  answersQueries,
-  studentsQueries,
-  testsQueries,
-  type FirestoreUser,
-} from "@/lib/firestore-scope";
+  getAllAnswers,
+  getAnswerWithUrl,
+  type Answer,
+} from "@/lib/answers";
+
+import {
+  getGradingResult,
+  saveFirstReview,
+} from "@/lib/grading";
 
 import type {
-  Answer,
-  Student,
+  GradingMark,
+  GradingResult,
   Test,
+  TestQuestion,
   UserRole,
 } from "@/lib/types";
 
@@ -35,12 +46,31 @@ import type {
    Types
    ========================================================= */
 
-type AnswerRow =
-  Answer & {
-    studentName: string;
-    testName: string;
-    subjectName: string;
+type TestRow = Test;
+
+type QuestionRow =
+  TestQuestion & {
+    order: number;
   };
+
+type AnswerCard = {
+  answer: Answer;
+
+  imageUrl: string | null;
+
+  result:
+    | GradingResult
+    | null;
+
+  selected: boolean;
+
+  saving: boolean;
+};
+
+type MarkMode =
+  | "○"
+  | "×"
+  | "△";
 
 /* =========================================================
    Page
@@ -56,10 +86,38 @@ export default function GradingPage() {
     );
 
   const [
+    tests,
+    setTests,
+  ] =
+    useState<TestRow[]>(
+      []
+    );
+
+  const [
+    questions,
+    setQuestions,
+  ] =
+    useState<QuestionRow[]>(
+      []
+    );
+
+  const [
+    selectedTestId,
+    setSelectedTestId,
+  ] =
+    useState("");
+
+  const [
+    selectedQuestionId,
+    setSelectedQuestionId,
+  ] =
+    useState("");
+
+  const [
     answers,
     setAnswers,
   ] =
-    useState<AnswerRow[]>(
+    useState<AnswerCard[]>(
       []
     );
 
@@ -70,39 +128,54 @@ export default function GradingPage() {
     useState(true);
 
   const [
+    loadingQuestions,
+    setLoadingQuestions,
+  ] =
+    useState(false);
+
+  const [
+    loadingAnswers,
+    setLoadingAnswers,
+  ] =
+    useState(false);
+
+  const [
     error,
     setError,
   ] =
     useState("");
 
   const [
-    search,
-    setSearch,
+    message,
+    setMessage,
   ] =
     useState("");
 
   const [
-    statusFilter,
-    setStatusFilter,
+    markMode,
+    setMarkMode,
   ] =
-    useState<
-      "all" | Answer["status"]
-    >(
-      "all"
+    useState<MarkMode | null>(
+      null
     );
 
+  const [
+    saving,
+    setSaving,
+  ] =
+    useState(false);
+
   /* =======================================================
-     Load
+     Initial
      ======================================================= */
 
   useEffect(() => {
-    void loadPage();
+    void initialize();
   }, []);
 
-  async function loadPage() {
+  async function initialize() {
     try {
       setLoading(true);
-
       setError("");
 
       const user =
@@ -110,9 +183,7 @@ export default function GradingPage() {
           auth.currentUser
         );
 
-      if (
-        !user
-      ) {
+      if (!user) {
         throw new Error(
           "ログインしてください。"
         );
@@ -123,9 +194,13 @@ export default function GradingPage() {
         "生徒"
       ) {
         throw new Error(
-          "採点管理は職員のみ利用できます。"
+          "採点権限がありません。"
         );
       }
+
+      setRole(
+        user.role
+      );
 
       if (
         !user.organizationId
@@ -135,249 +210,1025 @@ export default function GradingPage() {
         );
       }
 
-      setRole(
-        user.role
-      );
-
-      const scopeUser:
-        FirestoreUser =
-        {
-          uid:
-            user.uid,
-
-          organizationId:
-            user.organizationId,
-
-          role:
-            user.role,
-
-          schoolIds:
-            user.schoolIds,
-
-          studentId:
-            user.studentId,
-        };
-
-      const [
-        answerDocuments,
-        studentDocuments,
-        testDocuments,
-      ] =
-        await Promise.all([
-          getScopedDocs(
-            answersQueries(
-              scopeUser
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "tests"
+            ),
+            where(
+              "organizationId",
+              "==",
+              user.organizationId
+            ),
+            where(
+              "active",
+              "==",
+              true
+            ),
+            orderBy(
+              "createdAt",
+              "desc"
             )
-          ),
-
-          getScopedDocs(
-            studentsQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            testsQueries(
-              scopeUser
-            )
-          ),
-        ]);
-
-      const students =
-        studentDocuments.map(
-          (
-            item
-          ) =>
-            normalizeStudent(
-              item.id,
-              item.data
-            )
-        );
-
-      const tests =
-        testDocuments.map(
-          (
-            item
-          ) =>
-            normalizeTest(
-              item.id,
-              item.data
-            )
+          )
         );
 
       const loaded =
-        answerDocuments
+        snapshot.docs
           .map(
             (
               item
             ) =>
-              normalizeAnswer(
+              normalizeTest(
                 item.id,
-                item.data,
-                students,
-                tests
+                item.data()
               )
+          )
+          .filter(
+            (
+              test
+            ) =>
+              !test.isRetest
+          );
+
+      setTests(
+        loaded
+      );
+
+      if (
+        loaded.length >
+        0
+      ) {
+        setSelectedTestId(
+          loaded[0].id
+        );
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Grading initialize error:",
+        error
+      );
+
+      setError(
+        userError(
+          error,
+          "採点画面を読み込めませんでした。"
+        )
+      );
+    } finally {
+      setLoading(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Selected test
+     ======================================================= */
+
+  const selectedTest =
+    tests.find(
+      (
+        test
+      ) =>
+        test.id ===
+        selectedTestId
+    ) ??
+    null;
+
+  /* =======================================================
+     Load questions
+     ======================================================= */
+
+  useEffect(() => {
+    if (
+      !selectedTest
+    ) {
+      setQuestions([]);
+      setSelectedQuestionId("");
+      return;
+    }
+
+    void loadQuestions(
+      selectedTest
+    );
+  }, [
+    selectedTestId,
+  ]);
+
+  async function loadQuestions(
+    test: Test
+  ) {
+    try {
+      setLoadingQuestions(
+        true
+      );
+
+      setError("");
+
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "testQuestions"
+            ),
+            where(
+              "testId",
+              "==",
+              test.id
+            )
+          )
+        );
+
+      const loaded =
+        snapshot.docs
+          .map(
+            (
+              item
+            ) => {
+              const data =
+                item.data();
+
+              return {
+                id:
+                  item.id,
+
+                testId:
+                  test.id,
+
+                questionNumber:
+                  stringValue(
+                    data.questionNumber
+                  ),
+
+                title:
+                  stringValue(
+                    data.title
+                  ),
+
+                maxScore:
+                  safeNumber(
+                    data.maxScore
+                  ),
+
+                gradingMethod:
+                  data.gradingMethod ===
+                  "automatic"
+                    ? "automatic"
+                    : "manual",
+
+                correctAnswer:
+                  stringValue(
+                    data.correctAnswer
+                  ),
+
+                rubric:
+                  stringValue(
+                    data.rubric
+                  ),
+
+                requiresReview:
+                  data.requiresReview ===
+                  true,
+
+                order:
+                  safeNumber(
+                    data.order
+                  ),
+              } as QuestionRow;
+            }
           )
           .sort(
             (
               a,
               b
             ) =>
-              getTime(
-                b.createdAt
+              questionOrder(
+                a
               ) -
-              getTime(
-                a.createdAt
+              questionOrder(
+                b
               )
           );
 
-      setAnswers(
+      setQuestions(
         loaded
+      );
+
+      if (
+        loaded.length >
+        0
+      ) {
+        setSelectedQuestionId(
+          loaded[0].id
+        );
+      } else {
+        setSelectedQuestionId("");
+      }
+    } catch (
+      error
+    ) {
+      console.error(
+        "Question load error:",
+        error
+      );
+
+      setQuestions([]);
+
+      setError(
+        userError(
+          error,
+          "問題を取得できませんでした。"
+        )
+      );
+    } finally {
+      setLoadingQuestions(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Selected question
+     ======================================================= */
+
+  const selectedQuestion =
+    questions.find(
+      (
+        question
+      ) =>
+        question.id ===
+        selectedQuestionId
+    ) ??
+    null;
+
+  /* =======================================================
+     Load answers
+     ======================================================= */
+
+  useEffect(() => {
+    if (
+      !selectedTest
+    ) {
+      setAnswers([]);
+      return;
+    }
+
+    void loadAnswers(
+      selectedTest
+    );
+  }, [
+    selectedTestId,
+  ]);
+
+  async function loadAnswers(
+    test: Test
+  ) {
+    try {
+      setLoadingAnswers(
+        true
+      );
+
+      setError("");
+
+      const loaded =
+        await getAllAnswers(
+          test.testId ||
+            test.id,
+          test.subject
+        );
+
+      const cards =
+        await Promise.all(
+          loaded.map(
+            async (
+              answer
+            ): Promise<AnswerCard> => {
+              let imageUrl:
+                | string
+                | null =
+                null;
+
+              let result:
+                | GradingResult
+                | null =
+                null;
+
+              try {
+                const withUrl =
+                  await getAnswerWithUrl(
+                    answer.id
+                  );
+
+                imageUrl =
+                  withUrl?.signedUrl ??
+                  null;
+              } catch (
+                error
+              ) {
+                console.error(
+                  "Answer image error:",
+                  error
+                );
+              }
+
+              try {
+                const grading =
+                  await getGradingResult(
+                    answer.id
+                  );
+
+                if (
+                  grading &&
+                  Array.isArray(
+                    grading.results
+                  )
+                ) {
+                  result =
+                    grading.results.find(
+                      (
+                        item: GradingResult
+                      ) =>
+                        item.questionId ===
+                        selectedQuestionId
+                    ) ??
+                    null;
+                }
+              } catch (
+                error
+              ) {
+                console.error(
+                  "Grading result error:",
+                  error
+                );
+              }
+
+              return {
+                answer,
+
+                imageUrl,
+
+                result,
+
+                selected:
+                  false,
+
+                saving:
+                  false,
+              };
+            }
+          )
+        );
+
+      setAnswers(
+        cards
       );
     } catch (
       error
     ) {
       console.error(
-        "Grading page error:",
+        "Answer load error:",
         error
       );
 
+      setAnswers([]);
+
       setError(
-        error instanceof Error
-          ? error.message
-          : "採点データを取得できませんでした。"
+        userError(
+          error,
+          "答案を取得できませんでした。"
+        )
       );
     } finally {
-      setLoading(false);
+      setLoadingAnswers(
+        false
+      );
     }
   }
 
   /* =======================================================
-     Filter
+     Question change
      ======================================================= */
 
-  const filtered =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
+  function changeQuestion(
+    questionId: string
+  ) {
+    setSelectedQuestionId(
+      questionId
+    );
 
-      return answers.filter(
-        (
-          answer
-        ) => {
-          const statusMatch =
-            statusFilter ===
-              "all" ||
-            answer.status ===
-              statusFilter;
+    setMarkMode(
+      null
+    );
 
-          const searchMatch =
-            !keyword ||
-            answer.studentName
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            (
-              answer.studentNumber ??
-              ""
-            )
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            answer.testName
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            answer.subjectName
-              .toLowerCase()
-              .includes(
-                keyword
+    setAnswers(
+      (
+        current: AnswerCard[]
+      ) =>
+        current.map(
+          (
+            item
+          ) => ({
+            ...item,
+
+            selected:
+              false,
+          })
+        )
+    );
+
+    /*
+     * 現在ロード済みのgrading結果から
+     * 新しい問題の結果を表示。
+     */
+    void refreshQuestionResults(
+      questionId
+    );
+  }
+
+  async function refreshQuestionResults(
+    questionId: string
+  ) {
+    const next =
+      await Promise.all(
+        answers.map(
+          async (
+            card
+          ) => {
+            let result:
+              | GradingResult
+              | null =
+              null;
+
+            try {
+              const grading =
+                await getGradingResult(
+                  card.answer.id
+                );
+
+              result =
+                grading?.results?.find(
+                  (
+                    item: GradingResult
+                  ) =>
+                    item.questionId ===
+                    questionId
+                ) ??
+                null;
+            } catch (
+              error
+            ) {
+              console.error(
+                error
               );
+            }
 
-          return (
-            statusMatch &&
-            searchMatch
-          );
-        }
+            return {
+              ...card,
+
+              result,
+
+              selected:
+                false,
+            };
+          }
+        )
       );
-    }, [
-      answers,
-      search,
-      statusFilter,
-    ]);
+
+    setAnswers(
+      next
+    );
+  }
 
   /* =======================================================
-     Statistics
+     Selection
      ======================================================= */
 
-  const uploaded =
-    answers.filter(
+  function toggleAnswer(
+    answerId: string
+  ) {
+    setAnswers(
       (
-        answer
+        current: AnswerCard[]
       ) =>
-        answer.status ===
-        "uploaded"
-    ).length;
+        current.map(
+          (
+            card
+          ) =>
+            card.answer.id ===
+            answerId
+              ? {
+                  ...card,
 
-  const processing =
-    answers.filter(
-      (
-        answer
-      ) =>
-        answer.status ===
-        "processing"
-    ).length;
+                  selected:
+                    !card.selected,
+                }
+              : card
+        )
+    );
+  }
 
-  const graded =
-    answers.filter(
+  function selectAllVisible() {
+    setAnswers(
       (
-        answer
+        current: AnswerCard[]
       ) =>
-        answer.status ===
-        "graded"
-    ).length;
+        current.map(
+          (
+            card
+          ) => ({
+            ...card,
 
-  const firstReview =
-    answers.filter(
-      (
-        answer
-      ) =>
-        answer.status ===
-        "first_review"
-    ).length;
+            selected:
+              true,
+          })
+        )
+    );
+  }
 
-  const secondReview =
-    answers.filter(
+  function clearSelection() {
+    setAnswers(
       (
-        answer
+        current: AnswerCard[]
       ) =>
-        answer.status ===
-        "second_review"
-    ).length;
+        current.map(
+          (
+            card
+          ) => ({
+            ...card,
 
-  const confirmed =
-    answers.filter(
-      (
-        answer
-      ) =>
-        answer.status ===
-          "confirmed" ||
-        answer.status ===
-          "published"
-    ).length;
+            selected:
+              false,
+          })
+        )
+    );
+  }
 
-  const errors =
+  /* =======================================================
+     Apply mark
+     ======================================================= */
+
+  async function applyMark(
+    mark: MarkMode
+  ) {
+    if (
+      !selectedQuestion
+    ) {
+      return;
+    }
+
+    const selected =
+      answers.filter(
+        (
+          card
+        ) =>
+          card.selected
+      );
+
+    if (
+      selected.length ===
+      0
+    ) {
+      setError(
+        "採点する答案を選択してください。"
+      );
+
+      return;
+    }
+
+    if (
+      mark ===
+      "△"
+    ) {
+      setMarkMode(
+        "△"
+      );
+
+      return;
+    }
+
+    setSaving(
+      true
+    );
+
+    setError("");
+    setMessage("");
+
+    try {
+      for (
+        const card of
+          selected
+      ) {
+        await saveMark(
+          card,
+          mark,
+          selectedQuestion
+        );
+      }
+
+      setAnswers(
+        (
+          current: AnswerCard[]
+        ) =>
+          current.map(
+            (
+              card
+            ) =>
+              card.selected
+                ? {
+                    ...card,
+
+                    selected:
+                      false,
+
+                    result:
+                      createLocalResult(
+                        card.result,
+                        selectedQuestion,
+                        mark
+                      ),
+                  }
+                : card
+          )
+      );
+
+      setMessage(
+        `${selected.length}件に${mark}を付けました。`
+      );
+
+      setMarkMode(
+        null
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Apply mark error:",
+        error
+      );
+
+      setError(
+        userError(
+          error,
+          "採点結果を保存できませんでした。"
+        )
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Partial score
+     ======================================================= */
+
+  async function applyPartialScore(
+    score: number
+  ) {
+    if (
+      !selectedQuestion
+    ) {
+      return;
+    }
+
+    const selected =
+      answers.filter(
+        (
+          card
+        ) =>
+          card.selected
+      );
+
+    if (
+      selected.length ===
+      0
+    ) {
+      setError(
+        "部分点を付ける答案を選択してください。"
+      );
+
+      return;
+    }
+
+    setSaving(
+      true
+    );
+
+    try {
+      for (
+        const card of
+          selected
+      ) {
+        await saveMark(
+          card,
+          "△",
+          selectedQuestion,
+          score
+        );
+      }
+
+      setAnswers(
+        (
+          current: AnswerCard[]
+        ) =>
+          current.map(
+            (
+              card
+            ) =>
+              card.selected
+                ? {
+                    ...card,
+
+                    selected:
+                      false,
+
+                    result:
+                      createLocalResult(
+                        card.result,
+                        selectedQuestion,
+                        "△",
+                        score
+                      ),
+                  }
+                : card
+          )
+      );
+
+      setMessage(
+        `${selected.length}件を${score}点にしました。`
+      );
+
+      setMarkMode(
+        null
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Partial score error:",
+        error
+      );
+
+      setError(
+        userError(
+          error,
+          "部分点を保存できませんでした。"
+        )
+      );
+    } finally {
+      setSaving(
+        false
+      );
+    }
+  }
+
+  /* =======================================================
+     Save mark
+     ======================================================= */
+
+  async function saveMark(
+    card: AnswerCard,
+    mark: MarkMode,
+    question: QuestionRow,
+    scoreOverride?: number
+  ) {
+    /*
+     * この画面では1問ずつ採点するため、
+     * 既存結果を取得して該当問題だけ変更。
+     */
+    const grading =
+      await getGradingResult(
+        card.answer.id
+      );
+
+    const existingResults:
+      GradingResult[] =
+      Array.isArray(
+        grading?.results
+      )
+        ? grading.results
+        : [];
+
+    const result =
+      createLocalResult(
+        existingResults.find(
+          (
+            item: GradingResult
+          ) =>
+            item.questionId ===
+            question.id
+        ) ??
+          null,
+        question,
+        mark,
+        scoreOverride
+      );
+
+    const index =
+      existingResults.findIndex(
+        (
+          item: GradingResult
+        ) =>
+          item.questionId ===
+          question.id
+      );
+
+    const nextResults =
+      [...existingResults];
+
+    if (
+      index >=
+      0
+    ) {
+      nextResults[index] =
+        result;
+    } else {
+      nextResults.push(
+        result
+      );
+    }
+
+    const totalScore =
+      nextResults.reduce(
+        (
+          total,
+          item
+        ) =>
+          total +
+          safeNumber(
+            item.score
+          ),
+        0
+      );
+
+    const totalMaxScore =
+      nextResults.reduce(
+        (
+          total,
+          item
+        ) =>
+          total +
+          safeNumber(
+            item.maxScore
+          ),
+        0
+      );
+
+    /*
+     * 既存の一次確認保存処理を利用。
+     *
+     * reviewerIdには現在ログイン中UIDを使用。
+     */
+    const user =
+      await getAppUser();
+
+    if (
+      !user
+    ) {
+      throw new Error(
+        "ログインしてください。"
+      );
+    }
+
+    await saveFirstReview({
+      answerId:
+        card.answer.id,
+
+      testId:
+        card.answer.testId,
+
+      subjectId:
+        card.answer.subjectId,
+
+      studentNumber:
+        card.answer.studentNumber ??
+        "",
+
+      reviewerId:
+        user.uid,
+
+      results:
+        nextResults,
+
+      internalNote:
+        "",
+
+      publicAnnotation:
+        "",
+    });
+
+    void totalScore;
+    void totalMaxScore;
+  }
+
+  /* =======================================================
+     Keyboard
+     ======================================================= */
+
+  useEffect(() => {
+    function onKeyDown(
+      event: KeyboardEvent
+    ) {
+      /*
+       * input / textarea / select入力中は
+       * 採点ショートカットを発火させない。
+       */
+      const target =
+        event.target;
+
+      if (
+        target instanceof
+          HTMLInputElement ||
+        target instanceof
+          HTMLTextAreaElement ||
+        target instanceof
+          HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (
+        event.key ===
+        "k" ||
+        event.key ===
+        "K"
+      ) {
+        event.preventDefault();
+
+        void applyMark(
+          "○"
+        );
+
+        return;
+      }
+
+      if (
+        event.key ===
+        "l" ||
+        event.key ===
+        "L"
+      ) {
+        event.preventDefault();
+
+        void applyMark(
+          "×"
+        );
+
+        return;
+      }
+
+      if (
+        event.key ===
+        "Escape"
+      ) {
+        setMarkMode(
+          null
+        );
+
+        clearSelection();
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      onKeyDown
+    );
+
+    return () =>
+      window.removeEventListener(
+        "keydown",
+        onKeyDown
+      );
+  }, [
+    answers,
+    selectedQuestion,
+  ]);
+
+  /* =======================================================
+     Display answers
+     ======================================================= */
+
+  const visibleAnswers =
+    useMemo(
+      () =>
+        answers,
+      [
+        answers,
+      ]
+    );
+
+  const selectedCount =
     answers.filter(
       (
-        answer
+        card
       ) =>
-        answer.status ===
-        "error"
+        card.selected
     ).length;
 
   /* =======================================================
@@ -391,11 +1242,11 @@ export default function GradingPage() {
       <main className="page">
         <section className="content">
           <h1>
-            採点管理
+            採点
           </h1>
 
           <p>
-            採点状況を読み込んでいます...
+            採点画面を読み込んでいます...
           </p>
         </section>
       </main>
@@ -407,35 +1258,40 @@ export default function GradingPage() {
      ======================================================= */
 
   return (
-    <main className="page">
-      <section className="content">
+    <main
+      className="page"
+      style={{
+        minHeight:
+          "100vh",
+      }}
+    >
+      <section
+        className="content"
+        style={{
+          maxWidth:
+            1800,
 
+          margin:
+            "0 auto",
+        }}
+      >
         {/* ==================================================
             Header
             ================================================== */}
 
-        <header className="pageHeader">
+        <header
+          className="pageHeader"
+        >
           <div>
             <h1>
-              採点管理
+              採点
             </h1>
 
             <p className="muted">
-              答案の処理状況を確認し、必要な確認画面へ進みます。
+              同じ問題の答案を並べて一括で丸付けします。
             </p>
           </div>
-
-          <Link
-            href="/answers"
-            className="button"
-          >
-            答案管理
-          </Link>
         </header>
-
-        {/* ==================================================
-            Error
-            ================================================== */}
 
         {error && (
           <div
@@ -448,993 +1304,1054 @@ export default function GradingPage() {
           </div>
         )}
 
+        {message && (
+          <div
+            className="successMessage"
+            role="status"
+          >
+            {
+              message
+            }
+          </div>
+        )}
+
         {/* ==================================================
-            Flow
+            Test
             ================================================== */}
 
         <section
           className="card"
           style={{
             marginBottom:
-              18,
+              12,
           }}
         >
-          <h2>
-            採点フロー
-          </h2>
-
           <div
             style={{
               display:
                 "grid",
 
               gridTemplateColumns:
-                "repeat(5, minmax(0, 1fr))",
+                "minmax(0, 1fr) minmax(0, 1fr)",
 
               gap:
-                8,
-
-              marginTop:
-                14,
-            }}
-          >
-            <FlowStep
-              number="1"
-              label="答案受付"
-              count={
-                uploaded
-              }
-            />
-
-            <FlowStep
-              number="2"
-              label="採点処理"
-              count={
-                processing
-              }
-            />
-
-            <FlowStep
-              number="3"
-              label="一次確認"
-              count={
-                firstReview
-              }
-            />
-
-            <FlowStep
-              number="4"
-              label="二次確認"
-              count={
-                secondReview
-              }
-            />
-
-            <FlowStep
-              number="5"
-              label="確定"
-              count={
-                confirmed
-              }
-            />
-          </div>
-
-          {errors >
-            0 && (
-            <div
-              style={{
-                marginTop:
-                  12,
-
-                padding:
-                  11,
-
-                borderRadius:
-                  7,
-
-                background:
-                  "#fff1f1",
-
-                color:
-                  "#8a2222",
-
-                fontSize:
-                  12,
-              }}
-            >
-              処理エラー：
-              {
-                errors
-              }
-              件
-            </div>
-          )}
-        </section>
-
-        {/* ==================================================
-            Statistics
-            ================================================== */}
-
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(4, minmax(0, 1fr))",
-
-            gap:
-              10,
-
-            marginBottom:
-              16,
-          }}
-        >
-          <StatCard
-            label="答案総数"
-            value={
-              answers.length
-            }
-          />
-
-          <StatCard
-            label="採点済み"
-            value={
-              graded
-            }
-          />
-
-          <StatCard
-            label="一次確認待ち"
-            value={
-              firstReview
-            }
-          />
-
-          <StatCard
-            label="二次確認待ち"
-            value={
-              secondReview
-            }
-          />
-        </div>
-
-        {/* ==================================================
-            Filters
-            ================================================== */}
-
-        <section className="card">
-          <div
-            style={{
-              display:
-                "grid",
-
-              gridTemplateColumns:
-                "1fr 220px",
-
-              gap:
-                10,
-            }}
-          >
-            <input
-              value={
-                search
-              }
-              onChange={(
-                event
-              ) =>
-                setSearch(
-                  event.target
-                    .value
-                )
-              }
-              placeholder="生徒番号・氏名・テスト名・教科"
-            />
-
-            <select
-              value={
-                statusFilter
-              }
-              onChange={(
-                event
-              ) =>
-                setStatusFilter(
-                  event.target
-                    .value as
-                    | "all"
-                    | Answer["status"]
-                )
-              }
-            >
-              <option value="all">
-                すべて
-              </option>
-
-              <option value="uploaded">
-                受付済み
-              </option>
-
-              <option value="processing">
-                処理中
-              </option>
-
-              <option value="graded">
-                採点済み
-              </option>
-
-              <option value="first_review">
-                一次確認待ち
-              </option>
-
-              <option value="second_review">
-                二次確認待ち
-              </option>
-
-              <option value="confirmed">
-                確定
-              </option>
-
-              <option value="published">
-                公開済み
-              </option>
-
-              <option value="error">
-                エラー
-              </option>
-            </select>
-          </div>
-        </section>
-
-        {/* ==================================================
-            List
-            ================================================== */}
-
-        <section
-          className="card"
-          style={{
-            marginTop:
-              16,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "space-between",
-
-              alignItems:
-                "center",
-
-              marginBottom:
                 12,
             }}
           >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                答案一覧
-              </h2>
+            <label>
+              <strong>
+                テスト
+              </strong>
 
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "4px 0 0",
-
-                  fontSize:
-                    11,
-                }}
-              >
-                {
-                  filtered.length
+              <select
+                value={
+                  selectedTestId
                 }
-                件表示
-              </p>
-            </div>
-          </div>
+                onChange={(
+                  event
+                ) =>
+                  setSelectedTestId(
+                    event.target
+                      .value
+                  )
+                }
+                style={{
+                  width:
+                    "100%",
 
-          {filtered.length ===
-          0 ? (
+                  marginTop:
+                    6,
+                }}
+              >
+                <option value="">
+                  テストを選択
+                </option>
+
+                {tests.map(
+                  (
+                    test
+                  ) => (
+                    <option
+                      key={
+                        test.id
+                      }
+                      value={
+                        test.id
+                      }
+                    >
+                      {
+                        test.name
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              <strong>
+                問題
+              </strong>
+
+              <select
+                value={
+                  selectedQuestionId
+                }
+                onChange={(
+                  event
+                ) =>
+                  changeQuestion(
+                    event.target
+                      .value
+                  )
+                }
+                disabled={
+                  loadingQuestions ||
+                  questions.length ===
+                    0
+                }
+                style={{
+                  width:
+                    "100%",
+
+                  marginTop:
+                    6,
+                }}
+              >
+                {questions.map(
+                  (
+                    question
+                  ) => (
+                    <option
+                      key={
+                        question.id
+                      }
+                      value={
+                        question.id
+                      }
+                    >
+                      問
+                      {
+                        question.questionNumber
+                      }
+                      {" "}
+                      {
+                        question.title
+                      }
+                      {" / "}
+                      {
+                        question.maxScore
+                      }
+                      点
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        {!selectedQuestion ? (
+          <section className="card">
             <EmptyState />
-          ) : (
-            <div
+          </section>
+        ) : (
+          <>
+            {/* ==================================================
+                Question navigation
+                ================================================== */}
+
+            <section
+              className="card"
               style={{
-                overflowX:
-                  "auto",
+                marginBottom:
+                  12,
               }}
             >
-              <table className="dataTable">
-                <thead>
-                  <tr>
-                    <th>
-                      生徒
-                    </th>
+              <div
+                style={{
+                  display:
+                    "flex",
 
-                    <th>
-                      テスト
-                    </th>
+                  justifyContent:
+                    "space-between",
 
-                    <th>
-                      教科
-                    </th>
+                  alignItems:
+                    "center",
 
-                    <th>
-                      状態
-                    </th>
+                  gap:
+                    12,
+                }}
+              >
+                <div>
+                  <strong>
+                    問
+                    {
+                      selectedQuestion.questionNumber
+                    }
+                  </strong>
 
-                    <th>
-                      得点
-                    </th>
+                  <span
+                    style={{
+                      marginLeft:
+                        10,
+                    }}
+                  >
+                    {
+                      selectedQuestion.maxScore
+                    }
+                    点
+                  </span>
+                </div>
 
-                    <th>
-                      次の処理
-                    </th>
-                  </tr>
-                </thead>
+                <div
+                  style={{
+                    display:
+                      "flex",
 
-                <tbody>
-                  {filtered.map(
-                    (
-                      answer
-                    ) => (
-                      <tr
-                        key={
-                          answer.id
-                        }
-                      >
-                        <td>
-                          <strong>
-                            {
-                              answer.studentName ||
-                              "未紐付け"
-                            }
-                          </strong>
+                    gap:
+                      6,
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() =>
+                      moveQuestion(
+                        questions,
+                        selectedQuestionId,
+                        -1,
+                        changeQuestion
+                      )
+                    }
+                  >
+                    ← 前
+                  </button>
 
-                          <div
-                            className="muted"
-                            style={{
-                              fontSize:
-                                11,
-                            }}
-                          >
-                            {
-                              answer.studentNumber ||
-                              "生徒番号なし"
-                            }
-                          </div>
-                        </td>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() =>
+                      moveQuestion(
+                        questions,
+                        selectedQuestionId,
+                        1,
+                        changeQuestion
+                      )
+                    }
+                  >
+                    次 →
+                  </button>
+                </div>
+              </div>
+            </section>
 
-                        <td>
-                          {
-                            answer.testName
-                          }
-                        </td>
+            {/* ==================================================
+                Mark toolbar
+                ================================================== */}
 
-                        <td>
-                          {
-                            answer.subjectName ||
-                            "—"
-                          }
-                        </td>
+            <section
+              className="card"
+              style={{
+                marginBottom:
+                  12,
+              }}
+            >
+              <div
+                style={{
+                  display:
+                    "flex",
 
-                        <td>
-                          <StatusBadge
-                            status={
-                              answer.status
-                            }
-                          />
-                        </td>
+                  alignItems:
+                    "center",
 
-                        <td>
-                          {answer.totalMaxScore >
-                          0
-                            ? `${answer.totalScore} / ${answer.totalMaxScore}`
-                            : "—"}
-                        </td>
+                  gap:
+                    8,
 
-                        <td>
-                          <NextAction
-                            answerId={
-                              answer.id
-                            }
-                            status={
-                              answer.status
-                            }
-                          />
-                        </td>
-                      </tr>
+                  flexWrap:
+                    "wrap",
+                }}
+              >
+                <button
+                  type="button"
+                  className="button"
+                  onClick={
+                    selectAllVisible
+                  }
+                >
+                  全選択
+                </button>
+
+                <button
+                  type="button"
+                  className="button"
+                  onClick={
+                    clearSelection
+                  }
+                >
+                  選択解除
+                </button>
+
+                <span
+                  className="muted"
+                  style={{
+                    margin:
+                      "0 8px",
+                  }}
+                >
+                  {
+                    selectedCount
+                  }
+                  件選択
+                </span>
+
+                <button
+                  type="button"
+                  className="button"
+                  disabled={
+                    saving
+                  }
+                  onClick={() =>
+                    void applyMark(
+                      "○"
                     )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+                  }
+                >
+                  ○
+                </button>
+
+                <button
+                  type="button"
+                  className="button"
+                  disabled={
+                    saving
+                  }
+                  onClick={() =>
+                    void applyMark(
+                      "×"
+                    )
+                  }
+                >
+                  ×
+                </button>
+
+                <button
+                  type="button"
+                  className="button"
+                  disabled={
+                    saving
+                  }
+                  onClick={() =>
+                    void applyMark(
+                      "△"
+                    )
+                  }
+                >
+                  △
+                </button>
+
+                <span
+                  className="muted"
+                  style={{
+                    marginLeft:
+                      10,
+
+                    fontSize:
+                      11,
+                  }}
+                >
+                  K = ○　L = ×
+                </span>
+              </div>
+
+              {markMode ===
+                "△" && (
+                <div
+                  style={{
+                    marginTop:
+                      12,
+
+                    padding:
+                      12,
+
+                    background:
+                      "#f7f7f7",
+
+                    borderRadius:
+                      8,
+                  }}
+                >
+                  <strong>
+                    部分点
+                  </strong>
+
+                  <div
+                    style={{
+                      display:
+                        "flex",
+
+                      gap:
+                        6,
+
+                      flexWrap:
+                        "wrap",
+
+                      marginTop:
+                        8,
+                    }}
+                  >
+                    {createScoreOptions(
+                      selectedQuestion.maxScore
+                    ).map(
+                      (
+                        score
+                      ) => (
+                        <button
+                          key={
+                            score
+                          }
+                          type="button"
+                          className="button"
+                          disabled={
+                            saving
+                          }
+                          onClick={() =>
+                            void applyPartialScore(
+                              score
+                            )
+                          }
+                        >
+                          {
+                            score
+                          }
+                          点
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* ==================================================
+                Answer board
+                ================================================== */}
+
+            <section
+              className="card"
+              style={{
+                overflow:
+                  "hidden",
+              }}
+            >
+              <div
+                style={{
+                  marginBottom:
+                    12,
+                }}
+              >
+                <strong>
+                  問
+                  {
+                    selectedQuestion.questionNumber
+                  }
+                  の採点
+                </strong>
+
+                <span
+                  className="muted"
+                  style={{
+                    marginLeft:
+                      10,
+
+                    fontSize:
+                      11,
+                  }}
+                >
+                  画面に収まる答案を表示します
+                </span>
+              </div>
+
+              {loadingAnswers ? (
+                <div
+                  style={{
+                    padding:
+                      60,
+
+                    textAlign:
+                      "center",
+
+                    color:
+                      "#777",
+                  }}
+                >
+                  答案を読み込んでいます...
+                </div>
+              ) : visibleAnswers.length ===
+                0 ? (
+                <div
+                  style={{
+                    padding:
+                      60,
+
+                    textAlign:
+                      "center",
+
+                    color:
+                      "#777",
+                  }}
+                >
+                  このテストの答案がありません。
+                </div>
+              ) : (
+                <AnswerBoard
+                  question={
+                    selectedQuestion
+                  }
+                  answers={
+                    visibleAnswers
+                  }
+                  onToggle={
+                    toggleAnswer
+                  }
+                />
+              )}
+            </section>
+          </>
+        )}
       </section>
     </main>
   );
 }
 
 /* =========================================================
-   Flow
+   Answer board
    ========================================================= */
 
-function FlowStep({
-  number,
-  label,
-  count,
+function AnswerBoard({
+  question,
+  answers,
+  onToggle,
 }: {
-  number: string;
+  question: QuestionRow;
 
-  label: string;
+  answers: AnswerCard[];
 
-  count: number;
+  onToggle: (
+    answerId: string
+  ) => void;
 }) {
   return (
     <div
       style={{
-        padding:
-          12,
+        display:
+          "grid",
+
+        /*
+         * 模範解答1枚 +
+         * 生徒答案。
+         *
+         * auto-fitで画面幅に応じて
+         * 表示数を調整する。
+         */
+        gridTemplateColumns:
+          "repeat(auto-fit, minmax(190px, 1fr))",
+
+        gap:
+          10,
+
+        alignItems:
+          "start",
+      }}
+    >
+      {/* ==================================================
+          Model answer
+          ================================================== */}
+
+      <div
+        style={{
+          border:
+            "2px solid #222",
+
+          borderRadius:
+            8,
+
+          overflow:
+            "hidden",
+
+          background:
+            "#fff",
+        }}
+      >
+        <div
+          style={{
+            padding:
+              "7px 8px",
+
+            fontWeight:
+              700,
+
+            fontSize:
+              11,
+
+            background:
+              "#222",
+
+            color:
+              "#fff",
+
+            textAlign:
+              "center",
+          }}
+        >
+          模範解答
+        </div>
+
+        <div
+          style={{
+            aspectRatio:
+              "4 / 3",
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
+            padding:
+              10,
+
+            overflow:
+              "hidden",
+
+            background:
+              "#fafafa",
+          }}
+        >
+          <div
+            style={{
+              width:
+                "100%",
+
+              textAlign:
+                "center",
+
+              fontSize:
+                16,
+
+              lineHeight:
+                1.6,
+
+              wordBreak:
+                "break-word",
+            }}
+          >
+            {
+              question.correctAnswer ||
+              "正答未設定"
+            }
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding:
+              8,
+
+            fontSize:
+              10,
+
+            borderTop:
+              "1px solid #eee",
+          }}
+        >
+          配点：
+          {
+            question.maxScore
+          }
+          点
+        </div>
+      </div>
+
+      {/* ==================================================
+          Student answers
+          ================================================== */}
+
+      {answers.map(
+        (
+          card
+        ) => (
+          <AnswerTile
+            key={
+              card.answer.id
+            }
+            card={
+              card
+            }
+            onToggle={
+              onToggle
+            }
+          />
+        )
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   Answer tile
+   ========================================================= */
+
+function AnswerTile({
+  card,
+  onToggle,
+}: {
+  card: AnswerCard;
+
+  onToggle: (
+    answerId: string
+  ) => void;
+}) {
+  const mark =
+    card.result?.mark ??
+    null;
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        onToggle(
+          card.answer.id
+        )
+      }
+      style={{
+        position:
+          "relative",
 
         border:
-          "1px solid #ddd",
+          card.selected
+            ? "3px solid #111"
+            : "1px solid #ccc",
 
         borderRadius:
           8,
 
-        textAlign:
-          "center",
-      }}
-    >
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        STEP {number}
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-        }}
-      >
-        {
-          label
-        }
-      </strong>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            6,
-
-          fontSize:
-            22,
-        }}
-      >
-        {
-          count
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Stat
-   ========================================================= */
-
-function StatCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            22,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Status
-   ========================================================= */
-
-function StatusBadge({
-  status,
-}: {
-  status: Answer["status"];
-}) {
-  return (
-    <span
-      style={{
-        display:
-          "inline-block",
-
-        padding:
-          "4px 8px",
-
-        borderRadius:
-          999,
+        overflow:
+          "hidden",
 
         background:
-          getStatusBackground(
-            status
-          ),
+          "#fff",
 
-        fontSize:
-          11,
-
-        whiteSpace:
-          "nowrap",
-      }}
-    >
-      {
-        getStatusLabel(
-          status
-        )
-      }
-    </span>
-  );
-}
-
-function getStatusBackground(
-  status: Answer["status"]
-) {
-  if (
-    status ===
-      "confirmed" ||
-    status ===
-      "published"
-  ) {
-    return "#e8f5e9";
-  }
-
-  if (
-    status ===
-    "error"
-  ) {
-    return "#fff1f1";
-  }
-
-  if (
-    status ===
-      "first_review" ||
-    status ===
-      "second_review"
-  ) {
-    return "#fff4d6";
-  }
-
-  return "#f1f1f1";
-}
-
-function getStatusLabel(
-  status: Answer["status"]
-) {
-  switch (
-    status
-  ) {
-    case "uploaded":
-      return "受付済み";
-
-    case "processing":
-      return "処理中";
-
-    case "graded":
-      return "採点済み";
-
-    case "first_review":
-      return "一次確認";
-
-    case "second_review":
-      return "二次確認";
-
-    case "confirmed":
-      return "確定";
-
-    case "published":
-      return "公開済み";
-
-    case "error":
-      return "エラー";
-
-    default:
-      return "未設定";
-  }
-}
-
-/* =========================================================
-   Next action
-   ========================================================= */
-
-function NextAction({
-  answerId,
-  status,
-}: {
-  answerId: string;
-
-  status: Answer["status"];
-}) {
-  switch (
-    status
-  ) {
-    case "uploaded":
-    case "processing":
-      return (
-        <Link
-          href={`/answers?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button"
-        >
-          答案確認
-        </Link>
-      );
-
-    case "graded":
-    case "first_review":
-      return (
-        <Link
-          href={`/grading/review?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button primary"
-        >
-          一次確認
-        </Link>
-      );
-
-    case "second_review":
-      return (
-        <Link
-          href={`/grading/second-review?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button primary"
-        >
-          二次確認
-        </Link>
-      );
-
-    case "confirmed":
-      return (
-        <Link
-          href={`/results/management?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button"
-        >
-          成績確認
-        </Link>
-      );
-
-    case "published":
-      return (
-        <Link
-          href={`/results/management?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button"
-        >
-          成績確認
-        </Link>
-      );
-
-    case "error":
-      return (
-        <Link
-          href={`/answers?answerId=${encodeURIComponent(
-            answerId
-          )}`}
-          className="button"
-        >
-          エラー確認
-        </Link>
-      );
-
-    default:
-      return null;
-  }
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState() {
-  return (
-    <div
-      style={{
         padding:
-          55,
+          0,
+
+        cursor:
+          "pointer",
 
         textAlign:
-          "center",
+          "left",
 
-        color:
-          "#777",
+        boxShadow:
+          card.selected
+            ? "0 0 0 2px rgba(0,0,0,.08)"
+            : "none",
       }}
     >
-      <strong>
-        答案はありません。
-      </strong>
-
-      <p
+      <div
         style={{
-          marginTop:
-            6,
+          aspectRatio:
+            "4 / 3",
 
-          fontSize:
-            12,
+          position:
+            "relative",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          overflow:
+            "hidden",
+
+          background:
+            "#f5f5f5",
         }}
       >
-        登録された答案がここに表示されます。
-      </p>
-    </div>
+        {card.imageUrl ? (
+          <img
+            src={
+              card.imageUrl
+            }
+            alt=""
+            style={{
+              width:
+                "100%",
+
+              height:
+                "100%",
+
+              objectFit:
+                "contain",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              color:
+                "#999",
+
+              fontSize:
+                11,
+            }}
+          >
+            答案画像なし
+          </span>
+        )}
+
+        {mark && (
+          <span
+            style={{
+              position:
+                "absolute",
+
+              right:
+                8,
+
+              bottom:
+                8,
+
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              justifyContent:
+                "center",
+
+              width:
+                42,
+
+              height:
+                42,
+
+              borderRadius:
+                "50%",
+
+              background:
+                "rgba(255,255,255,.9)",
+
+              border:
+                "3px solid #111",
+
+              fontSize:
+                24,
+
+              fontWeight:
+                700,
+            }}
+          >
+            {
+              mark
+            }
+          </span>
+        )}
+      </div>
+
+      {card.result && (
+        <div
+          style={{
+            padding:
+              7,
+
+            borderTop:
+              "1px solid #eee",
+
+            textAlign:
+              "center",
+
+            fontSize:
+              11,
+          }}
+        >
+          {
+            card.result.score
+          }
+          {" / "}
+          {
+            card.result.maxScore
+          }
+          点
+        </div>
+      )}
+    </button>
   );
 }
 
 /* =========================================================
-   Normalize answer
+   Local result
    ========================================================= */
 
-function normalizeAnswer(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >,
-  students: Student[],
-  tests: Test[]
-): AnswerRow {
-  const studentId =
-    nullableString(
-      data.studentId
-    );
+function createLocalResult(
+  previous:
+    | GradingResult
+    | null,
+  question: QuestionRow,
+  mark: GradingMark,
+  scoreOverride?: number
+): GradingResult {
+  let score = 0;
 
-  const testId =
-    stringValue(
-      data.testId
-    );
-
-  const student =
-    students.find(
-      (
-        item
-      ) =>
-        item.id ===
-        studentId
-    );
-
-  const test =
-    tests.find(
-      (
-        item
-      ) =>
-        item.id ===
-          testId ||
-        item.testId ===
-          testId
-    );
+  if (
+    scoreOverride !==
+    undefined
+  ) {
+    score =
+      Math.max(
+        0,
+        Math.min(
+          question.maxScore,
+          scoreOverride
+        )
+      );
+  } else if (
+    mark ===
+    "○"
+  ) {
+    score =
+      question.maxScore;
+  }
 
   return {
-    id,
+    questionId:
+      question.id,
 
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
+    questionNumber:
+      question.questionNumber,
 
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    testId,
-
-    subjectId:
-      stringValue(
-        data.subjectId
-      ),
-
-    studentId,
-
-    studentNumber:
-      nullableString(
-        data.studentNumber
-      ),
-
-    fileKey:
-      stringValue(
-        data.fileKey
-      ),
-
-    fileName:
-      stringValue(
-        data.fileName
-      ),
-
-    contentType:
-      stringValue(
-        data.contentType
-      ),
-
-    size:
-      safeNumber(
-        data.size
-      ),
-
-    status:
-      normalizeStatus(
-        data.status
-      ),
-
-    reviewRequired:
-      data.reviewRequired ===
-      true,
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
-
-    qrText:
-      stringValue(
-        data.qrText
-      ),
-
-    qrConfidence:
-      safeNumber(
-        data.qrConfidence
-      ),
-
-    ocrConfidence:
-      safeNumber(
-        data.ocrConfidence
-      ),
-
-    processingError:
-      stringValue(
-        data.processingError
-      ),
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-
-    processedAt:
-      data.processedAt,
-
-    confirmedAt:
-      data.confirmedAt,
-
-    studentName:
-      student?.name ??
+    answerText:
+      previous?.answerText ??
       "",
 
-    testName:
-      test?.name ??
-      "テスト未設定",
+    mark,
 
-    subjectName:
-      stringValue(
-        data.subjectName
-      ),
+    score,
+
+    maxScore:
+      question.maxScore,
+
+    confidence:
+      previous?.confidence ??
+      1,
+
+    reviewRequired:
+      mark ===
+        "△" ||
+      question.requiresReview,
+
+    reason:
+      mark ===
+      "○"
+        ? "手動採点：正解"
+        : mark ===
+            "×"
+          ? "手動採点：不正解"
+          : "手動採点：部分点",
+
+    rubric:
+      question.rubric,
   };
 }
 
 /* =========================================================
-   Normalize student
+   Score options
    ========================================================= */
 
-function normalizeStudent(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): Student {
-  return {
-    id,
+function createScoreOptions(
+  maxScore: number
+) {
+  if (
+    maxScore <=
+    0
+  ) {
+    return [
+      0,
+    ];
+  }
 
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    name:
-      stringValue(
-        data.name
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    active:
-      data.active !==
-      false,
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
+  /*
+   * 1点刻み。
+   * 配点が大きい場合でも全点を選択可能。
+   */
+  return Array.from(
+    {
+      length:
+        maxScore +
+        1,
+    },
+    (
+      _,
+      index
+    ) =>
+      index
+  );
 }
 
 /* =========================================================
-   Normalize test
+   Question navigation
+   ========================================================= */
+
+function moveQuestion(
+  questions: QuestionRow[],
+  currentId: string,
+  direction: number,
+  change: (
+    id: string
+  ) => void
+) {
+  const index =
+    questions.findIndex(
+      (
+        question
+      ) =>
+        question.id ===
+        currentId
+    );
+
+  if (
+    index <
+    0
+  ) {
+    return;
+  }
+
+  const next =
+    index +
+    direction;
+
+  if (
+    next <
+      0 ||
+    next >=
+      questions.length
+  ) {
+    return;
+  }
+
+  change(
+    questions[next].id
+  );
+}
+
+/* =========================================================
+   Test normalize
    ========================================================= */
 
 function normalizeTest(
@@ -1519,76 +2436,115 @@ function normalizeTest(
 }
 
 /* =========================================================
-   Status
+   Question order
    ========================================================= */
 
-function normalizeStatus(
-  value: unknown
-): Answer["status"] {
-  switch (
-    value
-  ) {
-    case "uploaded":
-    case "processing":
-    case "graded":
-    case "first_review":
-    case "second_review":
-    case "confirmed":
-    case "published":
-    case "error":
-      return value;
+function questionOrder(
+  question: QuestionRow
+) {
+  const numeric =
+    Number(
+      question.questionNumber
+    );
 
-    default:
-      return "uploaded";
+  if (
+    Number.isFinite(
+      numeric
+    )
+  ) {
+    return numeric;
   }
+
+  return Number.MAX_SAFE_INTEGER;
 }
 
 /* =========================================================
-   Time
+   Empty
    ========================================================= */
 
-function getTime(
-  value: unknown
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding:
+          60,
+
+        textAlign:
+          "center",
+
+        color:
+          "#777",
+      }}
+    >
+      <strong>
+        採点する問題がありません。
+      </strong>
+
+      <p
+        style={{
+          marginTop:
+            6,
+
+          fontSize:
+            12,
+        }}
+      >
+        テストと問題を選択してください。
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   Error
+   ========================================================= */
+
+function userError(
+  error: unknown,
+  fallback: string
 ) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(
+          error ??
+            ""
+        );
+
   if (
-    value &&
-    typeof value ===
-      "object" &&
-    "toMillis" in
-      value &&
-    typeof (
-      value as {
-        toMillis?: unknown;
-      }
-    ).toMillis ===
-      "function"
+    message.includes(
+      "Missing or insufficient permissions"
+    ) ||
+    message.includes(
+      "permission-denied"
+    ) ||
+    message.includes(
+      "PERMISSION_DENIED"
+    )
   ) {
-    return (
-      value as {
-        toMillis: () => number;
-      }
-    ).toMillis();
+    return "この操作を実行する権限がありません。";
   }
 
   if (
-    value instanceof Date
+    message.includes(
+      "unauthenticated"
+    ) ||
+    message.includes(
+      "UNAUTHENTICATED"
+    )
   ) {
-    return value.getTime();
+    return "ログインが必要です。";
   }
 
-  const parsed =
-    new Date(
-      String(
-        value ??
-          ""
-      )
-    ).getTime();
+  if (
+    /[ぁ-んァ-ヶ一-龯]/.test(
+      message
+    )
+  ) {
+    return message;
+  }
 
-  return Number.isFinite(
-    parsed
-  )
-    ? parsed
-    : 0;
+  return fallback;
 }
 
 /* =========================================================
