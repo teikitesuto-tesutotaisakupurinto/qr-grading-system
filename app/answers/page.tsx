@@ -195,7 +195,7 @@ export default function AnswersPage() {
     );
 
   /* =======================================================
-     Current user / initial load
+     Initial
      ======================================================= */
 
   useEffect(() => {
@@ -212,9 +212,7 @@ export default function AnswersPage() {
           auth.currentUser
         );
 
-      if (
-        !user
-      ) {
+      if (!user) {
         throw new Error(
           "ログインしてください。"
         );
@@ -261,9 +259,9 @@ export default function AnswersPage() {
         };
 
       /*
-       * テストは組織内の共通テストとして扱う。
+       * テストは組織共通テスト。
        *
-       * 校舎選択は行わない。
+       * 校舎を選択せずに利用する。
        */
       const testDocuments =
         await getScopedDocs(
@@ -316,9 +314,6 @@ export default function AnswersPage() {
         loadedTests
       );
 
-      /*
-       * 最初から1件目を選択。
-       */
       if (
         loadedTests.length >
         0
@@ -353,7 +348,7 @@ export default function AnswersPage() {
   }
 
   /* =======================================================
-     Load answers for selected test
+     Load answers
      ======================================================= */
 
   useEffect(() => {
@@ -361,7 +356,6 @@ export default function AnswersPage() {
       !selectedTestId
     ) {
       setAnswers([]);
-
       setSelectedAnswerId(
         null
       );
@@ -386,9 +380,32 @@ export default function AnswersPage() {
 
       setError("");
 
+      const test =
+        tests.find(
+          (
+            item
+          ) =>
+            item.id ===
+            testId
+        );
+
+      if (
+        !test
+      ) {
+        setAnswers([]);
+        return;
+      }
+
+      /*
+       * subjectIdは現在のlib/answers.tsで
+       * 任意になっている。
+       */
       const loaded =
         await getAnswers(
-          testId
+          test.testId ||
+            test.id,
+          test.subject ||
+            undefined
         );
 
       const normalized =
@@ -497,7 +514,8 @@ export default function AnswersPage() {
       );
 
     /*
-     * 同じファイルをもう一度選択できるようにする。
+     * 同じファイルをもう一度
+     * 選択できるようにする。
      */
     event.target.value =
       "";
@@ -514,6 +532,14 @@ export default function AnswersPage() {
 
     const newItems =
       files
+        .filter(
+          (
+            file
+          ) =>
+            isSupportedFile(
+              file
+            )
+        )
         .map(
           (
             file
@@ -522,6 +548,17 @@ export default function AnswersPage() {
               file
             )
         );
+
+    if (
+      newItems.length ===
+      0
+    ) {
+      setError(
+        "対応している答案ファイルがありません。PDF・JPG・JPEG・PNG・WebPを使用してください。"
+      );
+
+      return;
+    }
 
     setUploadItems(
       (
@@ -565,7 +602,7 @@ export default function AnswersPage() {
   }
 
   /* =======================================================
-     Remove upload item
+     Remove upload
      ======================================================= */
 
   function removeUploadItem(
@@ -679,7 +716,7 @@ export default function AnswersPage() {
       0
     ) {
       setError(
-        "対応していないファイルがあります。PDF・JPG・JPEG・PNGを使用してください。"
+        "対応していないファイルがあります。PDF・JPG・JPEG・PNG・WebPを使用してください。"
       );
 
       return;
@@ -717,10 +754,16 @@ export default function AnswersPage() {
       );
 
       /*
-       * subjectIdは答案登録APIの既存仕様上必要。
+       * 校舎・生徒番号はここでは指定しない。
        *
-       * テストのsubject文字列を使用する。
-       * 校舎や生徒は指定しない。
+       * testId:
+       * 担当者が登録したテストID。
+       *
+       * subjectId:
+       * 現在のテストの教科。
+       *
+       * 生徒番号は答案上のQRから
+       * 後段で特定する。
        */
       const inputs =
         uploadItems.map(
@@ -740,12 +783,6 @@ export default function AnswersPage() {
           })
         );
 
-      /*
-       * 既存uploadAnswersを使用。
-       *
-       * 生徒番号は渡さない。
-       * 答案上の生徒QRから後段で特定する。
-       */
       const uploaded =
         await uploadAnswers(
           inputs,
@@ -784,10 +821,6 @@ export default function AnswersPage() {
           }
         );
 
-      /*
-       * アップロードされた答案を
-       * 完了状態へ。
-       */
       setUploadItems(
         (
           current: UploadItem[]
@@ -816,7 +849,7 @@ export default function AnswersPage() {
       );
 
       setMessage(
-        `${uploaded.length}件の答案を受け付けました。QR読み取り・答案処理後、採点対象になります。`
+        `${uploaded.length}件の答案を受け付けました。答案処理後、採点対象になります。`
       );
 
       await loadAnswersForTest(
@@ -829,6 +862,12 @@ export default function AnswersPage() {
         "Answer upload error:",
         error
       );
+
+      const message =
+        toUserMessage(
+          error,
+          "答案をアップロードできませんでした。"
+        );
 
       setUploadState(
         "error"
@@ -848,19 +887,13 @@ export default function AnswersPage() {
                 "error",
 
               error:
-                toUserMessage(
-                  error,
-                  "アップロードに失敗しました。"
-                ),
+                message,
             })
           )
       );
 
       setError(
-        toUserMessage(
-          error,
-          "答案をアップロードできませんでした。"
-        )
+        message
       );
     }
   }
@@ -1058,7 +1091,10 @@ export default function AnswersPage() {
 
           const searchMatch =
             !keyword ||
-            answer.studentName
+            (
+              answer.studentName ||
+              ""
+            )
               .toLowerCase()
               .includes(
                 keyword
@@ -1196,13 +1232,23 @@ export default function AnswersPage() {
 
   return (
     <main className="page">
-      <section className="content">
+      <section
+        className="content"
+        style={{
+          maxWidth:
+            1500,
 
+          margin:
+            "0 auto",
+        }}
+      >
         {/* ==================================================
             Header
             ================================================== */}
 
-        <header className="pageHeader">
+        <header
+          className="pageHeader"
+        >
           <div>
             <h1>
               答案
@@ -1251,7 +1297,9 @@ export default function AnswersPage() {
             Test selection
             ================================================== */}
 
-        <section className="card">
+        <section
+          className="card"
+        >
           <h2>
             1. テストを選択
           </h2>
@@ -1264,6 +1312,9 @@ export default function AnswersPage() {
 
               fontSize:
                 12,
+
+              lineHeight:
+                1.7,
             }}
           >
             校舎や生徒を指定する必要はありません。テストを選択した後、答案をアップロードします。
@@ -1319,10 +1370,6 @@ export default function AnswersPage() {
                     .value
                 );
 
-                /*
-                 * テスト変更時に
-                 * アップロード候補をクリア。
-                 */
                 clearUploadItems();
 
                 setError("");
@@ -1427,6 +1474,9 @@ export default function AnswersPage() {
 
               fontSize:
                 12,
+
+              lineHeight:
+                1.7,
             }}
           >
             テストを選択してから答案画像を選択してください。生徒番号・校舎の入力は不要です。
@@ -1437,7 +1487,7 @@ export default function AnswersPage() {
               fileInputRef
             }
             type="file"
-            accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp,application/pdf"
             multiple
             onChange={
               handleFileChange
@@ -1479,7 +1529,7 @@ export default function AnswersPage() {
                   11,
               }}
             >
-              PDF / JPG / JPEG / PNG
+              PDF / JPG / JPEG / PNG / WebP
             </span>
           )}
 
@@ -1566,9 +1616,7 @@ export default function AnswersPage() {
                           src={
                             item.previewUrl
                           }
-                          alt={
-                            item.file.name
-                          }
+                          alt=""
                           style={{
                             display:
                               "block",
@@ -2129,18 +2177,21 @@ export default function AnswersPage() {
 
                         <td>
                           {
-                            answer.totalScore
+                            answer.totalScore ??
+                            0
                           }
                           {" / "}
                           {
-                            answer.totalMaxScore
+                            answer.totalMaxScore ??
+                            0
                           }
                         </td>
 
                         <td>
                           {
                             formatConfidence(
-                              answer.qrConfidence
+                              answer.qrConfidence ??
+                              0
                             )
                           }
                         </td>
@@ -2148,7 +2199,8 @@ export default function AnswersPage() {
                         <td>
                           {
                             formatConfidence(
-                              answer.ocrConfidence
+                              answer.ocrConfidence ??
+                              0
                             )
                           }
                         </td>
@@ -2253,7 +2305,7 @@ export default function AnswersPage() {
                       src={
                         imageUrl
                       }
-                      alt="答案画像"
+                      alt=""
                       style={{
                         display:
                           "block",
@@ -2357,14 +2409,15 @@ export default function AnswersPage() {
 
                   <Info
                     label="得点"
-                    value={`${selectedAnswer.totalScore} / ${selectedAnswer.totalMaxScore}`}
+                    value={`${selectedAnswer.totalScore ?? 0} / ${selectedAnswer.totalMaxScore ?? 0}`}
                   />
 
                   <Info
                     label="QR認識"
                     value={
                       formatConfidence(
-                        selectedAnswer.qrConfidence
+                        selectedAnswer.qrConfidence ??
+                        0
                       )
                     }
                   />
@@ -2373,7 +2426,8 @@ export default function AnswersPage() {
                     label="OCR認識"
                     value={
                       formatConfidence(
-                        selectedAnswer.ocrConfidence
+                        selectedAnswer.ocrConfidence ??
+                        0
                       )
                     }
                   />
@@ -2869,6 +2923,8 @@ function isSupportedFile(
       "image/jpeg" ||
     file.type ===
       "image/png" ||
+    file.type ===
+      "image/webp" ||
     name.endsWith(
       ".pdf"
     ) ||
@@ -2880,6 +2936,9 @@ function isSupportedFile(
     ) ||
     name.endsWith(
       ".png"
+    ) ||
+    name.endsWith(
+      ".webp"
     )
   );
 }
@@ -2968,6 +3027,10 @@ function toUserMessage(
             ""
         );
 
+  /*
+   * Firebaseの内部エラーを
+   * そのまま画面に出さない。
+   */
   if (
     message.includes(
       "Missing or insufficient permissions"
@@ -2979,7 +3042,7 @@ function toUserMessage(
       "PERMISSION_DENIED"
     )
   ) {
-    return "この操作を実行する権限がありません。ログイン状態と所属情報を確認してください。";
+    return "この操作を実行する権限がありません。";
   }
 
   if (
@@ -3004,10 +3067,19 @@ function toUserMessage(
     return "対象のデータが見つかりません。";
   }
 
-  return (
-    message ||
-    fallback
-  );
+  /*
+   * 既に日本語化されている
+   * アプリ側エラーはそのまま表示。
+   */
+  if (
+    /[ぁ-んァ-ヶ一-龯]/.test(
+      message
+    )
+  ) {
+    return message;
+  }
+
+  return fallback;
 }
 
 /* =========================================================
