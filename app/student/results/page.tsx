@@ -10,6 +10,7 @@ import Link from "next/link";
 
 import {
   auth,
+  db,
 } from "@/lib/firebase";
 
 import {
@@ -17,36 +18,51 @@ import {
 } from "@/lib/auth";
 
 import {
-  getScopedDocs,
-  resultsQueries,
-  type FirestoreUser,
-} from "@/lib/firestore-scope";
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+} from "firebase/firestore";
 
-import type {
-  StudentResult,
-} from "@/lib/types";
 
-/* =========================================================
-   Types
-   ========================================================= */
+type StudentResult = {
+  id: string;
 
-type ResultRow =
-  StudentResult & {
-    percentage: number;
-  };
+  testName: string;
 
-/* =========================================================
-   Page
-   ========================================================= */
+  subject: string;
+
+  score: number;
+
+  maxScore: number;
+
+  average: number | null;
+
+  deviationScore: number | null;
+
+  rank: number | null;
+
+  population: number | null;
+
+  examDate: string;
+};
+
 
 export default function StudentResultsPage() {
   const [
     results,
     setResults,
   ] =
-    useState<ResultRow[]>(
+    useState<StudentResult[]>(
       []
     );
+
+  const [
+    studentName,
+    setStudentName,
+  ] =
+    useState("");
 
   const [
     loading,
@@ -60,35 +76,11 @@ export default function StudentResultsPage() {
   ] =
     useState("");
 
-  const [
-    search,
-    setSearch,
-  ] =
-    useState("");
-
-  const [
-    subjectFilter,
-    setSubjectFilter,
-  ] =
-    useState("");
-
-  const [
-    sourceFilter,
-    setSourceFilter,
-  ] =
-    useState<
-      "all" | "通常" | "追試"
-    >(
-      "all"
-    );
-
-  /* =======================================================
-     Load
-     ======================================================= */
 
   useEffect(() => {
     void loadResults();
   }, []);
+
 
   async function loadResults() {
     try {
@@ -101,6 +93,7 @@ export default function StudentResultsPage() {
           auth.currentUser
         );
 
+
       if (
         !user
       ) {
@@ -109,22 +102,16 @@ export default function StudentResultsPage() {
         );
       }
 
+
       if (
         user.role !==
         "生徒"
       ) {
         throw new Error(
-          "この画面は生徒用です。"
+          "生徒画面ではありません。"
         );
       }
 
-      if (
-        !user.organizationId
-      ) {
-        throw new Error(
-          "所属組織が設定されていません。"
-        );
-      }
 
       if (
         !user.studentId
@@ -134,71 +121,135 @@ export default function StudentResultsPage() {
         );
       }
 
-      const scopeUser:
-        FirestoreUser =
-        {
-          uid:
-            user.uid,
 
-          organizationId:
-            user.organizationId,
+      /*
+       * 生徒情報
+       */
+      const studentSnapshot =
+        await import(
+          "firebase/firestore"
+        ).then(
+          ({
+            getDoc,
+            doc,
+          }) =>
+            getDoc(
+              doc(
+                db,
+                "students",
+                user.studentId!
+              )
+            )
+        );
 
-          role:
-            user.role,
 
-          schoolIds:
-            user.schoolIds,
+      if (
+        studentSnapshot.exists()
+      ) {
+        setStudentName(
+          String(
+            studentSnapshot.data()
+              .name ?? ""
+          )
+        );
+      }
 
-          studentId:
-            user.studentId,
-        };
 
-      const documents =
-        await getScopedDocs(
-          resultsQueries(
-            scopeUser
+      /*
+       * 自分の成績のみ取得
+       */
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "results"
+            ),
+
+            where(
+              "studentId",
+              "==",
+              user.studentId
+            ),
+
+            orderBy(
+              "createdAt",
+              "desc"
+            )
           )
         );
 
+
       const loaded =
-        documents
-          .map(
-            (
-              item
-            ) =>
-              normalizeResult(
+        snapshot.docs.map(
+          (
+            item
+          ) => {
+            const data =
+              item.data();
+
+            return {
+              id:
                 item.id,
-                item.data
-              )
-          )
-          .filter(
-            (
-              result
-            ) =>
-              result.studentId ===
-              user.studentId
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              getTime(
-                b.createdAt
-              ) -
-              getTime(
-                a.createdAt
-              )
-          );
+
+              testName:
+                stringValue(
+                  data.testName
+                ),
+
+              subject:
+                stringValue(
+                  data.subject
+                ),
+
+              score:
+                numberValue(
+                  data.score
+                ),
+
+              maxScore:
+                numberValue(
+                  data.maxScore
+                ),
+
+              average:
+                nullableNumber(
+                  data.average
+                ),
+
+              deviationScore:
+                nullableNumber(
+                  data.deviationScore
+                ),
+
+              rank:
+                nullableNumber(
+                  data.rank
+                ),
+
+              population:
+                nullableNumber(
+                  data.population
+                ),
+
+              examDate:
+                stringValue(
+                  data.examDate
+                ),
+            };
+          }
+        );
+
 
       setResults(
         loaded
       );
+
+
     } catch (
       error
     ) {
       console.error(
-        "Student results error:",
         error
       );
 
@@ -207,127 +258,54 @@ export default function StudentResultsPage() {
           ? error.message
           : "成績を取得できませんでした。"
       );
+
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
 
-  /* =======================================================
-     Subjects
-     ======================================================= */
 
-  const subjects =
+  const grouped =
     useMemo(
-      () =>
-        Array.from(
-          new Set(
-            results
-              .map(
-                (
-                  result
-                ) =>
-                  result.subject
-              )
-              .filter(
-                Boolean
-              )
-          )
-        ).sort(),
+      () => {
+        const map =
+          new Map<
+            string,
+            StudentResult[]
+          >();
+
+        results.forEach(
+          (
+            result
+          ) => {
+            const list =
+              map.get(
+                result.testName
+              ) ??
+              [];
+
+            list.push(
+              result
+            );
+
+            map.set(
+              result.testName,
+              list
+            );
+          }
+        );
+
+        return Array.from(
+          map.entries()
+        );
+      },
       [
         results,
       ]
     );
 
-  /* =======================================================
-     Filter
-     ======================================================= */
-
-  const filtered =
-    useMemo(() => {
-      const keyword =
-        search
-          .trim()
-          .toLowerCase();
-
-      return results.filter(
-        (
-          result
-        ) => {
-          const searchMatch =
-            !keyword ||
-            result.testName
-              .toLowerCase()
-              .includes(
-                keyword
-              ) ||
-            result.subject
-              .toLowerCase()
-              .includes(
-                keyword
-              );
-
-          const subjectMatch =
-            !subjectFilter ||
-            result.subject ===
-              subjectFilter;
-
-          const sourceMatch =
-            sourceFilter ===
-              "all" ||
-            result.source ===
-              sourceFilter;
-
-          return (
-            searchMatch &&
-            subjectMatch &&
-            sourceMatch
-          );
-        }
-      );
-    }, [
-      results,
-      search,
-      subjectFilter,
-      sourceFilter,
-    ]);
-
-  /* =======================================================
-     Summary
-     ======================================================= */
-
-  const averagePercentage =
-    filtered.length ===
-    0
-      ? null
-      : filtered.reduce(
-          (
-            total,
-            result
-          ) =>
-            total +
-            result.percentage,
-          0
-        ) /
-        filtered.length;
-
-  const averageScore =
-    filtered.length ===
-    0
-      ? null
-      : filtered.reduce(
-          (
-            total,
-            result
-          ) =>
-            total +
-            result.score,
-          0
-        ) /
-        filtered.length;
-
-  /* =======================================================
-     Loading
-     ======================================================= */
 
   if (
     loading
@@ -335,67 +313,62 @@ export default function StudentResultsPage() {
     return (
       <main className="page">
         <section className="content">
-          <div
-            style={{
-              minHeight:
-                400,
+          <h1>
+            成績一覧
+          </h1>
 
-              display:
-                "flex",
-
-              alignItems:
-                "center",
-
-              justifyContent:
-                "center",
-            }}
-          >
-            成績を読み込んでいます...
-          </div>
+          <p>
+            読み込み中...
+          </p>
         </section>
       </main>
     );
   }
 
-  /* =======================================================
-     Render
-     ======================================================= */
 
   return (
     <main className="page">
-      <section className="content">
+      <section
+        className="content"
+        style={{
+          maxWidth:
+            1000,
 
-        {/* ==================================================
-            Header
-            ================================================== */}
+          margin:
+            "0 auto",
+        }}
+      >
 
-        <header className="pageHeader">
+        <header
+          className="pageHeader"
+        >
           <div>
             <h1>
               成績一覧
             </h1>
 
             <p className="muted">
-              あなた自身の確定済み成績です。
+              {
+                studentName
+              }
+              さんの成績
             </p>
           </div>
+
 
           <Link
             href="/dashboard/student"
             className="button"
           >
-            ホーム
+            ホームへ戻る
           </Link>
+
         </header>
 
-        {/* ==================================================
-            Error
-            ================================================== */}
 
         {error && (
           <div
             className="errorMessage"
-            role="alert"
           >
             {
               error
@@ -403,699 +376,136 @@ export default function StudentResultsPage() {
           </div>
         )}
 
-        {/* ==================================================
-            Summary
-            ================================================== */}
 
-        <div
-          style={{
-            display:
-              "grid",
-
-            gridTemplateColumns:
-              "repeat(3, minmax(0, 1fr))",
-
-            gap:
-              12,
-
-            marginBottom:
-              16,
-          }}
-        >
-          <SummaryCard
-            label="成績件数"
-            value={
-              filtered.length
-            }
-          />
-
-          <SummaryCard
-            label="平均得点率"
-            value={
-              averagePercentage ===
-              null
-                ? "—"
-                : `${averagePercentage.toFixed(
-                    1
-                  )}%`
-            }
-          />
-
-          <SummaryCard
-            label="平均点"
-            value={
-              averageScore ===
-              null
-                ? "—"
-                : averageScore.toFixed(
-                    1
-                  )
-            }
-          />
-        </div>
-
-        {/* ==================================================
-            Filters
-            ================================================== */}
-
-        <section className="card">
-          <div
-            style={{
-              display:
-                "grid",
-
-              gridTemplateColumns:
-                "1fr 180px 180px",
-
-              gap:
-                10,
-            }}
-          >
-            <input
-              value={
-                search
-              }
-              onChange={(
-                event
-              ) =>
-                setSearch(
-                  event.target
-                    .value
-                )
-              }
-              placeholder="テスト名・教科"
-            />
-
-            <select
-              value={
-                subjectFilter
-              }
-              onChange={(
-                event
-              ) =>
-                setSubjectFilter(
-                  event.target
-                    .value
-                )
-              }
-            >
-              <option value="">
-                全教科
-              </option>
-
-              {subjects.map(
-                (
-                  subject
-                ) => (
-                  <option
-                    key={
-                      subject
-                    }
-                    value={
-                      subject
-                    }
-                  >
-                    {
-                      subject
-                    }
-                  </option>
-                )
-              )}
-            </select>
-
-            <select
-              value={
-                sourceFilter
-              }
-              onChange={(
-                event
-              ) =>
-                setSourceFilter(
-                  event.target
-                    .value as
-                    | "all"
-                    | "通常"
-                    | "追試"
-                )
-              }
-            >
-              <option value="all">
-                通常・追試
-              </option>
-
-              <option value="通常">
-                通常
-              </option>
-
-              <option value="追試">
-                追試
-              </option>
-            </select>
-          </div>
-        </section>
-
-        {/* ==================================================
-            Results
-            ================================================== */}
-
-        <section
-          className="card"
-          style={{
-            marginTop:
-              16,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "space-between",
-
-              alignItems:
-                "center",
-
-              marginBottom:
-                12,
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                成績
-              </h2>
-
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "4px 0 0",
-
-                  fontSize:
-                    11,
-                }}
-              >
-                {
-                  filtered.length
+        {grouped.length ===
+        0 ? (
+          <section className="card">
+            <p>
+              成績がありません。
+            </p>
+          </section>
+        ) : (
+          grouped.map(
+            (
+              [
+                testName,
+                items,
+              ]
+            ) => (
+              <section
+                key={
+                  testName
                 }
-                件
-              </p>
-            </div>
+                className="card"
+                style={{
+                  marginBottom:
+                    16,
+                }}
+              >
 
-            <Link
-              href="/student/reports"
-              className="button"
-            >
-              成績表
-            </Link>
-          </div>
+                <h2>
+                  {
+                    testName
+                  }
+                </h2>
 
-          {filtered.length ===
-          0 ? (
-            <EmptyState />
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table className="dataTable">
-                <thead>
-                  <tr>
-                    <th>
-                      テスト
-                    </th>
 
-                    <th>
-                      教科
-                    </th>
+                {items.map(
+                  (
+                    result
+                  ) => (
+                    <div
+                      key={
+                        result.id
+                      }
+                      style={{
+                        padding:
+                          14,
 
-                    <th>
-                      得点
-                    </th>
+                        borderBottom:
+                          "1px solid #eee",
+                      }}
+                    >
 
-                    <th>
-                      得点率
-                    </th>
-
-                    <th>
-                      平均
-                    </th>
-
-                    <th>
-                      偏差値
-                    </th>
-
-                    <th>
-                      順位
-                    </th>
-
-                    <th>
-                      種別
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filtered.map(
-                    (
-                      result
-                    ) => (
-                      <tr
-                        key={
-                          result.id
+                      <strong>
+                        {
+                          result.subject
                         }
+                      </strong>
+
+
+                      <div
+                        style={{
+                          marginTop:
+                            8,
+
+                          fontSize:
+                            20,
+                        }}
                       >
-                        <td>
-                          <strong>
-                            {
-                              result.testName
-                            }
-                          </strong>
-                        </td>
+                        {
+                          result.score
+                        }
+                        {" / "}
+                        {
+                          result.maxScore
+                        }
+                      </div>
 
-                        <td>
-                          {
-                            result.subject
-                          }
-                        </td>
 
-                        <td>
-                          <strong>
-                            {
-                              result.score
-                            }
-                          </strong>
+                      <div
+                        className="muted"
+                        style={{
+                          marginTop:
+                            8,
+                        }}
+                      >
+                        平均：
+                        {
+                          result.average ??
+                          "—"
+                        }
 
-                          {" / "}
+                        {"　"}
 
-                          {
-                            result.maxScore
-                          }
-                        </td>
+                        偏差値：
+                        {
+                          result.deviationScore ??
+                          "—"
+                        }
 
-                        <td>
-                          {
-                            result.percentage.toFixed(
-                              1
-                            )
-                          }
-                          %
-                        </td>
+                        {"　"}
 
-                        <td>
-                          {
-                            result.average ===
-                            null
-                              ? "—"
-                              : result.average.toFixed(
-                                  1
-                                )
-                          }
-                        </td>
+                        順位：
+                        {
+                          result.rank ?? 
+                          "—"
+                        }
 
-                        <td>
-                          {
-                            result.deviationScore ===
-                            null
-                              ? "—"
-                              : result.deviationScore.toFixed(
-                                  1
-                                )
-                          }
-                        </td>
+                        {
+                          result.population
+                            ? ` / ${result.population}`
+                            : ""
+                        }
+                      </div>
 
-                        <td>
-                          {
-                            formatRank(
-                              result.rank,
-                              result.population
-                            )
-                          }
-                        </td>
+                    </div>
+                  )
+                )}
 
-                        <td>
-                          <SourceBadge
-                            source={
-                              result.source
-                            }
-                          />
-                        </td>
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+              </section>
+            )
+          )
+        )}
+
       </section>
     </main>
   );
 }
 
-/* =========================================================
-   Summary
-   ========================================================= */
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value:
-    | string
-    | number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            22,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
 
 /* =========================================================
-   Source
-   ========================================================= */
-
-function SourceBadge({
-  source,
-}: {
-  source:
-    | "通常"
-    | "追試";
-}) {
-  return (
-    <span
-      style={{
-        display:
-          "inline-block",
-
-        padding:
-          "4px 8px",
-
-        borderRadius:
-          999,
-
-        background:
-          source ===
-          "追試"
-            ? "#f1f1f1"
-            : "#e8f5e9",
-
-        fontSize:
-          10,
-      }}
-    >
-      {
-        source
-      }
-    </span>
-  );
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState() {
-  return (
-    <div
-      style={{
-        padding:
-          55,
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
-      }}
-    >
-      <strong>
-        成績はありません。
-      </strong>
-
-      <p
-        style={{
-          marginTop:
-            6,
-
-          fontSize:
-            12,
-        }}
-      >
-        採点が確定すると、ここに成績が表示されます。
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   Normalize
-   ========================================================= */
-
-function normalizeResult(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): ResultRow {
-  const score =
-    safeNumber(
-      data.score
-    );
-
-  const maxScore =
-    safeNumber(
-      data.maxScore
-    );
-
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    studentId:
-      stringValue(
-        data.studentId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    testId:
-      stringValue(
-        data.testId
-      ),
-
-    testName:
-      stringValue(
-        data.testName
-      ) ||
-      "テスト未設定",
-
-    subject:
-      stringValue(
-        data.subject
-      ),
-
-    score,
-
-    maxScore,
-
-    percentage:
-      nullableNumber(
-        data.percentage
-      ) ??
-      calculatePercentage(
-        score,
-        maxScore
-      ),
-
-    average:
-      nullableNumber(
-        data.average
-      ),
-
-    deviationScore:
-      nullableNumber(
-        data.deviationScore
-      ),
-
-    rank:
-      nullableNumber(
-        data.rank
-      ),
-
-    population:
-      nullableNumber(
-        data.population
-      ),
-
-    source:
-      data.source ===
-      "追試"
-        ? "追試"
-        : "通常",
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Rank
-   ========================================================= */
-
-function formatRank(
-  rank:
-    | number
-    | null,
-
-  population:
-    | number
-    | null
-) {
-  if (
-    rank ===
-    null
-  ) {
-    return "—";
-  }
-
-  if (
-    population ===
-    null
-  ) {
-    return String(
-      rank
-    );
-  }
-
-  return `${rank} / ${population}`;
-}
-
-/* =========================================================
-   Percentage
-   ========================================================= */
-
-function calculatePercentage(
-  score: number,
-  maxScore: number
-) {
-  if (
-    maxScore <=
-    0
-  ) {
-    return 0;
-  }
-
-  return (
-    score /
-    maxScore *
-    100
-  );
-}
-
-/* =========================================================
-   Time
-   ========================================================= */
-
-function getTime(
-  value: unknown
-) {
-  if (
-    value &&
-    typeof value ===
-      "object" &&
-    "toMillis" in
-      value &&
-    typeof (
-      value as {
-        toMillis?: unknown;
-      }
-    ).toMillis ===
-      "function"
-  ) {
-    return (
-      value as {
-        toMillis: () => number;
-      }
-    ).toMillis();
-  }
-
-  if (
-    value instanceof Date
-  ) {
-    return value.getTime();
-  }
-
-  const parsed =
-    new Date(
-      String(
-        value ??
-          ""
-      )
-    ).getTime();
-
-  return Number.isFinite(
-    parsed
-  )
-    ? parsed
-    : 0;
-}
-
-/* =========================================================
-   Primitive
+   Helpers
    ========================================================= */
 
 function stringValue(
@@ -1107,16 +517,30 @@ function stringValue(
     : "";
 }
 
+
+function numberValue(
+  value: unknown
+) {
+  const number =
+    Number(
+      value ??
+      0
+    );
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
+}
+
+
 function nullableNumber(
   value: unknown
 ) {
   if (
-    value ===
-      null ||
-    value ===
-      undefined ||
-    value ===
-      ""
+    value === null ||
+    value === undefined
   ) {
     return null;
   }
@@ -1131,20 +555,4 @@ function nullableNumber(
   )
     ? number
     : null;
-}
-
-function safeNumber(
-  value: unknown
-) {
-  const number =
-    Number(
-      value ??
-        0
-    );
-
-  return Number.isFinite(
-    number
-  )
-    ? number
-    : 0;
 }
