@@ -58,10 +58,6 @@ import type {
    Types
    ========================================================= */
 
-type TestRow =
-  Test;
-
-
 type QuestionRow =
   TestQuestion & {
     order:number;
@@ -69,7 +65,6 @@ type QuestionRow =
 
 
 type QuestionAnswerCard = {
-
   answer:Answer;
 
   questionId:string;
@@ -88,9 +83,6 @@ type QuestionAnswerCard = {
     | null;
 
   selected:boolean;
-
-  saving:boolean;
-
 };
 
 
@@ -98,7 +90,6 @@ type MarkMode =
   | "○"
   | "×"
   | "△";
-
 
 
 /* =========================================================
@@ -111,54 +102,14 @@ export default function GradingPage(){
     role,
     setRole,
   ] =
-  useState<UserRole|null>(
-    null
-  );
+  useState<UserRole|null>(null);
 
 
   const [
     tests,
     setTests,
   ] =
-  useState<TestRow[]>(
-    []
-  );
-
-
-  const [
-    templates,
-    setTemplates,
-  ] =
-  useState<AnswerTemplate[]>(
-    []
-  );
-
-
-  const [
-    gradingTemplate,
-    setGradingTemplate,
-  ] =
-  useState<GradingTemplate|null>(
-    null
-  );
-
-
-  const [
-    questions,
-    setQuestions,
-  ] =
-  useState<QuestionRow[]>(
-    []
-  );
-
-
-  const [
-    answers,
-    setAnswers,
-  ] =
-  useState<QuestionAnswerCard[]>(
-    []
-  );
+  useState<Test[]>([]);
 
 
   const [
@@ -169,10 +120,31 @@ export default function GradingPage(){
 
 
   const [
+    templates,
+    setTemplates,
+  ] =
+  useState<AnswerTemplate[]>([]);
+
+
+  const [
     selectedTemplateId,
     setSelectedTemplateId,
   ] =
   useState("");
+
+
+  const [
+    gradingTemplate,
+    setGradingTemplate,
+  ] =
+  useState<GradingTemplate|null>(null);
+
+
+  const [
+    questions,
+    setQuestions,
+  ] =
+  useState<QuestionRow[]>([]);
 
 
   const [
@@ -183,24 +155,17 @@ export default function GradingPage(){
 
 
   const [
+    answers,
+    setAnswers,
+  ] =
+  useState<QuestionAnswerCard[]>([]);
+
+
+  const [
     loading,
     setLoading,
   ] =
   useState(true);
-
-
-  const [
-    loadingAnswers,
-    setLoadingAnswers,
-  ] =
-  useState(false);
-
-
-  const [
-    loadingQuestions,
-    setLoadingQuestions,
-  ] =
-  useState(false);
 
 
   const [
@@ -218,24 +183,21 @@ export default function GradingPage(){
 
 
   const [
-    markMode,
-    setMarkMode,
-  ] =
-  useState<MarkMode|null>(
-    null
-  );
-
-
-  const [
     saving,
     setSaving,
   ] =
   useState(false);
 
 
+  const [
+    markMode,
+    setMarkMode,
+  ] =
+  useState<MarkMode|null>(null);
+
 
   /* =======================================================
-     Initialize
+     Init
      ======================================================= */
 
   useEffect(()=>{
@@ -249,8 +211,6 @@ export default function GradingPage(){
     try{
 
       setLoading(true);
-
-      setError("");
 
 
       const user =
@@ -268,9 +228,7 @@ export default function GradingPage(){
       }
 
 
-      if(
-        user.role === "生徒"
-      ){
+      if(user.role==="生徒"){
 
         throw new Error(
           "採点権限がありません。"
@@ -282,17 +240,6 @@ export default function GradingPage(){
       setRole(
         user.role
       );
-
-
-      if(
-        !user.organizationId
-      ){
-
-        throw new Error(
-          "所属組織がありません。"
-        );
-
-      }
 
 
       const snapshot =
@@ -360,6 +307,7 @@ export default function GradingPage(){
         )
       );
 
+
     }finally{
 
       setLoading(
@@ -369,10 +317,11 @@ export default function GradingPage(){
     }
 
   }
-  // Part2/4
+  // Part 2/5
+
 
   /* =======================================================
-     Selected test
+     Template load
      ======================================================= */
 
   const selectedTest =
@@ -387,10 +336,6 @@ export default function GradingPage(){
     null;
 
 
-
-  /* =======================================================
-     Load template
-     ======================================================= */
 
   useEffect(()=>{
 
@@ -417,6 +362,7 @@ export default function GradingPage(){
   },[
     selectedTestId
   ]);
+
 
 
 
@@ -465,15 +411,14 @@ export default function GradingPage(){
 
 
 
+
   useEffect(()=>{
 
     if(
       !selectedTemplateId
     ){
 
-      setGradingTemplate(
-        null
-      );
+      setGradingTemplate(null);
 
       return;
 
@@ -494,33 +439,18 @@ export default function GradingPage(){
 
 
   async function loadTemplate(
-    templateId:string
+    id:string
   ){
 
-    try{
-
-      const template =
-        await loadGradingTemplate(
-          templateId
-        );
-
-
-      setGradingTemplate(
-        template
+    const template =
+      await loadGradingTemplate(
+        id
       );
 
 
-    }catch(error){
-
-      console.error(
-        error
-      );
-
-      setGradingTemplate(
-        null
-      );
-
-    }
+    setGradingTemplate(
+      template
+    );
 
   }
 
@@ -529,7 +459,7 @@ export default function GradingPage(){
 
 
   /* =======================================================
-     Load questions
+     Questions
      ======================================================= */
 
 
@@ -558,157 +488,133 @@ export default function GradingPage(){
 
 
 
+
   async function loadQuestions(
     test:Test
   ){
 
-    try{
+    const snapshot =
+      await getDocs(
+        query(
+          collection(
+            db,
+            "testQuestions"
+          ),
 
-      setLoadingQuestions(
-        true
-      );
-
-
-      const snapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "testQuestions"
-            ),
-
-            where(
-              "testId",
-              "==",
-              test.id
-            )
+          where(
+            "testId",
+            "==",
+            test.id
           )
-        );
-
-
-
-      const loaded =
-        snapshot.docs
-          .map(
-            (
-              item
-            )=>{
-
-              const data =
-                item.data();
-
-
-              return {
-
-                id:
-                  item.id,
-
-
-                testId:
-                  test.id,
-
-
-                questionNumber:
-                  stringValue(
-                    data.questionNumber
-                  ),
-
-
-                title:
-                  stringValue(
-                    data.title
-                  ),
-
-
-                maxScore:
-                  safeNumber(
-                    data.maxScore
-                  ),
-
-
-                gradingMethod:
-                  data.gradingMethod ===
-                  "automatic"
-                    ? "automatic"
-                    : "manual",
-
-
-                correctAnswer:
-                  stringValue(
-                    data.correctAnswer
-                  ),
-
-
-                rubric:
-                  stringValue(
-                    data.rubric
-                  ),
-
-
-                requiresReview:
-                  data.requiresReview ===
-                  true,
-
-
-                order:
-                  safeNumber(
-                    data.order
-                  ),
-
-              } as QuestionRow;
-
-            }
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              questionOrder(a)
-              -
-              questionOrder(b)
-          );
-
-
-      setQuestions(
-        loaded
-      );
-
-
-      if(
-        loaded.length
-      ){
-
-        setSelectedQuestionId(
-          loaded[0].id
-        );
-
-      }
-
-
-    }catch(error){
-
-      console.error(
-        error
-      );
-
-      setError(
-        userError(
-          error,
-          "問題を取得できませんでした。"
         )
       );
 
-    }finally{
 
-      setLoadingQuestions(
-        false
+
+    const loaded =
+      snapshot.docs
+      .map(
+        (
+          item
+        )=>{
+
+          const data =
+            item.data();
+
+
+          return {
+
+            id:
+              item.id,
+
+
+            testId:
+              test.id,
+
+
+            questionNumber:
+              stringValue(
+                data.questionNumber
+              ),
+
+
+            title:
+              stringValue(
+                data.title
+              ),
+
+
+            maxScore:
+              safeNumber(
+                data.maxScore
+              ),
+
+
+            gradingMethod:
+              data.gradingMethod ===
+              "automatic"
+                ? "automatic"
+                : "manual",
+
+
+            correctAnswer:
+              stringValue(
+                data.correctAnswer
+              ),
+
+
+            rubric:
+              stringValue(
+                data.rubric
+              ),
+
+
+            requiresReview:
+              data.requiresReview ===
+              true,
+
+
+            order:
+              safeNumber(
+                data.order
+              ),
+
+          } as QuestionRow;
+
+        }
+      )
+      .sort(
+        (
+          a,
+          b
+        ) =>
+          Number(
+            a.questionNumber
+          )
+          -
+          Number(
+            b.questionNumber
+          )
+      );
+
+
+
+    setQuestions(
+      loaded
+    );
+
+
+    if(
+      loaded.length
+    ){
+
+      setSelectedQuestionId(
+        loaded[0].id
       );
 
     }
 
   }
-
 
 
 
@@ -726,6 +632,7 @@ export default function GradingPage(){
 
 
 
+
   const selectedArea =
     gradingTemplate?.questions.find(
       (
@@ -739,9 +646,8 @@ export default function GradingPage(){
 
 
 
-
   /* =======================================================
-     Load answers for selected question
+     Answers
      ======================================================= */
 
 
@@ -779,184 +685,139 @@ export default function GradingPage(){
     question:QuestionRow
   ){
 
-    try{
+    const loaded =
+      await getAllAnswers(
+        test.testId ||
+        test.id,
 
-      setLoadingAnswers(
-        true
+        test.subject
       );
 
 
-      const loaded =
-        await getAllAnswers(
-          test.testId ||
-          test.id,
 
-          test.subject
-        );
+    const cards =
+      await Promise.all(
+        loaded.map(
+          async(
+            answer
+          )=>{
 
-
-
-      const cards =
-        await Promise.all(
-          loaded.map(
-            async (
-              answer
-            )=>{
+            let imageUrl:
+              string|null =
+              null;
 
 
-              let imageUrl:
-                string |
-                null =
+            let result:
+              GradingResult|null =
+              null;
+
+
+
+            try{
+
+              const image =
+                await getAnswerWithUrl(
+                  answer.id
+                );
+
+
+              imageUrl =
+                image?.signedUrl ??
                 null;
 
 
-              let result:
-                GradingResult |
-                null =
-                null;
+            }catch(error){
 
-
-
-              try{
-
-                const image =
-                  await getAnswerWithUrl(
-                    answer.id
-                  );
-
-
-                imageUrl =
-                  image?.signedUrl ??
-                  null;
-
-
-              }catch(error){
-
-                console.error(
-                  error
-                );
-
-              }
-
-
-
-
-              try{
-
-                const grading =
-                  await getGradingResult(
-                    answer.id
-                  );
-
-
-                result =
-                  grading?.results?.find(
-                    (
-                      item:GradingResult
-                    ) =>
-                      item.questionId ===
-                      question.id
-                  )
-                  ??
-                  null;
-
-
-              }catch(error){
-
-                console.error(
-                  error
-                );
-
-              }
-
-
-
-
-
-              return {
-
-                answer,
-
-                questionId:
-                  question.id,
-
-
-                imageUrl,
-
-
-                cropArea:
-                  selectedArea?.area
-                  ??
-                  null,
-
-
-                result,
-
-
-                selected:
-                  false,
-
-
-                saving:
-                  false,
-
-              };
+              console.error(
+                error
+              );
 
             }
-          )
-        );
 
 
-      setAnswers(
-        cards
-      );
+
+            try{
+
+              const grading =
+                await getGradingResult(
+                  answer.id
+                );
 
 
-    }catch(error){
+              result =
+                grading?.results?.find(
+                  (
+                    item:GradingResult
+                  ) =>
+                    item.questionId ===
+                    question.id
+                )
+                ??
+                null;
 
-      console.error(
-        error
-      );
+
+            }catch(error){
+
+              console.error(
+                error
+              );
+
+            }
 
 
-      setError(
-        userError(
-          error,
-          "答案を取得できませんでした。"
+
+            return {
+
+              answer,
+
+              questionId:
+                question.id,
+
+
+              imageUrl,
+
+
+              cropArea:
+                selectedArea?.area ??
+                null,
+
+
+              result,
+
+
+              selected:false,
+
+            };
+
+
+          }
         )
       );
 
 
-    }finally{
 
-      setLoadingAnswers(
-        false
-      );
-
-    }
+    setAnswers(
+      cards
+    );
 
   }
-  // Part3/4
+  // Part 3/5
 
 
   /* =======================================================
      Selection
      ======================================================= */
 
+
   function toggleAnswer(
-    answerId:string
+    id:string
   ){
 
     setAnswers(
-      (
-        current
-      ) =>
+      current =>
         current.map(
-          (
-            card
-          ) =>
-            card.answer.id ===
-            answerId
+          card =>
+            card.answer.id === id
               ? {
                   ...card,
 
@@ -976,19 +837,13 @@ export default function GradingPage(){
   function selectAll(){
 
     setAnswers(
-      (
-        current
-      ) =>
+      current =>
         current.map(
-          (
-            card
-          )=>({
-
+          card => ({
             ...card,
 
             selected:
               true,
-
           })
         )
     );
@@ -998,41 +853,30 @@ export default function GradingPage(){
 
 
 
-  function clearSelect(){
+  function clearSelection(){
 
     setAnswers(
-      (
-        current
-      ) =>
+      current =>
         current.map(
-          (
-            card
-          )=>({
-
+          card => ({
             ...card,
 
             selected:
               false,
-
           })
         )
     );
 
   }
-
 
 
 
 
   const selectedCount =
     answers.filter(
-      (
-        item
-      ) =>
+      item =>
         item.selected
-    )
-    .length;
-
+    ).length;
 
 
 
@@ -1056,16 +900,13 @@ export default function GradingPage(){
 
     const targets =
       answers.filter(
-        (
-          card
-        ) =>
+        card =>
           card.selected
       );
 
 
     if(
-      targets.length ===
-      0
+      targets.length === 0
     ){
 
       setError(
@@ -1079,8 +920,7 @@ export default function GradingPage(){
 
 
     if(
-      mark ===
-      "△"
+      mark === "△"
     ){
 
       setMarkMode(
@@ -1101,8 +941,7 @@ export default function GradingPage(){
 
 
       for(
-        const card of
-          targets
+        const card of targets
       ){
 
         await saveMark(
@@ -1116,39 +955,32 @@ export default function GradingPage(){
 
 
       setAnswers(
-        (
-          current
-        ) =>
+        current =>
           current.map(
-            (
-              card
-            ) =>
+            card =>
               card.selected
                 ? {
 
                     ...card,
 
-
                     selected:
                       false,
 
-
                     result:
                       createLocalResult(
-                        card.result,
                         selectedQuestion,
                         mark
                       ),
 
                   }
-                :
-                  card
+
+                : card
           )
       );
 
 
       setMessage(
-        `${targets.length}件に${mark}を付けました。`
+        `${targets.length}件に${mark}を設定しました。`
       );
 
 
@@ -1176,7 +1008,7 @@ export default function GradingPage(){
 
 
 
-  async function applyPartial(
+  async function applyPartialScore(
     score:number
   ){
 
@@ -1189,9 +1021,7 @@ export default function GradingPage(){
 
     const targets =
       answers.filter(
-        (
-          card
-        ) =>
+        card =>
           card.selected
       );
 
@@ -1204,8 +1034,7 @@ export default function GradingPage(){
 
 
       for(
-        const card of
-          targets
+        const card of targets
       ){
 
         await saveMark(
@@ -1220,13 +1049,9 @@ export default function GradingPage(){
 
 
       setAnswers(
-        (
-          current
-        ) =>
+        current =>
           current.map(
-            (
-              card
-            ) =>
+            card =>
               card.selected
                 ? {
 
@@ -1237,31 +1062,20 @@ export default function GradingPage(){
 
                     result:
                       createLocalResult(
-                        card.result,
                         selectedQuestion,
                         "△",
                         score
                       ),
 
                   }
-                :
-                  card
+
+                : card
           )
       );
 
 
       setMarkMode(
         null
-      );
-
-
-    }catch(error){
-
-      setError(
-        userError(
-          error,
-          "部分点保存に失敗しました。"
-        )
       );
 
 
@@ -1283,7 +1097,7 @@ export default function GradingPage(){
     card:QuestionAnswerCard,
     mark:MarkMode,
     question:QuestionRow,
-    scoreOverride?:number
+    score?:number
   ){
 
     const current =
@@ -1304,54 +1118,37 @@ export default function GradingPage(){
 
 
 
-    const newResult =
+    const next =
       createLocalResult(
-        results.find(
-          (
-            item:GradingResult
-          ) =>
-            item.questionId ===
-            question.id
-        )
-        ??
-        null,
-
         question,
-
         mark,
-
-        scoreOverride
+        score
       );
 
 
 
     const index =
       results.findIndex(
-        (
-          item:GradingResult
-        ) =>
+        item =>
           item.questionId ===
           question.id
       );
 
 
-
     if(
-      index >=
-      0
+      index >= 0
     ){
 
       results[index] =
-        newResult;
+        next;
 
     }else{
 
       results.push(
-        newResult
+        next
       );
 
     }
-
 
 
 
@@ -1374,6 +1171,7 @@ export default function GradingPage(){
 
     await saveFirstReview(
       {
+
         answerId:
           card.answer.id,
 
@@ -1416,32 +1214,24 @@ export default function GradingPage(){
 
 
   /* =======================================================
-     Keyboard
+     Keyboard shortcut
      ======================================================= */
 
 
   useEffect(()=>{
 
-
-    function keyDown(
+    function handleKey(
       event:KeyboardEvent
     ){
-
 
       const target =
         event.target;
 
 
-
       if(
-        target instanceof
-          HTMLInputElement
-        ||
-        target instanceof
-          HTMLTextAreaElement
-        ||
-        target instanceof
-          HTMLSelectElement
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
       ){
 
         return;
@@ -1449,13 +1239,9 @@ export default function GradingPage(){
       }
 
 
-
       if(
-        event.key ===
-        "k"
-        ||
-        event.key ===
-        "K"
+        event.key === "k" ||
+        event.key === "K"
       ){
 
         void applyMark(
@@ -1467,11 +1253,8 @@ export default function GradingPage(){
 
 
       if(
-        event.key ===
-        "l"
-        ||
-        event.key ===
-        "L"
+        event.key === "l" ||
+        event.key === "L"
       ){
 
         void applyMark(
@@ -1481,13 +1264,11 @@ export default function GradingPage(){
       }
 
 
-
       if(
-        event.key ===
-        "Escape"
+        event.key === "Escape"
       ){
 
-        clearSelect();
+        clearSelection();
 
         setMarkMode(
           null
@@ -1498,10 +1279,9 @@ export default function GradingPage(){
     }
 
 
-
     window.addEventListener(
       "keydown",
-      keyDown
+      handleKey
     );
 
 
@@ -1509,7 +1289,7 @@ export default function GradingPage(){
 
       window.removeEventListener(
         "keydown",
-        keyDown
+        handleKey
       );
 
     };
@@ -1519,12 +1299,13 @@ export default function GradingPage(){
     answers,
     selectedQuestion
   ]);
-  // Part4/4
+  // Part 4/5
 
 
   /* =======================================================
      Render
      ======================================================= */
+
 
   if(
     loading
@@ -1532,6 +1313,7 @@ export default function GradingPage(){
 
     return (
       <main className="page">
+
         <section className="content">
 
           <h1>
@@ -1543,10 +1325,12 @@ export default function GradingPage(){
           </p>
 
         </section>
+
       </main>
     );
 
   }
+
 
 
 
@@ -1568,6 +1352,7 @@ export default function GradingPage(){
       >
 
 
+
         <header
           className="pageHeader"
         >
@@ -1585,6 +1370,7 @@ export default function GradingPage(){
               問題ごとに答案を並べて採点します。
             </p>
 
+
           </div>
 
         </header>
@@ -1597,12 +1383,15 @@ export default function GradingPage(){
           <div
             className="errorMessage"
           >
+
             {
               error
             }
+
           </div>
 
         )}
+
 
 
 
@@ -1611,9 +1400,11 @@ export default function GradingPage(){
           <div
             className="successMessage"
           >
+
             {
               message
             }
+
           </div>
 
         )}
@@ -1632,12 +1423,13 @@ export default function GradingPage(){
                 "grid",
 
               gridTemplateColumns:
-                "1fr 1fr",
+                "1fr 1fr 1fr",
 
               gap:
                 12,
             }}
           >
+
 
             <label>
 
@@ -1645,6 +1437,7 @@ export default function GradingPage(){
 
 
               <select
+
                 value={
                   selectedTestId
                 }
@@ -1661,12 +1454,11 @@ export default function GradingPage(){
                   width:
                     "100%",
                 }}
+
               >
 
                 {tests.map(
-                  (
-                    test
-                  ) => (
+                  test => (
 
                     <option
                       key={
@@ -1697,10 +1489,74 @@ export default function GradingPage(){
 
             <label>
 
+              テンプレート
+
+
+              <select
+
+                value={
+                  selectedTemplateId
+                }
+
+                onChange={(
+                  event
+                ) =>
+                  setSelectedTemplateId(
+                    event.target.value
+                  )
+                }
+
+                style={{
+                  width:
+                    "100%",
+                }}
+
+              >
+
+                {templates.map(
+                  template => (
+
+                    <option
+                      key={
+                        template.id
+                      }
+
+                      value={
+                        template.id
+                      }
+                    >
+
+                      テンプレート
+
+                      {
+                        template.id.slice(
+                          0,
+                          8
+                        )
+                      }
+
+                    </option>
+
+                  )
+                )}
+
+              </select>
+
+
+            </label>
+
+
+
+
+
+
+            <label>
+
               問題
 
 
               <select
+
                 value={
                   selectedQuestionId
                 }
@@ -1717,12 +1573,11 @@ export default function GradingPage(){
                   width:
                     "100%",
                 }}
+
               >
 
                 {questions.map(
-                  (
-                    question
-                  ) => (
+                  question => (
 
                     <option
                       key={
@@ -1749,10 +1604,13 @@ export default function GradingPage(){
 
             </label>
 
+
           </div>
 
 
         </section>
+
+
 
 
 
@@ -1774,11 +1632,13 @@ export default function GradingPage(){
               gap:
                 8,
 
-              marginBottom:
-                12,
+              alignItems:
+                "center",
+
+              flexWrap:
+                "wrap",
             }}
           >
-
 
             <button
               type="button"
@@ -1787,7 +1647,9 @@ export default function GradingPage(){
                 selectAll
               }
             >
+
               全選択
+
             </button>
 
 
@@ -1796,11 +1658,14 @@ export default function GradingPage(){
               type="button"
               className="button"
               onClick={
-                clearSelect
+                clearSelection
               }
             >
-              解除
+
+              選択解除
+
             </button>
+
 
 
 
@@ -1810,14 +1675,18 @@ export default function GradingPage(){
               disabled={
                 saving
               }
+
               onClick={() =>
                 void applyMark(
                   "○"
                 )
               }
             >
+
               ○
+
             </button>
+
 
 
 
@@ -1827,14 +1696,18 @@ export default function GradingPage(){
               disabled={
                 saving
               }
+
               onClick={() =>
                 void applyMark(
                   "×"
                 )
               }
             >
+
               ×
+
             </button>
+
 
 
 
@@ -1844,24 +1717,45 @@ export default function GradingPage(){
               disabled={
                 saving
               }
+
               onClick={() =>
                 setMarkMode(
                   "△"
                 )
               }
             >
+
               △
+
             </button>
+
 
 
 
             <span
               className="muted"
             >
+
               {
                 selectedCount
               }
               件選択
+
+            </span>
+
+
+
+            <span
+              className="muted"
+            >
+
+              K:
+              ○
+
+              /
+              L:
+              ×
+
             </span>
 
 
@@ -1876,14 +1770,14 @@ export default function GradingPage(){
 
             <div
               style={{
+                marginTop:
+                  12,
+
                 display:
                   "flex",
 
                 gap:
                   8,
-
-                marginBottom:
-                  12,
               }}
             >
 
@@ -1891,9 +1785,7 @@ export default function GradingPage(){
                 selectedQuestion?.maxScore ??
                 0
               ).map(
-                (
-                  score
-                ) => (
+                score => (
 
                   <button
                     key={
@@ -1905,7 +1797,7 @@ export default function GradingPage(){
                     className="button"
 
                     onClick={() =>
-                      void applyPartial(
+                      void applyPartialScore(
                         score
                       )
                     }
@@ -1925,9 +1817,20 @@ export default function GradingPage(){
 
           )}
 
+        </section>
 
 
 
+
+
+
+        <section
+          className="card"
+          style={{
+            marginTop:
+              16,
+          }}
+        >
 
 
           <div
@@ -1936,7 +1839,7 @@ export default function GradingPage(){
                 "grid",
 
               gridTemplateColumns:
-                "repeat(auto-fit,minmax(220px,1fr))",
+                "repeat(auto-fit,minmax(230px,1fr))",
 
               gap:
                 12,
@@ -1948,21 +1851,56 @@ export default function GradingPage(){
             {/* 模範解答 */}
 
             <div
-              className="card"
+              style={{
+                border:
+                  "2px solid #111",
+
+                borderRadius:
+                  8,
+
+                overflow:
+                  "hidden",
+              }}
             >
 
-              <strong>
+              <div
+                style={{
+                  padding:
+                    8,
+
+                  background:
+                    "#111",
+
+                  color:
+                    "#fff",
+
+                  textAlign:
+                    "center",
+                }}
+              >
+
                 模範解答
-              </strong>
+
+              </div>
+
 
 
               <div
                 style={{
-                  marginTop:
-                    12,
+                  minHeight:
+                    250,
 
-                  textAlign:
+                  display:
+                    "flex",
+
+                  alignItems:
                     "center",
+
+                  justifyContent:
+                    "center",
+
+                  padding:
+                    15,
                 }}
               >
 
@@ -1972,7 +1910,9 @@ export default function GradingPage(){
                   "未設定"
                 }
 
+
               </div>
+
 
             </div>
 
@@ -1980,11 +1920,8 @@ export default function GradingPage(){
 
 
 
-
             {answers.map(
-              (
-                card
-              ) => (
+              card => (
 
                 <AnswerCardView
 
@@ -2005,6 +1942,8 @@ export default function GradingPage(){
               )
             )}
 
+
+
           </div>
 
 
@@ -2017,35 +1956,31 @@ export default function GradingPage(){
     </main>
 
   );
-
-}
-
-
-
+  // Part 5/5
 
 
 /* =========================================================
-   Answer card
+   Answer Card
    ========================================================= */
-
 
 function AnswerCardView({
   card,
   onToggle,
-}:{
+}: {
   card:
     QuestionAnswerCard;
 
   onToggle:
     (
       id:string
-    )=>void;
-}){
+    ) => void;
+}) {
 
 
   return (
 
     <button
+
       type="button"
 
       onClick={() =>
@@ -2063,33 +1998,50 @@ function AnswerCardView({
             ? "3px solid #111"
             : "1px solid #ccc",
 
+        borderRadius:
+          8,
+
+        overflow:
+          "hidden",
+
         background:
           "#fff",
 
         padding:
           0,
 
-        borderRadius:
-          8,
+        cursor:
+          "pointer",
 
-        overflow:
-          "hidden",
+        textAlign:
+          "left",
       }}
+
     >
+
 
       <div
         style={{
           position:
             "absolute",
 
-          left:
-            8,
-
           top:
             8,
 
+          left:
+            8,
+
           zIndex:
-            2,
+            5,
+
+          background:
+            "#fff",
+
+          borderRadius:
+            4,
+
+          padding:
+            3,
         }}
       >
 
@@ -2108,35 +2060,17 @@ function AnswerCardView({
 
 
 
+      <AnswerCrop
 
-      {card.imageUrl ? (
+        imageUrl={
+          card.imageUrl
+        }
 
-        <img
+        area={
+          card.cropArea
+        }
 
-          src={
-            card.imageUrl
-          }
-
-          alt=""
-
-          style={{
-            width:
-              "100%",
-
-            aspectRatio:
-              "4/3",
-
-            objectFit:
-              "contain",
-          }}
-
-        />
-
-      ):(
-        <div>
-          答案なし
-        </div>
-      )}
+      />
 
 
 
@@ -2144,8 +2078,41 @@ function AnswerCardView({
 
         <div
           style={{
+            position:
+              "absolute",
+
+            right:
+              10,
+
+            bottom:
+              10,
+
+            width:
+              45,
+
+            height:
+              45,
+
+            borderRadius:
+              "50%",
+
+            background:
+              "#fff",
+
+            border:
+              "3px solid #111",
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
             fontSize:
-              28,
+              26,
 
             fontWeight:
               700,
@@ -2160,56 +2127,239 @@ function AnswerCardView({
 
       )}
 
+
+
+      {card.result && (
+
+        <div
+          style={{
+            textAlign:
+              "center",
+
+            padding:
+              8,
+
+            borderTop:
+              "1px solid #eee",
+
+            fontSize:
+              12,
+          }}
+        >
+
+          {
+            card.result.score
+          }
+
+          /
+
+          {
+            card.result.maxScore
+          }
+
+          点
+
+        </div>
+
+      )}
+
     </button>
 
   );
 
 }
-// helpers追加部分
+
+
+
+
 
 /* =========================================================
-   Create local result
+   Crop
+   ========================================================= */
+
+
+function AnswerCrop({
+  imageUrl,
+  area,
+}:{
+  imageUrl:
+    string|null;
+
+  area:
+    | {
+        x:number;
+
+        y:number;
+
+        width:number;
+
+        height:number;
+
+      }
+    | null;
+}){
+
+
+  if(
+    !imageUrl
+  ){
+
+    return (
+
+      <div
+        style={{
+          height:
+            260,
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          color:
+            "#777",
+        }}
+      >
+
+        答案なし
+
+      </div>
+
+    );
+
+  }
+
+
+
+
+  if(
+    !area
+  ){
+
+    return (
+
+      <img
+
+        src={
+          imageUrl
+        }
+
+        alt=""
+
+        style={{
+          width:
+            "100%",
+
+          aspectRatio:
+            "4/3",
+
+          objectFit:
+            "contain",
+        }}
+
+      />
+
+    );
+
+  }
+
+
+
+
+  return (
+
+    <div
+      style={{
+        width:
+          "100%",
+
+        aspectRatio:
+          "4/3",
+
+        overflow:
+          "hidden",
+
+        background:
+          "#f5f5f5",
+      }}
+    >
+
+      <img
+
+        src={
+          imageUrl
+        }
+
+        alt=""
+
+        style={{
+          position:
+            "relative",
+
+          left:
+            -area.x,
+
+          top:
+            -area.y,
+
+          maxWidth:
+            "none",
+
+        }}
+
+      />
+
+    </div>
+
+  );
+
+}
+
+
+
+
+
+
+/* =========================================================
+   Result
    ========================================================= */
 
 function createLocalResult(
-  previous:
-    | GradingResult
-    | null,
-
-  question:
-    QuestionRow,
-
-  mark:
-    GradingMark,
-
-  scoreOverride?: number
-): GradingResult {
+  question:QuestionRow,
+  mark:GradingMark,
+  score?:number
+):GradingResult{
 
 
-  let score =
+  let point =
     0;
 
 
   if(
-    scoreOverride !==
+    score !==
     undefined
   ){
 
-    score =
+    point =
       Math.max(
         0,
         Math.min(
           question.maxScore,
-          scoreOverride
+          score
         )
       );
 
-  }else if(
+  }
+  else if(
     mark ===
     "○"
   ){
 
-    score =
+    point =
       question.maxScore;
 
   }
@@ -2227,14 +2377,14 @@ function createLocalResult(
 
 
     answerText:
-      previous?.answerText ??
       "",
 
 
     mark,
 
 
-    score,
+    score:
+      point,
 
 
     maxScore:
@@ -2242,26 +2392,16 @@ function createLocalResult(
 
 
     confidence:
-      previous?.confidence ??
       1,
 
 
     reviewRequired:
       mark ===
-      "△"
-      ||
-      question.requiresReview,
+      "△",
 
 
     reason:
-      mark ===
-      "○"
-        ? "正解"
-        :
-          mark ===
-          "×"
-            ? "不正解"
-            : "部分点",
+      "手動採点",
 
 
     rubric:
@@ -2275,37 +2415,27 @@ function createLocalResult(
 
 
 
+
 /* =========================================================
    Score list
    ========================================================= */
 
-
 function createScoreList(
   max:number
 ){
-
-  if(
-    max <=
-    0
-  ){
-
-    return [
-      0
-    ];
-
-  }
-
 
   return Array.from(
     {
       length:
         max + 1,
     },
+
     (
       _,
       index
     ) =>
       index
+
   );
 
 }
@@ -2314,38 +2444,30 @@ function createScoreList(
 
 
 
+
 /* =========================================================
-   Normalize test
+   Helpers
    ========================================================= */
 
 
 function normalizeTest(
   id:string,
-
-  data:
-    Record<
-      string,
-      unknown
-    >
+  data:Record<string,unknown>
 ):Test{
-
 
   return {
 
     id,
-
 
     organizationId:
       stringValue(
         data.organizationId
       ),
 
-
     schoolId:
       stringValue(
         data.schoolId
       ),
-
 
     testId:
       stringValue(
@@ -2354,67 +2476,52 @@ function normalizeTest(
       ||
       id,
 
-
     name:
       stringValue(
         data.name
       ),
-
 
     subject:
       stringValue(
         data.subject
       ),
 
-
     grade:
       stringValue(
         data.grade
       ),
-
 
     className:
       stringValue(
         data.className
       ),
 
-
     examDate:
       stringValue(
         data.examDate
       ),
-
 
     totalScore:
       safeNumber(
         data.totalScore
       ),
 
-
     active:
       data.active !==
       false,
-
 
     isRetest:
       data.isRetest ===
       true,
 
-
     originalTestId:
-      nullableString(
-        data.originalTestId
-      ),
-
+      null,
 
     automaticGrading:
-      data.automaticGrading ===
-      true,
-
+      false,
 
     createdAt:
       data.createdAt,
-
 
     updatedAt:
       data.updatedAt,
@@ -2425,114 +2532,14 @@ function normalizeTest(
 
 
 
-
-
-/* =========================================================
-   Question order
-   ========================================================= */
-
-
-function questionOrder(
-  question:
-    QuestionRow
-){
-
-  const value =
-    Number(
-      question.questionNumber
-    );
-
-
-  return Number.isFinite(
-    value
-  )
-    ? value
-    : Number.MAX_SAFE_INTEGER;
-
-}
-
-
-
-
-
-/* =========================================================
-   Error
-   ========================================================= */
-
-
-function userError(
-  error:unknown,
-
-  fallback:string
-){
-
-  const message =
-    error instanceof Error
-      ? error.message
-      : String(
-          error ??
-          ""
-        );
-
-
-  if(
-    message.includes(
-      "Missing or insufficient permissions"
-    )
-  ){
-
-    return (
-      "この操作を実行する権限がありません。"
-    );
-
-  }
-
-
-  if(
-    /[ぁ-んァ-ヶ一-龯]/.test(
-      message
-    )
-  ){
-
-    return message;
-
-  }
-
-
-  return fallback;
-
-}
-
-
-
-
-
-/* =========================================================
-   Primitive
-   ========================================================= */
-
-
 function stringValue(
   value:unknown
 ){
 
   return typeof value ===
     "string"
-    ? value
-    : "";
-
-}
-
-
-
-function nullableString(
-  value:unknown
-){
-
-  return typeof value ===
-    "string"
-    ? value
-    : null;
+      ? value
+      : "";
 
 }
 
@@ -2554,5 +2561,37 @@ function safeNumber(
   )
     ? number
     : 0;
+
+}
+
+
+
+function userError(
+  error:unknown,
+  fallback:string
+){
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(
+          error ??
+          ""
+        );
+
+
+  if(
+    message.includes(
+      "Missing or insufficient permissions"
+    )
+  ){
+
+    return "権限がありません。";
+
+  }
+
+
+  return message ||
+    fallback;
 
 }
