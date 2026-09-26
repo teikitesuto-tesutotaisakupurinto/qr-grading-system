@@ -2,7 +2,6 @@
 
 import {
   useEffect,
-  useMemo,
   useState,
 } from "react";
 
@@ -10,6 +9,7 @@ import Link from "next/link";
 
 import {
   auth,
+  db,
 } from "@/lib/firebase";
 
 import {
@@ -17,26 +17,27 @@ import {
 } from "@/lib/auth";
 
 import {
-  getScopedDocs,
-  resultsQueries,
-  gradeReportsQueries,
-  type FirestoreUser,
-} from "@/lib/firestore-scope";
-
-import type {
-  GradeReport,
-  StudentResult,
-  UserRole,
-} from "@/lib/types";
+  doc,
+  getDoc,
+} from "firebase/firestore";
 
 /* =========================================================
    Types
    ========================================================= */
 
-type ResultRow =
-  StudentResult & {
-    percentage: number;
-  };
+type Student = {
+  id: string;
+
+  name: string;
+
+  studentNumber: string;
+
+  grade: string;
+
+  className: string;
+
+  schoolName: string;
+};
 
 /* =========================================================
    Page
@@ -44,39 +45,11 @@ type ResultRow =
 
 export default function StudentDashboardPage() {
   const [
-    role,
-    setRole,
+    student,
+    setStudent,
   ] =
-    useState<UserRole | null>(
+    useState<Student | null>(
       null
-    );
-
-  const [
-    studentName,
-    setStudentName,
-  ] =
-    useState("");
-
-  const [
-    studentNumber,
-    setStudentNumber,
-  ] =
-    useState("");
-
-  const [
-    results,
-    setResults,
-  ] =
-    useState<ResultRow[]>(
-      []
-    );
-
-  const [
-    reports,
-    setReports,
-  ] =
-    useState<GradeReport[]>(
-      []
     );
 
   const [
@@ -91,15 +64,11 @@ export default function StudentDashboardPage() {
   ] =
     useState("");
 
-  /* =======================================================
-     Load
-     ======================================================= */
-
   useEffect(() => {
-    void loadDashboard();
+    void loadStudent();
   }, []);
 
-  async function loadDashboard() {
+  async function loadStudent() {
     try {
       setLoading(true);
 
@@ -118,23 +87,21 @@ export default function StudentDashboardPage() {
         );
       }
 
+      /*
+       * 生徒アカウント専用
+       */
       if (
         user.role !==
         "生徒"
       ) {
         throw new Error(
-          "この画面は生徒用です。"
+          "生徒画面ではありません。"
         );
       }
 
-      if (
-        !user.organizationId
-      ) {
-        throw new Error(
-          "所属組織が設定されていません。"
-        );
-      }
-
+      /*
+       * studentIdが必須
+       */
       if (
         !user.studentId
       ) {
@@ -143,125 +110,55 @@ export default function StudentDashboardPage() {
         );
       }
 
-      setRole(
-        user.role
-      );
-
-      const scopeUser:
-        FirestoreUser =
-        {
-          uid:
-            user.uid,
-
-          organizationId:
-            user.organizationId,
-
-          role:
-            user.role,
-
-          schoolIds:
-            user.schoolIds,
-
-          studentId:
-            user.studentId,
-        };
-
-      const [
-        resultDocuments,
-        reportDocuments,
-      ] =
-        await Promise.all([
-          getScopedDocs(
-            resultsQueries(
-              scopeUser
-            )
-          ),
-
-          getScopedDocs(
-            gradeReportsQueries(
-              scopeUser
-            )
-          ),
-        ]);
-
-      const loadedResults =
-        resultDocuments
-          .map(
-            (
-              item
-            ) =>
-              normalizeResult(
-                item.id,
-                item.data
-              )
+      const studentSnapshot =
+        await getDoc(
+          doc(
+            db,
+            "students",
+            user.studentId
           )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              getTime(
-                b.createdAt
-              ) -
-              getTime(
-                a.createdAt
-              )
-          );
-
-      const loadedReports =
-        reportDocuments
-          .map(
-            (
-              item
-            ) =>
-              normalizeReport(
-                item.id,
-                item.data
-              )
-          )
-          .sort(
-            (
-              a,
-              b
-            ) =>
-              getTime(
-                b.updatedAt ??
-                  b.createdAt
-              ) -
-              getTime(
-                a.updatedAt ??
-                  a.createdAt
-              )
-          );
-
-      setResults(
-        loadedResults
-      );
-
-      setReports(
-        loadedReports
-      );
-
-      const firstReport =
-        loadedReports[0];
+        );
 
       if (
-        firstReport
+        !studentSnapshot.exists()
       ) {
-        setStudentName(
-          firstReport.studentName
-        );
-
-        setStudentNumber(
-          firstReport.studentNumber
-        );
-      } else if (
-        loadedResults[0]
-      ) {
-        setStudentNumber(
-          loadedResults[0].studentNumber
+        throw new Error(
+          "生徒情報が見つかりません。"
         );
       }
+
+      const data =
+        studentSnapshot.data();
+
+      setStudent({
+        id:
+          studentSnapshot.id,
+
+        name:
+          stringValue(
+            data.name
+          ),
+
+        studentNumber:
+          stringValue(
+            data.studentNumber
+          ),
+
+        grade:
+          stringValue(
+            data.grade
+          ),
+
+        className:
+          stringValue(
+            data.className
+          ),
+
+        schoolName:
+          stringValue(
+            data.schoolName
+          ),
+      });
     } catch (
       error
     ) {
@@ -273,60 +170,12 @@ export default function StudentDashboardPage() {
       setError(
         error instanceof Error
           ? error.message
-          : "成績情報を取得できませんでした。"
+          : "生徒情報を取得できませんでした。"
       );
     } finally {
       setLoading(false);
     }
   }
-
-  /* =======================================================
-     Statistics
-     ======================================================= */
-
-  const averagePercentage =
-    results.length ===
-    0
-      ? null
-      : results.reduce(
-          (
-            total,
-            result
-          ) =>
-            total +
-            result.percentage,
-          0
-        ) /
-        results.length;
-
-  const averageScore =
-    results.length ===
-    0
-      ? null
-      : results.reduce(
-          (
-            total,
-            result
-          ) =>
-            total +
-            result.score,
-          0
-        ) /
-        results.length;
-
-  const latestResults =
-    results.slice(
-      0,
-      8
-    );
-
-  const latestReport =
-    reports[0] ??
-    null;
-
-  /* =======================================================
-     Loading
-     ======================================================= */
 
   if (
     loading
@@ -334,104 +183,52 @@ export default function StudentDashboardPage() {
     return (
       <main className="page">
         <section className="content">
-          <div
-            style={{
-              minHeight:
-                400,
+          <h1>
+            ホーム
+          </h1>
 
-              display:
-                "flex",
-
-              alignItems:
-                "center",
-
-              justifyContent:
-                "center",
-            }}
-          >
-            成績を読み込んでいます...
-          </div>
+          <p>
+            読み込み中...
+          </p>
         </section>
       </main>
     );
   }
 
-  /* =======================================================
-     Render
-     ======================================================= */
-
   return (
-    <main className="page">
-      <section className="content">
+    <main
+      className="page"
+    >
+      <section
+        className="content"
+        style={{
+          maxWidth:
+            1000,
 
-        {/* ==================================================
-            Header
-            ================================================== */}
-
+          margin:
+            "0 auto",
+        }}
+      >
         <header
-          style={{
-            marginBottom:
-              24,
-          }}
+          className="pageHeader"
         >
-          <div
-            className="muted"
-            style={{
-              fontSize:
-                12,
-            }}
-          >
-            テストシステム
-          </div>
+          <div>
+            <h1>
+              ホーム
+            </h1>
 
-          <h1
-            style={{
-              margin:
-                "5px 0 0",
-            }}
-          >
-            {studentName
-              ? `${studentName}さん`
-              : "生徒ホーム"}
-          </h1>
-
-          {studentNumber && (
             <p
               className="muted"
-              style={{
-                margin:
-                  "5px 0 0",
-
-                fontSize:
-                  12,
-              }}
             >
-              生徒番号：
-              {
-                studentNumber
-              }
+              自分の成績と答案を確認できます。
             </p>
-          )}
-
-          <p
-            className="muted"
-            style={{
-              margin:
-                "6px 0 0",
-            }}
-          >
-            あなたの確定済みの成績を確認できます。
-          </p>
+          </div>
         </header>
 
-        {/* ==================================================
-            Error
-            ================================================== */}
 
         {error && (
           <div
             className="errorMessage"
-            role="alert"
           >
             {
               error
@@ -439,347 +236,49 @@ export default function StudentDashboardPage() {
           </div>
         )}
 
-        {/* ==================================================
-            Summary
-            ================================================== */}
 
-        <section>
-          <div
+        {student && (
+          <section
+            className="card"
             style={{
-              display:
-                "grid",
-
-              gridTemplateColumns:
-                "repeat(3, minmax(0, 1fr))",
-
-              gap:
-                12,
+              marginBottom:
+                16,
             }}
           >
-            <SummaryCard
-              label="成績件数"
-              value={
-                results.length
+            <h2>
+              {
+                student.name
               }
-            />
+            </h2>
 
-            <SummaryCard
-              label="平均得点率"
-              value={
-                averagePercentage ===
-                null
-                  ? "—"
-                  : `${averagePercentage.toFixed(
-                      1
-                    )}%`
+            <p
+              className="muted"
+            >
+              生徒番号：
+              {
+                student.studentNumber
               }
-            />
+            </p>
 
-            <SummaryCard
-              label="平均点"
-              value={
-                averageScore ===
-                null
-                  ? "—"
-                  : averageScore.toFixed(
-                      1
-                    )
+            <p
+              className="muted"
+            >
+              {
+                student.grade
               }
-            />
-          </div>
-        </section>
 
-        {/* ==================================================
-            Latest report
-            ================================================== */}
+              {" / "}
 
-        <section
-          className="card"
-          style={{
-            marginTop:
-              18,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
+              {
+                student.className
+              }
 
-              justifyContent:
-                "space-between",
+              {student.schoolName &&
+                ` / ${student.schoolName}`}
+            </p>
+          </section>
+        )}
 
-              alignItems:
-                "center",
-
-              gap:
-                12,
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                最新の成績表
-              </h2>
-
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "5px 0 0",
-
-                  fontSize:
-                    11,
-                }}
-              >
-                確定済みの成績表です。
-              </p>
-            </div>
-
-            <Link
-              href="/student/reports"
-              className="button"
-            >
-              成績表を見る
-            </Link>
-          </div>
-
-          {!latestReport ? (
-            <EmptyState
-              text="まだ成績表はありません。"
-            />
-          ) : (
-            <div
-              style={{
-                marginTop:
-                  16,
-              }}
-            >
-              <div
-                style={{
-                  display:
-                    "grid",
-
-                  gridTemplateColumns:
-                    "1fr 1fr",
-
-                  gap:
-                    10,
-                }}
-              >
-                <InfoCard
-                  label="テスト"
-                  value={
-                    latestReport.testName
-                  }
-                />
-
-                <InfoCard
-                  label="実施日"
-                  value={
-                    latestReport.examDate ||
-                    "—"
-                  }
-                />
-
-                <InfoCard
-                  label="総合得点"
-                  value={`${latestReport.totalScore} / ${latestReport.totalMaxScore}`}
-                />
-
-                <InfoCard
-                  label="順位"
-                  value={formatRank(
-                    latestReport.totalRank,
-                    latestReport.totalPopulation
-                  )}
-                />
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* ==================================================
-            Results
-            ================================================== */}
-
-        <section
-          className="card"
-          style={{
-            marginTop:
-              18,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "space-between",
-
-              alignItems:
-                "center",
-
-              gap:
-                12,
-            }}
-          >
-            <div>
-              <h2
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                最近の成績
-              </h2>
-
-              <p
-                className="muted"
-                style={{
-                  margin:
-                    "5px 0 0",
-
-                    fontSize:
-                      11,
-                  }}
-                >
-                  採点確定済みの結果のみ表示しています。
-                </p>
-            </div>
-
-            <Link
-              href="/student/results"
-              className="button"
-            >
-              成績一覧
-            </Link>
-          </div>
-
-          {latestResults.length ===
-          0 ? (
-            <EmptyState
-              text="確定済みの成績はありません。"
-            />
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-
-                marginTop:
-                  14,
-              }}
-            >
-              <table className="dataTable">
-                <thead>
-                  <tr>
-                    <th>
-                      テスト
-                    </th>
-
-                    <th>
-                      教科
-                    </th>
-
-                    <th>
-                      得点
-                    </th>
-
-                    <th>
-                      得点率
-                    </th>
-
-                    <th>
-                      偏差値
-                    </th>
-
-                    <th>
-                      順位
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {latestResults.map(
-                    (
-                      result
-                    ) => (
-                      <tr
-                        key={
-                          result.id
-                        }
-                      >
-                        <td>
-                          {
-                            result.testName
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            result.subject
-                          }
-                        </td>
-
-                        <td>
-                          <strong>
-                            {
-                              result.score
-                            }
-                          </strong>
-
-                          {" / "}
-
-                          {
-                            result.maxScore
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            result.percentage.toFixed(
-                              1
-                            )
-                          }
-                          %
-                        </td>
-
-                        <td>
-                          {
-                            result.deviationScore ===
-                            null
-                              ? "—"
-                              : result.deviationScore.toFixed(
-                                  1
-                                )
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            formatRank(
-                              result.rank,
-                              result.population
-                            )
-                          }
-                        </td>
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {/* ==================================================
-            Student menu
-            ================================================== */}
 
         <section
           style={{
@@ -790,547 +289,62 @@ export default function StudentDashboardPage() {
               "repeat(2, minmax(0, 1fr))",
 
             gap:
-              12,
-
-            marginTop:
-              18,
+              16,
           }}
         >
+
           <Link
             href="/student/results"
             className="card"
             style={{
-              display:
-                "block",
+              textDecoration:
+                "none",
 
               color:
                 "inherit",
-
-              textDecoration:
-                "none",
             }}
           >
-            <strong>
-              成績一覧
-            </strong>
+            <h2>
+              成績確認
+            </h2>
 
             <p
               className="muted"
-              style={{
-                margin:
-                  "5px 0 0",
-
-                fontSize:
-                  11,
-              }}
             >
-              自分の確定済み成績を確認します。
+              自分のテスト結果・成績表を確認します。
             </p>
           </Link>
+
 
           <Link
-            href="/student/reports"
+            href="/student/answers"
             className="card"
             style={{
-              display:
-                "block",
+              textDecoration:
+                "none",
 
               color:
                 "inherit",
-
-              textDecoration:
-                "none",
             }}
           >
-            <strong>
-              成績表
-            </strong>
+            <h2>
+              答案確認
+            </h2>
 
             <p
               className="muted"
-              style={{
-                margin:
-                  "5px 0 0",
-
-                fontSize:
-                  11,
-              }}
             >
-              自分の成績表を確認します。
+              自分の答案画像と採点結果を確認します。
             </p>
           </Link>
+
         </section>
+
       </section>
     </main>
   );
 }
 
-/* =========================================================
-   Summary
-   ========================================================= */
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value:
-    | string
-    | number;
-}) {
-  return (
-    <div className="card">
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            22,
-        }}
-      >
-        {
-          value
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Info
-   ========================================================= */
-
-function InfoCard({
-  label,
-  value,
-}: {
-  label: string;
-
-  value: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          12,
-
-        background:
-          "#f7f7f7",
-
-        borderRadius:
-          8,
-      }}
-    >
-      <div
-        className="muted"
-        style={{
-          fontSize:
-            10,
-        }}
-      >
-        {
-          label
-        }
-      </div>
-
-      <strong
-        style={{
-          display:
-            "block",
-
-          marginTop:
-            4,
-
-          fontSize:
-            14,
-        }}
-      >
-        {
-          value ||
-          "—"
-        }
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   Empty
-   ========================================================= */
-
-function EmptyState({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          40,
-
-        textAlign:
-          "center",
-
-        color:
-          "#777",
-
-        fontSize:
-          12,
-      }}
-    >
-      {
-        text
-      }
-    </div>
-  );
-}
-
-/* =========================================================
-   Normalize Result
-   ========================================================= */
-
-function normalizeResult(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): ResultRow {
-  const score =
-    safeNumber(
-      data.score
-    );
-
-  const maxScore =
-    safeNumber(
-      data.maxScore
-    );
-
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    studentId:
-      stringValue(
-        data.studentId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    testId:
-      stringValue(
-        data.testId
-      ),
-
-    testName:
-      stringValue(
-        data.testName
-      ) ||
-      "テスト未設定",
-
-    subject:
-      stringValue(
-        data.subject
-      ),
-
-    score,
-
-    maxScore,
-
-    percentage:
-      nullableNumber(
-        data.percentage
-      ) ??
-      calculatePercentage(
-        score,
-        maxScore
-      ),
-
-    average:
-      nullableNumber(
-        data.average
-      ),
-
-    deviationScore:
-      nullableNumber(
-        data.deviationScore
-      ),
-
-    rank:
-      nullableNumber(
-        data.rank
-      ),
-
-    population:
-      nullableNumber(
-        data.population
-      ),
-
-    source:
-      data.source ===
-      "追試"
-        ? "追試"
-        : "通常",
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Normalize Report
-   ========================================================= */
-
-function normalizeReport(
-  id: string,
-  data: Record<
-    string,
-    unknown
-  >
-): GradeReport {
-  return {
-    id,
-
-    organizationId:
-      stringValue(
-        data.organizationId
-      ),
-
-    schoolId:
-      stringValue(
-        data.schoolId
-      ),
-
-    studentId:
-      stringValue(
-        data.studentId
-      ),
-
-    studentNumber:
-      stringValue(
-        data.studentNumber
-      ),
-
-    studentName:
-      stringValue(
-        data.studentName
-      ),
-
-    schoolName:
-      stringValue(
-        data.schoolName
-      ),
-
-    grade:
-      stringValue(
-        data.grade
-      ),
-
-    className:
-      stringValue(
-        data.className
-      ),
-
-    gender:
-      stringValue(
-        data.gender
-      ),
-
-    enrolledSchool:
-      stringValue(
-        data.enrolledSchool
-      ),
-
-    testId:
-      stringValue(
-        data.testId
-      ),
-
-    testName:
-      stringValue(
-        data.testName
-      ),
-
-    examDate:
-      stringValue(
-        data.examDate
-      ),
-
-    subjects:
-      [],
-
-    totalScore:
-      safeNumber(
-        data.totalScore
-      ),
-
-    totalMaxScore:
-      safeNumber(
-        data.totalMaxScore
-      ),
-
-    totalAverage:
-      nullableNumber(
-        data.totalAverage
-      ),
-
-    totalDeviation:
-      nullableNumber(
-        data.totalDeviation
-      ),
-
-    totalRank:
-      nullableNumber(
-        data.totalRank
-      ),
-
-    totalPopulation:
-      nullableNumber(
-        data.totalPopulation
-      ),
-
-    createdAt:
-      data.createdAt,
-
-    updatedAt:
-      data.updatedAt,
-  };
-}
-
-/* =========================================================
-   Rank
-   ========================================================= */
-
-function formatRank(
-  rank:
-    | number
-    | null,
-
-  population:
-    | number
-    | null
-) {
-  if (
-    rank ===
-    null
-  ) {
-    return "—";
-  }
-
-  if (
-    population ===
-    null
-  ) {
-    return String(
-      rank
-    );
-  }
-
-  return `${rank} / ${population}`;
-}
-
-/* =========================================================
-   Percentage
-   ========================================================= */
-
-function calculatePercentage(
-  score: number,
-  maxScore: number
-) {
-  if (
-    maxScore <=
-    0
-  ) {
-    return 0;
-  }
-
-  return (
-    score /
-    maxScore *
-    100
-  );
-}
-
-/* =========================================================
-   Time
-   ========================================================= */
-
-function getTime(
-  value: unknown
-) {
-  if (
-    value &&
-    typeof value ===
-      "object" &&
-    "toMillis" in
-      value &&
-    typeof (
-      value as {
-        toMillis?: unknown;
-      }
-    ).toMillis ===
-      "function"
-  ) {
-    return (
-      value as {
-        toMillis: () => number;
-      }
-    ).toMillis();
-  }
-
-  if (
-    value instanceof Date
-  ) {
-    return value.getTime();
-  }
-
-  const parsed =
-    new Date(
-      String(
-        value ??
-          ""
-      )
-    ).getTime();
-
-  return Number.isFinite(
-    parsed
-  )
-    ? parsed
-    : 0;
-}
 
 /* =========================================================
    Primitive
@@ -1343,46 +357,4 @@ function stringValue(
     "string"
     ? value
     : "";
-}
-
-function nullableNumber(
-  value: unknown
-) {
-  if (
-    value ===
-      null ||
-    value ===
-      undefined ||
-    value ===
-      ""
-  ) {
-    return null;
-  }
-
-  const number =
-    Number(
-      value
-    );
-
-  return Number.isFinite(
-    number
-  )
-    ? number
-    : null;
-}
-
-function safeNumber(
-  value: unknown
-) {
-  const number =
-    Number(
-      value ??
-        0
-    );
-
-  return Number.isFinite(
-    number
-  )
-    ? number
-    : 0;
 }
