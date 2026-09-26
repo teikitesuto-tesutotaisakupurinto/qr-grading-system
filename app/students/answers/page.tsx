@@ -8,7 +8,16 @@ import {
 import Link from "next/link";
 
 import {
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+} from "firebase/firestore";
+
+import {
   auth,
+  db,
 } from "@/lib/firebase";
 
 import {
@@ -19,18 +28,6 @@ import {
   getAnswerWithUrl,
 } from "@/lib/answers";
 
-import {
-  db,
-} from "@/lib/firebase";
-
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-  orderBy,
-} from "firebase/firestore";
-
 
 type StudentAnswer = {
   id: string;
@@ -39,15 +36,13 @@ type StudentAnswer = {
 
   subject: string;
 
-  fileName: string;
-
   imageUrl: string | null;
 
+  score: number;
+
+  maxScore: number;
+
   status: string;
-
-  totalScore: number;
-
-  totalMaxScore: number;
 
   createdAt: unknown;
 };
@@ -89,7 +84,6 @@ export default function StudentAnswersPage() {
   async function loadAnswers() {
     try {
       setLoading(true);
-
       setError("");
 
       const user =
@@ -136,7 +130,6 @@ export default function StudentAnswersPage() {
               db,
               "students"
             ),
-
             where(
               "__name__",
               "==",
@@ -161,7 +154,7 @@ export default function StudentAnswersPage() {
 
 
       /*
-       * 自分の答案のみ取得
+       * 本人答案のみ取得
        */
       const snapshot =
         await getDocs(
@@ -170,13 +163,11 @@ export default function StudentAnswersPage() {
               db,
               "answers"
             ),
-
             where(
               "studentId",
               "==",
               user.studentId
             ),
-
             orderBy(
               "createdAt",
               "desc"
@@ -185,7 +176,7 @@ export default function StudentAnswersPage() {
         );
 
 
-      const loaded =
+      const result =
         await Promise.all(
           snapshot.docs.map(
             async (
@@ -195,7 +186,6 @@ export default function StudentAnswersPage() {
               const data =
                 item.data();
 
-
               let imageUrl:
                 string |
                 null =
@@ -203,13 +193,13 @@ export default function StudentAnswersPage() {
 
 
               try {
-                const result =
+                const image =
                   await getAnswerWithUrl(
                     item.id
                   );
 
                 imageUrl =
-                  result?.signedUrl ??
+                  image?.signedUrl ??
                   null;
 
               } catch (
@@ -233,29 +223,27 @@ export default function StudentAnswersPage() {
 
                 subject:
                   stringValue(
-                    data.subjectId
-                  ),
-
-                fileName:
+                    data.subject
+                  ) ||
                   stringValue(
-                    data.fileName
+                    data.subjectId
                   ),
 
                 imageUrl,
 
-                status:
-                  stringValue(
-                    data.status
-                  ),
-
-                totalScore:
+                score:
                   numberValue(
                     data.totalScore
                   ),
 
-                totalMaxScore:
+                maxScore:
                   numberValue(
                     data.totalMaxScore
+                  ),
+
+                status:
+                  stringValue(
+                    data.status
                   ),
 
                 createdAt:
@@ -267,14 +255,14 @@ export default function StudentAnswersPage() {
 
 
       setAnswers(
-        loaded
+        result
       );
-
 
     } catch (
       error
     ) {
       console.error(
+        "Student answers error:",
         error
       );
 
@@ -334,9 +322,7 @@ export default function StudentAnswersPage() {
               答案確認
             </h1>
 
-            <p
-              className="muted"
-            >
+            <p className="muted">
               {
                 studentName
               }
@@ -351,7 +337,6 @@ export default function StudentAnswersPage() {
           >
             ホームへ戻る
           </Link>
-
         </header>
 
 
@@ -408,11 +393,11 @@ export default function StudentAnswersPage() {
                 {answer.imageUrl && (
                   <div
                     style={{
-                      marginTop:
-                        16,
-
                       textAlign:
                         "center",
+
+                      marginTop:
+                        16,
                     }}
                   >
                     <img
@@ -464,16 +449,13 @@ export default function StudentAnswersPage() {
                     }}
                   >
                     {
-                      answer.totalScore
+                      answer.score
                     }
-
                     {" / "}
-
                     {
-                      answer.totalMaxScore
+                      answer.maxScore
                     }
                   </div>
-
 
                   <p
                     className="muted"
@@ -484,6 +466,7 @@ export default function StudentAnswersPage() {
                       "処理中"
                     }
                   </p>
+
                 </div>
 
               </section>
