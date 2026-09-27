@@ -10,11 +10,8 @@ import {
 import {
   collection,
   doc,
-  getDocs,
-  query,
   serverTimestamp,
   setDoc,
-  where,
 } from "firebase/firestore";
 
 import {
@@ -43,74 +40,68 @@ type AreaType =
 
 
 type TemplateArea = {
-  id: string;
 
-  type: AreaType;
+  id:string;
 
-  number?: string;
+  type:AreaType;
 
-  score?: number;
+  number?:string;
 
-  text?: string;
+  score?:number;
 
-  area: {
-    x: number;
+  text?:string;
 
-    y: number;
+  area:{
+    x:number;
 
-    width: number;
+    y:number;
 
-    height: number;
+    width:number;
+
+    height:number;
   };
-};
 
-
-type AnswerTemplate = {
-  id: string;
-
-  organizationId: string;
-
-  testId: string;
-
-  imageUrl: string;
-
-  areas: TemplateArea[];
-
-  createdAt?: unknown;
-
-  updatedAt?: unknown;
 };
 
 
 
 type OCRBox = {
-  text: string;
 
-  confidence?: number;
+  text:string;
 
-  area: {
-    x: number;
+  area:{
+    x:number;
 
-    y: number;
+    y:number;
 
-    width: number;
+    width:number;
 
-    height: number;
+    height:number;
   };
+
 };
 
 
 
 const AREA_TYPES:
   AreaType[] = [
+
     "クラス",
+
     "氏名",
+
     "生徒QR",
+
     "テストQR",
+
     "大問",
+
     "小問",
+
     "得点欄",
+
     "解答欄",
+
   ];
 
 
@@ -120,63 +111,59 @@ const AREA_TYPES:
    ========================================================= */
 
 
-export default function TemplatesPage() {
+export default function TemplatesPage(){
 
   const [
     organizationId,
     setOrganizationId,
   ] =
-    useState("");
+  useState("");
+
 
 
   const [
     testId,
     setTestId,
   ] =
-    useState("");
+  useState("");
+
 
 
   const [
     imageUrl,
     setImageUrl,
   ] =
-    useState("");
+  useState("");
+
 
 
   const [
     imageFile,
     setImageFile,
   ] =
-    useState<File | null>(
-      null
-    );
+  useState<File|null>(
+    null
+  );
+
 
 
   const [
     areas,
     setAreas,
   ] =
-    useState<TemplateArea[]>(
-      []
-    );
+  useState<TemplateArea[]>(
+    []
+  );
 
-
-  const [
-    ocrBoxes,
-    setOcrBoxes,
-  ] =
-    useState<OCRBox[]>(
-      []
-    );
 
 
   const [
     selectedAreaId,
     setSelectedAreaId,
   ] =
-    useState<
-      string | null
-    >(null);
+  useState<string|null>(
+    null
+  );
 
 
 
@@ -184,16 +171,17 @@ export default function TemplatesPage() {
     selectedType,
     setSelectedType,
   ] =
-    useState<AreaType>(
-      "小問"
-    );
+  useState<AreaType>(
+    "小問"
+  );
+
 
 
   const [
     loading,
     setLoading,
   ] =
-    useState(false);
+  useState(false);
 
 
 
@@ -201,31 +189,31 @@ export default function TemplatesPage() {
     message,
     setMessage,
   ] =
-    useState("");
+  useState("");
 
 
 
   const imageRef =
-    useRef<HTMLImageElement | null>(
+    useRef<HTMLImageElement|null>(
       null
     );
 
 
 
   /* =======================================================
-     Load user
+     User
      ======================================================= */
 
 
-  useEffect(() => {
+  useEffect(()=>{
 
     void loadUser();
 
-  }, []);
+  },[]);
 
 
 
-  async function loadUser() {
+  async function loadUser(){
 
     const user =
       await getAppUser(
@@ -233,40 +221,42 @@ export default function TemplatesPage() {
       );
 
 
-    if (
-      !user?.organizationId
-    ) {
-      return;
+    if(
+      user?.organizationId
+    ){
+
+      setOrganizationId(
+        user.organizationId
+      );
+
     }
-
-
-    setOrganizationId(
-      user.organizationId
-    );
 
   }
 
 
 
   /* =======================================================
-     Image upload
+     Image
      ======================================================= */
 
 
   function handleImageChange(
     event:
       ChangeEvent<HTMLInputElement>
-  ) {
+  ){
 
     const file =
       event.target.files?.[0];
 
 
-    if (
+    if(
       !file
-    ) {
+    ){
+
       return;
+
     }
+
 
 
     setImageFile(
@@ -274,20 +264,15 @@ export default function TemplatesPage() {
     );
 
 
-    const url =
+    setImageUrl(
       URL.createObjectURL(
         file
-      );
-
-
-    setImageUrl(
-      url
+      )
     );
 
 
     setAreas([]);
 
-    setOcrBoxes([]);
 
     setMessage(
       "画像を読み込みました。"
@@ -297,19 +282,20 @@ export default function TemplatesPage() {
 
 
 
+
   /* =======================================================
      OCR
      ======================================================= */
 
 
-  async function runOCR() {
+  async function runOCR(){
 
-    if (
+    if(
       !imageFile
-    ) {
+    ){
 
       setMessage(
-        "先に答案画像をアップロードしてください。"
+        "答案画像を選択してください。"
       );
 
       return;
@@ -317,46 +303,73 @@ export default function TemplatesPage() {
     }
 
 
-    setLoading(
-      true
-    );
 
+    try{
 
-    try {
-
-      /*
-       * OCR処理接続部分
-       *
-       * 後で
-       * Cloud Functions
-       * または
-       * Google Vision API
-       * に接続
-       */
-
-
-      const result:
-        OCRBox[] =
-        await mockOCR(
-          imageFile
-        );
-
-
-      setOcrBoxes(
-        result
+      setLoading(
+        true
       );
 
 
-      /*
-       * OCR結果を
-       * 初期枠として生成
-       */
+
+      const formData =
+        new FormData();
+
+
+      formData.append(
+        "file",
+        imageFile
+      );
+
+
+
+      const response =
+        await fetch(
+          "/api/template-ocr",
+          {
+            method:
+              "POST",
+
+            body:
+              formData,
+          }
+        );
+
+
+
+      if(
+        !response.ok
+      ){
+
+        throw new Error(
+          "OCR解析に失敗しました。"
+        );
+
+      }
+
+
+
+      const data =
+        await response.json();
+
+
+
+      const boxes:
+        OCRBox[] =
+        Array.isArray(
+          data.boxes
+        )
+          ? data.boxes
+          : [];
+
+
 
       const generated =
-        result.map(
+        boxes.map(
           (
             box
           ) => ({
+
             id:
               createId(),
 
@@ -370,8 +383,10 @@ export default function TemplatesPage() {
 
             area:
               box.area,
+
           })
         );
+
 
 
       setAreas(
@@ -380,13 +395,11 @@ export default function TemplatesPage() {
 
 
       setMessage(
-        "OCR解析が完了しました。枠を確認・修正してください。"
+        "OCR解析が完了しました。"
       );
 
 
-    } catch (
-      error
-    ) {
+    }catch(error){
 
       console.error(
         error
@@ -397,7 +410,8 @@ export default function TemplatesPage() {
         "OCR解析に失敗しました。"
       );
 
-    } finally {
+
+    }finally{
 
       setLoading(
         false
@@ -406,23 +420,30 @@ export default function TemplatesPage() {
     }
 
   }
-    /* =======================================================
-     Add area
+  // Part2/4
+
+
+  /* =======================================================
+     Area control
      ======================================================= */
 
-  function addArea(
-    x: number,
-    y: number
-  ) {
 
-    const newArea:
+  function addArea(
+    x:number,
+    y:number
+  ){
+
+    const area:
       TemplateArea =
       {
+
         id:
           createId(),
 
+
         type:
           selectedType,
+
 
         number:
           selectedType ===
@@ -432,60 +453,62 @@ export default function TemplatesPage() {
               )
             : undefined,
 
+
         score:
           selectedType ===
           "小問"
             ? 0
             : undefined,
 
-        area:
-          {
-            x,
 
-            y,
+        area:{
 
-            width:
-              150,
+          x,
 
-            height:
-              80,
-          },
+          y,
+
+          width:
+            150,
+
+          height:
+            80,
+
+        },
+
       };
 
 
+
     setAreas(
-      (
-        current
-      ) => [
+      current => [
         ...current,
-        newArea,
+        area,
       ]
     );
 
 
+
     setSelectedAreaId(
-      newArea.id
+      area.id
     );
 
   }
 
 
 
-  function getNextQuestionNumber() {
+
+
+  function getNextQuestionNumber(){
 
     const numbers =
       areas
         .filter(
-          (
-            item
-          ) =>
+          item =>
             item.type ===
             "小問"
         )
         .map(
-          (
-            item
-          ) =>
+          item =>
             Number(
               item.number
             )
@@ -495,45 +518,41 @@ export default function TemplatesPage() {
         );
 
 
-    if (
+    if(
       numbers.length ===
       0
-    ) {
+    ){
+
       return 1;
+
     }
 
 
     return (
       Math.max(
         ...numbers
-      ) + 1
+      )
+      +
+      1
     );
 
   }
 
 
 
-  /* =======================================================
-     Update area
-     ======================================================= */
 
 
   function updateArea(
-    id: string,
+    id:string,
     update:
       Partial<TemplateArea>
-  ) {
+  ){
 
     setAreas(
-      (
-        current
-      ) =>
+      current =>
         current.map(
-          (
-            item
-          ) =>
-            item.id ===
-            id
+          item =>
+            item.id === id
               ? {
                   ...item,
 
@@ -547,54 +566,16 @@ export default function TemplatesPage() {
 
 
 
-  function updateAreaPosition(
-    id: string,
-    x: number,
-    y: number
-  ) {
-
-    setAreas(
-      (
-        current
-      ) =>
-        current.map(
-          (
-            item
-          ) =>
-            item.id ===
-            id
-              ? {
-                  ...item,
-
-                  area:
-                    {
-                      ...item.area,
-
-                      x,
-
-                      y,
-                    },
-                }
-              : item
-        )
-    );
-
-  }
-
 
 
   function deleteArea(
-    id: string
-  ) {
+    id:string
+  ){
 
     setAreas(
-      (
-        current
-      ) =>
+      current =>
         current.filter(
-          (
-            item
-          ) =>
+          item =>
             item.id !==
             id
         )
@@ -609,60 +590,104 @@ export default function TemplatesPage() {
 
 
 
+
+
+
+  function updateScore(
+    id:string,
+    score:number
+  ){
+
+    setAreas(
+      current =>
+        current.map(
+          item =>
+            item.id === id
+              ? {
+
+                  ...item,
+
+                  score,
+
+                }
+
+              : item
+        )
+    );
+
+  }
+
+
+
+
+
+
+
   /* =======================================================
-     Drag
+     Canvas
      ======================================================= */
 
 
   function handleCanvasClick(
     event:
       React.MouseEvent<HTMLDivElement>
-  ) {
+  ){
 
-    if (
-      !imageRef.current
-    ) {
+    if(
+      !event.shiftKey
+    ){
+
       return;
+
     }
+
 
 
     const rect =
-      event.currentTarget.getBoundingClientRect();
+      event.currentTarget
+        .getBoundingClientRect();
 
 
-    const x =
+
+    addArea(
       event.clientX -
-      rect.left;
+        rect.left,
 
-
-    const y =
       event.clientY -
-      rect.top;
-
-
-    /*
-     * 枠追加
-     */
-    if (
-      event.shiftKey
-    ) {
-
-      addArea(
-        x,
-        y
-      );
-
-    }
+        rect.top
+    );
 
   }
+
+
+
+
 
 
 
   function moveArea(
     event:
       React.MouseEvent,
-    id: string
-  ) {
+
+    id:string
+  ){
+
+    const target =
+      areas.find(
+        item =>
+          item.id === id
+      );
+
+
+    if(
+      !target
+    ){
+
+      return;
+
+    }
+
+
 
     const startX =
       event.clientX;
@@ -672,27 +697,10 @@ export default function TemplatesPage() {
       event.clientY;
 
 
-    const target =
-      areas.find(
-        (
-          item
-        ) =>
-          item.id ===
-          id
-      );
-
-
-    if (
-      !target
-    ) {
-      return;
-    }
-
-
     function move(
       moveEvent:
         MouseEvent
-    ) {
+    ){
 
       const dx =
         moveEvent.clientX -
@@ -704,21 +712,34 @@ export default function TemplatesPage() {
         startY;
 
 
-      updateAreaPosition(
+
+      updateArea(
         id,
+        {
 
-        target.area.x +
-          dx,
+          area:{
+            ...target.area,
 
-        target.area.y +
-          dy
+            x:
+              target.area.x +
+              dx,
+
+            y:
+              target.area.y +
+              dy,
+
+          }
+
+        }
       );
 
     }
 
 
 
-    function end() {
+
+
+    function end(){
 
       window.removeEventListener(
         "mousemove",
@@ -732,6 +753,7 @@ export default function TemplatesPage() {
       );
 
     }
+
 
 
 
@@ -750,26 +772,30 @@ export default function TemplatesPage() {
 
 
 
+
+
+
+
   /* =======================================================
      Parent detection
      ======================================================= */
 
 
-  function findChildren(
-    bigArea:
-      TemplateArea
-  ) {
+  function getChildQuestions(
+    parent:TemplateArea
+  ){
 
     return areas.filter(
-      (
-        area
-      ) =>
-        area.type ===
-          "小問" &&
+      item =>
+
+        item.type ===
+        "小問"
+
+        &&
 
         isInside(
-          bigArea,
-          area
+          parent,
+          item
         )
     );
 
@@ -777,13 +803,12 @@ export default function TemplatesPage() {
 
 
 
-  function isInside(
-    parent:
-      TemplateArea,
 
-    child:
-      TemplateArea
-  ) {
+
+  function isInside(
+    parent:TemplateArea,
+    child:TemplateArea
+  ){
 
     const centerX =
       child.area.x +
@@ -797,78 +822,51 @@ export default function TemplatesPage() {
       2;
 
 
+
     return (
+
       centerX >=
-        parent.area.x &&
+        parent.area.x
+
+      &&
 
       centerX <=
         parent.area.x +
-        parent.area.width &&
+        parent.area.width
+
+      &&
 
       centerY >=
-        parent.area.y &&
+        parent.area.y
+
+      &&
 
       centerY <=
         parent.area.y +
         parent.area.height
+
     );
 
   }
+
+
+
+
 
 
 
   /* =======================================================
-     Score total
+     Save
      ======================================================= */
 
 
-  const totalScore =
-    areas
-      .filter(
-        (
-          area
-        ) =>
-          area.type ===
-          "小問"
-      )
-      .reduce(
-        (
-          total,
-          area
-        ) =>
-          total +
-          (
-            area.score ??
-            0
-          ),
+  async function saveTemplate(){
 
-        0
+    try{
+
+      setLoading(
+        true
       );
-
-
-
-  function updateScore(
-    id:string,
-    score:number
-  ){
-
-    updateArea(
-      id,
-      {
-        score,
-      }
-    );
-
-  }
-    /* =======================================================
-     Save template
-     ======================================================= */
-
-  async function saveTemplate() {
-
-    try {
-
-      setLoading(true);
 
 
       const user =
@@ -877,9 +875,9 @@ export default function TemplatesPage() {
         );
 
 
-      if (
+      if(
         !user?.organizationId
-      ) {
+      ){
 
         throw new Error(
           "組織情報がありません。"
@@ -888,7 +886,9 @@ export default function TemplatesPage() {
       }
 
 
-      const templateRef =
+
+
+      const ref =
         doc(
           collection(
             db,
@@ -897,68 +897,69 @@ export default function TemplatesPage() {
         );
 
 
-      const bigQuestions =
+
+      const totalScore =
         areas
           .filter(
-            (
-              area
-            ) =>
-              area.type ===
-              "大問"
+            item =>
+              item.type ===
+              "小問"
           )
-          .map(
+          .reduce(
             (
-              area
-            ) => ({
-              ...area,
+              total,
+              item
+            ) =>
+              total +
+              (
+                item.score ??
+                0
+              ),
 
-              children:
-                findChildren(
-                  area
-                ).map(
-                  (
-                    child
-                  ) =>
-                    child.id
-                ),
-            })
+            0
           );
 
 
 
+
       await setDoc(
-        templateRef,
+        ref,
         {
+
           organizationId:
             user.organizationId,
 
+
           testId,
+
 
           imageUrl,
 
+
           areas,
 
-          bigQuestions,
 
           totalScore,
+
 
           createdAt:
             serverTimestamp(),
 
+
           updatedAt:
             serverTimestamp(),
+
         }
       );
 
 
+
       setMessage(
-        "答案テンプレートを保存しました。"
+        "テンプレートを保存しました。"
       );
 
 
-    } catch(
-      error
-    ){
+    }catch(error){
 
       console.error(
         error
@@ -970,7 +971,7 @@ export default function TemplatesPage() {
       );
 
 
-    } finally {
+    }finally{
 
       setLoading(
         false
@@ -979,16 +980,16 @@ export default function TemplatesPage() {
     }
 
   }
-
-
-
+  // Part3/4
 
 
   /* =======================================================
      Render
      ======================================================= */
 
+
   return (
+
     <main
       className="page"
     >
@@ -1004,6 +1005,7 @@ export default function TemplatesPage() {
         }}
       >
 
+
         <header
           className="pageHeader"
         >
@@ -1014,10 +1016,11 @@ export default function TemplatesPage() {
               答案テンプレート設定
             </h1>
 
+
             <p
               className="muted"
             >
-              OCR解析後、枠を修正して採点範囲を設定します。
+              OCR解析後に枠を修正して採点範囲を設定します。
             </p>
 
           </div>
@@ -1028,14 +1031,17 @@ export default function TemplatesPage() {
 
 
 
+
         {message && (
 
           <div
             className="successMessage"
           >
+
             {
               message
             }
+
           </div>
 
         )}
@@ -1050,11 +1056,13 @@ export default function TemplatesPage() {
         >
 
           <h2>
-            1. 答案画像
+            答案画像
           </h2>
 
 
+
           <input
+
             type="file"
 
             accept="
@@ -1066,24 +1074,50 @@ export default function TemplatesPage() {
             onChange={
               handleImageChange
             }
+
           />
+
 
 
 
           <div
             style={{
-              marginTop:
-                12,
-
               display:
                 "flex",
 
               gap:
                 10,
+
+              marginTop:
+                12,
             }}
           >
 
+
+            <input
+
+              value={
+                testId
+              }
+
+              onChange={
+
+                event =>
+                  setTestId(
+                    event.target.value
+                  )
+
+              }
+
+              placeholder="テストID"
+
+            />
+
+
+
+
             <button
+
               type="button"
 
               className="button"
@@ -1095,32 +1129,21 @@ export default function TemplatesPage() {
               onClick={
                 runOCR
               }
+
             >
 
-              {loading
-                ? "OCR解析中..."
-                : "OCR解析開始"}
+              {
+                loading
+                  ? "OCR解析中..."
+                  : "OCR解析"
+              }
+
 
             </button>
 
 
-            <input
-              value={
-                testId
-              }
-
-              onChange={(
-                event
-              ) =>
-                setTestId(
-                  event.target.value
-                )
-              }
-
-              placeholder="テストID"
-            />
-
           </div>
+
 
         </section>
 
@@ -1129,13 +1152,16 @@ export default function TemplatesPage() {
 
 
 
+
+
         <div
+
           style={{
             display:
               "grid",
 
             gridTemplateColumns:
-              "1fr 350px",
+              "1fr 320px",
 
             gap:
               16,
@@ -1143,13 +1169,16 @@ export default function TemplatesPage() {
             marginTop:
               16,
           }}
+
         >
 
 
 
-          {/* =========================
-              Canvas
-             ========================= */}
+
+
+          {/* ==================================================
+              Image Canvas
+             ================================================== */}
 
 
           <section
@@ -1158,7 +1187,7 @@ export default function TemplatesPage() {
 
 
             <h2>
-              枠設定
+              枠編集
             </h2>
 
 
@@ -1174,12 +1203,15 @@ export default function TemplatesPage() {
 
 
 
+
             <div
+
               onClick={
                 handleCanvasClick
               }
 
               style={{
+
                 position:
                   "relative",
 
@@ -1188,8 +1220,11 @@ export default function TemplatesPage() {
 
                 maxWidth:
                   "100%",
+
               }}
+
             >
+
 
               {imageUrl && (
 
@@ -1219,10 +1254,11 @@ export default function TemplatesPage() {
 
 
 
+
+
+
               {areas.map(
-                (
-                  area
-                ) => (
+                area => (
 
                   <div
 
@@ -1230,39 +1266,48 @@ export default function TemplatesPage() {
                       area.id
                     }
 
-                    onMouseDown={(
-                      event
-                    ) => {
 
-                      event.stopPropagation();
+                    onMouseDown={
+                      event => {
 
-                      setSelectedAreaId(
-                        area.id
-                      );
+                        event.stopPropagation();
 
 
-                      moveArea(
-                        event,
-                        area.id
-                      );
+                        setSelectedAreaId(
+                          area.id
+                        );
 
-                    }}
+
+                        moveArea(
+                          event,
+                          area.id
+                        );
+
+                      }
+                    }
+
 
                     style={{
+
                       position:
                         "absolute",
+
 
                       left:
                         area.area.x,
 
+
                       top:
                         area.area.y,
+
 
                       width:
                         area.area.width,
 
+
                       height:
                         area.area.height,
+
 
 
                       border:
@@ -1272,23 +1317,29 @@ export default function TemplatesPage() {
                           : "2px solid blue",
 
 
+
                       background:
-                        "rgba(0,0,255,0.1)",
+                        "rgba(0,0,255,0.12)",
+
 
 
                       cursor:
                         "move",
 
                     }}
+
                   >
+
 
                     <span
                       style={{
+
                         background:
-                          "white",
+                          "#fff",
 
                         fontSize:
                           11,
+
                       }}
                     >
 
@@ -1300,6 +1351,7 @@ export default function TemplatesPage() {
 
 
                   </div>
+
 
                 )
               )}
@@ -1317,24 +1369,26 @@ export default function TemplatesPage() {
 
 
 
-          {/* =========================
-              Setting Panel
-             ========================= */}
+          {/* ==================================================
+              Setting
+             ================================================== */}
 
 
           <section
             className="card"
           >
 
+
             <h2>
-              枠設定
+              設定
             </h2>
+
 
 
 
             <label>
 
-              種類
+              枠種類
 
 
               <select
@@ -1343,13 +1397,14 @@ export default function TemplatesPage() {
                   selectedType
                 }
 
-                onChange={(
-                  event
-                ) =>
-                  setSelectedType(
-                    event.target
-                      .value as AreaType
-                  )
+                onChange={
+
+                  event =>
+                    setSelectedType(
+                      event.target
+                        .value as AreaType
+                    )
+
                 }
 
                 style={{
@@ -1359,12 +1414,12 @@ export default function TemplatesPage() {
 
               >
 
+
                 {AREA_TYPES.map(
-                  (
-                    type
-                  ) => (
+                  type => (
 
                     <option
+
                       key={
                         type
                       }
@@ -1372,6 +1427,7 @@ export default function TemplatesPage() {
                       value={
                         type
                       }
+
                     >
 
                       {
@@ -1380,8 +1436,10 @@ export default function TemplatesPage() {
 
                     </option>
 
+
                   )
                 )}
+
 
               </select>
 
@@ -1392,18 +1450,18 @@ export default function TemplatesPage() {
 
 
 
+
             {selectedAreaId && (
 
-              <SelectedAreaEditor
+              <AreaEditor
 
                 area={
                   areas.find(
-                    (
-                      item
-                    ) =>
+                    item =>
                       item.id ===
                       selectedAreaId
-                  ) ??
+                  )
+                  ??
                   null
                 }
 
@@ -1428,34 +1486,46 @@ export default function TemplatesPage() {
 
 
 
-            <hr />
 
 
 
-            <div>
+            <div
+              style={{
+                marginTop:
+                  20,
+              }}
+            >
 
               <strong>
                 合計配点
               </strong>
 
 
-              <div
-                style={{
-                  fontSize:
-                    24,
-
-                  marginTop:
-                    8,
-                }}
-              >
-
+              <p>
                 {
-                  totalScore
+                  areas
+                    .filter(
+                      item =>
+                        item.type ===
+                        "小問"
+                    )
+                    .reduce(
+                      (
+                        total,
+                        item
+                      ) =>
+                        total +
+                        (
+                          item.score ??
+                          0
+                        ),
+
+                      0
+                    )
                 }
-
                 点
+              </p>
 
-              </div>
 
             </div>
 
@@ -1467,11 +1537,6 @@ export default function TemplatesPage() {
               type="button"
 
               className="button primary"
-
-              style={{
-                marginTop:
-                  20,
-              }}
 
               onClick={
                 saveTemplate
@@ -1492,51 +1557,71 @@ export default function TemplatesPage() {
 
       </section>
 
+
     </main>
+
   );
-  /* =========================================================
-   Selected Area Editor
+  // Part4/4
+
+
+/* =========================================================
+   Area Editor
    ========================================================= */
 
-function SelectedAreaEditor({
+
+function AreaEditor({
   area,
   onChange,
   onDelete,
   onScore,
-}: {
+}:{
   area:
     | TemplateArea
     | null;
 
-  onChange: (
-    id: string,
-    update: Partial<TemplateArea>
-  ) => void;
 
-  onDelete: (
-    id: string
-  ) => void;
+  onChange:
+    (
+      id:string,
+      update:Partial<TemplateArea>
+    )=>void;
 
-  onScore: (
-    id: string,
-    score: number
-  ) => void;
-}) {
 
-  if (
+  onDelete:
+    (
+      id:string
+    )=>void;
+
+
+  onScore:
+    (
+      id:string,
+      score:number
+    )=>void;
+
+}){
+
+
+  if(
     !area
-  ) {
+  ){
+
     return (
+
       <p
         className="muted"
       >
         枠を選択してください。
       </p>
+
     );
+
   }
 
 
+
   return (
+
     <div
       style={{
         marginTop:
@@ -1546,85 +1631,105 @@ function SelectedAreaEditor({
           "grid",
 
         gap:
-          12,
+          10,
       }}
     >
 
+
+
       <label>
+
         種類
 
+
         <select
+
           value={
             area.type
           }
-          onChange={(
-            event
-          ) =>
-            onChange(
-              area.id,
-              {
-                type:
-                  event.target
-                    .value as AreaType,
-              }
-            )
+
+          onChange={
+            event =>
+              onChange(
+                area.id,
+                {
+                  type:
+                    event.target
+                      .value as AreaType
+                }
+              )
           }
+
           style={{
             width:
               "100%",
           }}
+
         >
 
           {AREA_TYPES.map(
-            (
-              type
-            ) => (
+            type => (
+
               <option
                 key={
                   type
                 }
+
                 value={
                   type
                 }
               >
+
                 {
                   type
                 }
+
               </option>
+
             )
           )}
 
+
         </select>
+
 
       </label>
 
 
 
-      {(area.type ===
-        "小問" ||
-        area.type ===
-          "大問") && (
+
+
+      {(area.type === "大問" ||
+        area.type === "小問") && (
 
         <label>
+
           番号
 
+
           <input
+
             value={
               area.number ??
               ""
             }
-            onChange={(
-              event
-            ) =>
-              onChange(
-                area.id,
-                {
-                  number:
-                    event.target
-                      .value,
-                }
-              )
+
+            onChange={
+              event =>
+                onChange(
+                  area.id,
+                  {
+                    number:
+                      event.target.value
+                  }
+                )
             }
+
+            style={{
+              width:
+                "100%",
+            }}
+
           />
 
         </label>
@@ -1633,30 +1738,44 @@ function SelectedAreaEditor({
 
 
 
-      {area.type ===
-        "小問" && (
+
+
+
+      {area.type === "小問" && (
 
         <label>
+
           配点
 
+
           <input
+
             type="number"
+
             min="0"
+
             value={
               area.score ??
               0
             }
-            onChange={(
-              event
-            ) =>
-              onScore(
-                area.id,
-                Number(
-                  event.target.value
+
+            onChange={
+              event =>
+                onScore(
+                  area.id,
+                  Number(
+                    event.target.value
+                  )
                 )
-              )
             }
+
+            style={{
+              width:
+                "100%",
+            }}
+
           />
+
 
         </label>
 
@@ -1664,165 +1783,161 @@ function SelectedAreaEditor({
 
 
 
+
+
+
+
       <label>
+
         OCR文字
 
+
         <input
+
           value={
             area.text ??
             ""
           }
-          onChange={(
-            event
-          ) =>
-            onChange(
-              area.id,
-              {
-                text:
-                  event.target
-                    .value,
-              }
-            )
+
+          onChange={
+            event =>
+              onChange(
+                area.id,
+                {
+                  text:
+                    event.target.value
+                }
+              )
           }
+
+          style={{
+            width:
+              "100%",
+          }}
+
         />
+
 
       </label>
 
 
 
+
+
+
       <button
+
         type="button"
+
         className="button"
+
         onClick={() =>
           onDelete(
             area.id
           )
         }
+
       >
-        この枠を削除
+
+        枠を削除
+
       </button>
 
 
+
     </div>
+
   );
+
 }
 
 
 
-/* =========================================================
-   OCR Function
-   ========================================================= */
 
-async function analyzeTemplateOCR(
-  file: File
-): Promise<OCRBox[]> {
-
-  const formData =
-    new FormData();
-
-  formData.append(
-    "file",
-    file
-  );
-
-
-  const response =
-    await fetch(
-      "/api/template-ocr",
-      {
-        method:
-          "POST",
-
-        body:
-          formData,
-      }
-    );
-
-
-  if (
-    !response.ok
-  ) {
-    throw new Error(
-      "OCR解析に失敗しました。"
-    );
-  }
-
-
-  const data =
-    await response.json();
-
-
-  return Array.isArray(
-    data.boxes
-  )
-    ? data.boxes
-    : [];
-}
 
 
 
 /* =========================================================
-   OCR Type Detection
+   Detection
    ========================================================= */
+
 
 function detectType(
-  text: string
-): AreaType {
+  text:string
+):AreaType{
+
 
   const value =
     text.trim();
 
 
-  if (
+
+  if(
     value.includes(
       "氏名"
     )
-  ) {
+  ){
+
     return "氏名";
+
   }
 
 
-  if (
+  if(
     value.includes(
       "クラス"
     )
-  ) {
+  ){
+
     return "クラス";
+
   }
 
 
-  if (
+  if(
     value.includes(
       "QR"
     )
-  ) {
+  ){
+
     return "生徒QR";
+
   }
 
 
-  if (
+  if(
     /^問?\d+/.test(
       value
     )
-  ) {
+  ){
+
     return "小問";
+
   }
 
 
-  if (
+  if(
     value.includes(
       "合計"
-    ) ||
+    )
+    ||
     value.includes(
       "点"
     )
-  ) {
+  ){
+
     return "得点欄";
+
   }
 
 
   return "解答欄";
+
 }
+
+
+
+
 
 
 
@@ -1830,14 +1945,15 @@ function detectType(
    ID
    ========================================================= */
 
-function createId() {
 
-  if (
+function createId(){
+
+  if(
     typeof crypto !==
-      "undefined" &&
-    "randomUUID" in
-      crypto
-  ) {
+    "undefined"
+    &&
+    "randomUUID" in crypto
+  ){
 
     return crypto.randomUUID();
 
@@ -1858,75 +1974,7 @@ function createId() {
 
 
 
-/* =========================================================
-   Parent check
-   ========================================================= */
 
-function getChildQuestions(
-  areas: TemplateArea[],
-  parent: TemplateArea
-) {
-
-  return areas.filter(
-    (
-      area
-    ) =>
-
-      area.type ===
-        "小問" &&
-
-      isInsideArea(
-        parent,
-        area
-      )
-  );
-
-}
-
-
-
-function isInsideArea(
-  parent: TemplateArea,
-  child: TemplateArea
-) {
-
-  const centerX =
-    child.area.x +
-    child.area.width /
-    2;
-
-
-  const centerY =
-    child.area.y +
-    child.area.height /
-    2;
-
-
-  return (
-
-    centerX >=
-      parent.area.x
-
-    &&
-
-    centerX <=
-      parent.area.x +
-      parent.area.width
-
-    &&
-
-    centerY >=
-      parent.area.y
-
-    &&
-
-    centerY <=
-      parent.area.y +
-      parent.area.height
-
-  );
-
-}
 
 
 
@@ -1934,9 +1982,24 @@ function isInsideArea(
    Primitive
    ========================================================= */
 
-function numberValue(
-  value: unknown
-) {
+
+function stringValue(
+  value:unknown
+){
+
+  return typeof value ===
+    "string"
+      ? value
+      : "";
+
+}
+
+
+
+
+function safeNumber(
+  value:unknown
+){
 
   const number =
     Number(
